@@ -924,7 +924,9 @@ def platform_blocker_category(report: PlatformReport, blocker: str) -> str:
         return "localActionable" if platform.system() == "Darwin" else "externalRequired"
     if is_macos_report(report) and blocker == "app launch smoke runtime workflow not executed on native macOS runner":
         return "localActionable" if platform.system() == "Darwin" else "externalRequired"
-    if is_macos_report(report) and ("checksum" in blocker or "evidence manifest" in blocker):
+    if is_macos_report(report) and "checksum" in blocker:
+        return "localActionable"
+    if is_macos_report(report) and "evidence manifest" in blocker:
         return "localActionable" if platform.system() == "Darwin" else "externalRequired"
     return "externalRequired"
 

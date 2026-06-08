@@ -261,6 +261,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Treat existing ignored build artifacts as informational after an app build has produced them.",
     )
+    parser.add_argument(
+        "--system",
+        default=sys.platform,
+        choices=("darwin", "linux", "win32"),
+        help="Override the detected platform for preflight simulation and tests.",
+    )
     parser.add_argument("--json", action="store_true")
     return parser
 
@@ -284,6 +290,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     checks, meta = collect_checks(
         root=args.root,
+        system=args.system,
         require_apple_development=args.require_apple_development,
         require_clean=not args.allow_existing_artifacts,
     )

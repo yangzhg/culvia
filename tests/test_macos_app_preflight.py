@@ -206,7 +206,7 @@ class MacosAppPreflightTests(unittest.TestCase):
             ):
                 chunks: list[str] = []
                 stdout.write.side_effect = chunks.append
-                result = check_macos_app_preflight.main(["--root", str(root), "--json"])
+                result = check_macos_app_preflight.main(["--root", str(root), "--system", "darwin", "--json"])
 
         self.assertEqual(result, 0)
         payload = json.loads("".join(chunks))
