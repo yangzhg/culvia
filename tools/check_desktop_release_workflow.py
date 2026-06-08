@@ -14,15 +14,21 @@ WORKFLOW_PATH = ".github/workflows/desktop-release.yml"
 CONTRACT_TOOL_PATH = "tools/desktop_release_contract.py"
 ALLOWED_ARTIFACT_PATHS = (
     "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip",
+    "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip",
     "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz",
+    "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz",
 )
 ALLOWED_CHECKSUM_PATHS = (
     "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.sha256",
+    "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip.sha256",
     "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.sha256",
+    "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz.sha256",
 )
 ALLOWED_EVIDENCE_PATHS = (
     "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.evidence.json",
+    "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip.evidence.json",
     "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.evidence.json",
+    "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz.evidence.json",
 )
 FORBIDDEN_WORKFLOW_PATTERNS = (
     (r"\$\{\{\s*secrets\.", "secrets context"),
@@ -143,16 +149,21 @@ def yaml_key_values(text: str, key: str) -> list[str]:
     return values
 
 
+def embedded_mapping_values(text: str, key: str) -> list[str]:
+    pattern = re.compile(rf"['\"]{re.escape(key)}['\"]\s*:\s*['\"]([^'\"]+)['\"]")
+    return [clean_yaml_value(match.group(1)) for match in pattern.finditer(text)]
+
+
 def matrix_artifact_paths(workflow: str) -> list[str]:
-    return yaml_key_values(workflow, "artifact_path")
+    return [*yaml_key_values(workflow, "artifact_path"), *embedded_mapping_values(workflow, "artifact_path")]
 
 
 def matrix_checksum_paths(workflow: str) -> list[str]:
-    return yaml_key_values(workflow, "checksum_path")
+    return [*yaml_key_values(workflow, "checksum_path"), *embedded_mapping_values(workflow, "checksum_path")]
 
 
 def matrix_evidence_paths(workflow: str) -> list[str]:
-    return yaml_key_values(workflow, "evidence_path")
+    return [*yaml_key_values(workflow, "evidence_path"), *embedded_mapping_values(workflow, "evidence_path")]
 
 
 def upload_artifact_paths(workflow: str) -> list[str]:
@@ -216,7 +227,7 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
                     'python-version: "3.11"',
                     "actions/setup-node@v4",
                     'node-version: "20"',
-                    "rustup update stable",
+                    "rustup default stable",
                     "libwebkit2gtk-4.1-dev",
                     "patchelf",
                     "xvfb",

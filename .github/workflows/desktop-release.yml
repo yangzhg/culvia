@@ -2,35 +2,120 @@ name: Desktop release packages
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform to build"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - linux
+          - windows
+      profile:
+        description: "Runtime profile. Lite is faster and does not bundle Python."
+        required: true
+        default: lite
+        type: choice
+        options:
+          - lite
+          - full
+          - all
+      upload_artifacts:
+        description: "Upload package artifacts. Leave off for compile/package validation only."
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
+concurrency:
+  group: desktop-release-${{ github.ref }}-${{ inputs.platform }}-${{ inputs.profile }}
+  cancel-in-progress: true
+
 jobs:
+  select:
+    name: Select desktop package jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+
+    steps:
+      - name: Build selected matrix
+        id: matrix
+        shell: python
+        run: |
+          import json
+          import os
+
+          selected_platform = "${{ inputs.platform }}"
+          selected_profile = "${{ inputs.profile }}"
+
+          jobs = [
+              {
+                  "name": "Windows x64 portable zip",
+                  "platform": "windows",
+                  "profile": "full",
+                  "os": "windows-latest",
+                  "target": "x86_64-pc-windows-msvc",
+                  "artifact_name": "culvia-windows-x64",
+                  "artifact_path": "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip",
+                  "checksum_path": "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.sha256",
+                  "evidence_path": "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.evidence.json",
+              },
+              {
+                  "name": "Windows Lite x64 portable zip",
+                  "platform": "windows",
+                  "profile": "lite",
+                  "os": "windows-latest",
+                  "target": "x86_64-pc-windows-msvc",
+                  "artifact_name": "culvia-windows-lite-x64",
+                  "artifact_path": "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip",
+                  "checksum_path": "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip.sha256",
+                  "evidence_path": "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip.evidence.json",
+              },
+              {
+                  "name": "Linux x64 portable tgz",
+                  "platform": "linux",
+                  "profile": "full",
+                  "os": "ubuntu-latest",
+                  "target": "x86_64-unknown-linux-gnu",
+                  "artifact_name": "culvia-linux-x64",
+                  "artifact_path": "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz",
+                  "checksum_path": "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.sha256",
+                  "evidence_path": "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.evidence.json",
+              },
+              {
+                  "name": "Linux Lite x64 portable tgz",
+                  "platform": "linux",
+                  "profile": "lite",
+                  "os": "ubuntu-latest",
+                  "target": "x86_64-unknown-linux-gnu",
+                  "artifact_name": "culvia-linux-lite-x64",
+                  "artifact_path": "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz",
+                  "checksum_path": "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz.sha256",
+                  "evidence_path": "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz.evidence.json",
+              },
+          ]
+          include = [
+              job
+              for job in jobs
+              if (selected_platform == "all" or selected_platform == job["platform"])
+              and (selected_profile == "all" or selected_profile == job["profile"])
+          ]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={json.dumps({'include': include}, separators=(',', ':'))}\n")
+
   package:
     name: ${{ matrix.name }}
+    needs: select
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: Windows x64 portable zip
-            platform: windows
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: culvia-windows-x64
-            artifact_path: dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip
-            checksum_path: dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.sha256
-            evidence_path: dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.evidence.json
-          - name: Linux x64 portable tgz
-            platform: linux
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact_name: culvia-linux-x64
-            artifact_path: dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz
-            checksum_path: dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.sha256
-            evidence_path: dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.evidence.json
+      matrix: ${{ fromJson(needs.select.outputs.matrix) }}
 
     steps:
       - name: Checkout
@@ -40,6 +125,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements.txt
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -48,26 +137,31 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/tauri/package-lock.json
 
-      - name: Install Rust stable
+      - name: Select Rust stable
         shell: bash
-        run: |
-          rustup update stable
-          rustup default stable
+        run: rustup default stable
 
       - name: Install Linux desktop shell dependencies
         if: matrix.platform == 'linux'
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xvfb
 
       - name: Show desktop release contract
-        run: python tools/desktop_release_contract.py --platform ${{ matrix.platform }} --check-plan --json
+        run: python tools/desktop_release_contract.py --platform ${{ matrix.platform }} --profile ${{ matrix.profile }} --check-plan --json
 
       - name: Build and verify desktop package
-        run: python tools/desktop_release_contract.py --platform ${{ matrix.platform }} --run --json
+        run: python tools/desktop_release_contract.py --platform ${{ matrix.platform }} --profile ${{ matrix.profile }} --run --json
 
       - name: Upload verified desktop package
+        if: inputs.upload_artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
@@ -76,4 +170,4 @@ jobs:
             ${{ matrix.checksum_path }}
             ${{ matrix.evidence_path }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 3
