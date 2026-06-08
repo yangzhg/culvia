@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Culvia</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/styles/00-foundation.css" />
+    <link rel="stylesheet" href="/static/styles/10-settings.css" />
+    <link rel="stylesheet" href="/static/styles/20-workbench.css" />
+    <link rel="stylesheet" href="/static/styles/30-viewer.css" />
+    <link rel="stylesheet" href="/static/styles/40-gallery.css" />
+    <link rel="stylesheet" href="/static/styles/50-distribution.css" />
+    <link rel="stylesheet" href="/static/styles/60-export.css" />
+    <link rel="stylesheet" href="/static/styles/90-responsive.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-scroll">
+          <div class="brand">
+            <img class="brand-mark" src="/static/favicon.svg" alt="" aria-hidden="true" draggable="false" />
+            <div class="brand-copy">
+              <div class="brand-name" data-i18n="app.title"></div>
+              <div class="brand-subtitle" data-i18n="app.subtitle"></div>
+            </div>
+            <button id="sidebarToggleBtn" class="sidebar-toggle" type="button" aria-pressed="false" data-i18n-aria-label="app.collapseSidebar" data-i18n-tooltip="app.focusMode">
+              <span class="icon" data-icon="sidebar"></span>
+            </button>
+          </div>
+
+        <section class="panel source-panel">
+          <div class="section-kicker" data-i18n="source.kicker"></div>
+          <div class="segmented" role="tablist" data-i18n-aria-label="source.aria">
+              <button class="segment is-active" data-source="folders" type="button" data-i18n="source.folders"></button>
+              <button class="segment" data-source="uploads" type="button" data-i18n="source.uploads"></button>
+          </div>
+
+          <div class="source-view is-active" data-source-view="folders">
+            <div class="path-card">
+              <div class="path-card-main">
+                <div class="path-icon" data-icon="folder" aria-hidden="true"></div>
+                <div>
+                  <div class="path-title" data-i18n="source.title"></div>
+                  <div id="folderSummary" class="path-summary" data-i18n="source.empty"></div>
+                </div>
+              </div>
+              <button id="pickNativeFolderBtn" class="icon-button" type="button" data-i18n-aria-label="source.pickFolder" data-i18n-tooltip="source.pickFolder">
+                <span class="icon" data-icon="folderPlus"></span>
+              </button>
+            </div>
+            <details class="manual-path-edit">
+              <summary data-i18n="source.pathInput"></summary>
+              <textarea id="folderInput" spellcheck="false"></textarea>
+            </details>
+          </div>
+
+          <div class="source-view" data-source-view="uploads">
+            <div id="dropzone" class="dropzone">
+              <div class="drop-icon" data-icon="upload" aria-hidden="true"></div>
+              <div class="drop-title" data-i18n="source.dropTitle"></div>
+              <div id="uploadHint" class="drop-copy" data-i18n="source.dropHint"></div>
+              <div class="drop-actions">
+                <button id="pickFilesBtn" class="button ghost" type="button"><span class="icon" data-icon="image"></span><span data-i18n="source.images"></span></button>
+                <button id="pickFolderBtn" class="button ghost" type="button"><span class="icon" data-icon="folderPlus"></span><span data-i18n="source.folder"></span></button>
+              </div>
+            </div>
+            <input id="fileInput" type="file" multiple hidden />
+            <input id="folderPicker" type="file" webkitdirectory directory multiple hidden />
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-kicker" data-i18n="models.kicker"></div>
+          <input id="cacheInput" type="hidden" />
+          <div id="modelOptions" class="model-options" data-i18n-aria-label="models.aria"></div>
+          <button id="openSettingsDrawerBtn" class="drawer-entry" type="button" aria-haspopup="dialog" aria-controls="settingsDrawer" aria-expanded="false">
+            <span class="drawer-entry-icon" data-icon="slidersHorizontal" aria-hidden="true"></span>
+            <span class="drawer-entry-copy">
+              <strong data-i18n="drawer.entry.title" data-i18n-tooltip="drawer.entry.title" data-i18n-aria-label="drawer.entry.title"></strong>
+              <small data-i18n="drawer.entry.subtitle" data-i18n-tooltip="drawer.entry.subtitle" data-i18n-aria-label="drawer.entry.subtitle"></small>
+            </span>
+            <span class="drawer-entry-arrow" data-icon="chevronRight" aria-hidden="true"></span>
+          </button>
+        </section>
+
+        <section class="panel">
+          <div class="section-kicker" data-i18n="filters.kicker"></div>
+          <div id="filterPresetPanel" class="saved-filter-views">
+            <div class="saved-filter-head">
+              <label class="field-label" for="filterPresetNameInput" data-i18n="filters.savedViews"></label>
+              <button id="saveFilterPresetBtn" class="icon-button saved-filter-save" type="button" data-i18n-aria-label="filters.saveView" data-i18n-tooltip="filters.saveView">
+                <span class="icon" data-icon="bookmark"></span>
+              </button>
+            </div>
+            <div class="saved-filter-form">
+              <input id="filterPresetNameInput" class="text-input" type="text" maxlength="32" autocomplete="off" data-i18n-placeholder="filters.presetPlaceholder" />
+            </div>
+            <div id="filterPresetHint" class="saved-filter-hint" data-i18n="filters.defaultScope"></div>
+            <div id="filterPresetList" class="saved-filter-list" aria-live="polite"></div>
+          </div>
+          <label id="sortLabel" class="field-label" data-i18n="filters.sort"></label>
+          <input id="sortField" type="hidden" value="recommendation_0_10" />
+          <div id="sortOptions" class="sort-options" role="radiogroup" aria-labelledby="sortLabel"></div>
+          <label id="weightPresetLabel" class="field-label" data-i18n="filters.preference"></label>
+          <input id="weightPreset" type="hidden" value="balanced" />
+          <div id="weightPresetOptions" class="preference-options" role="radiogroup" aria-labelledby="weightPresetLabel"></div>
+          <div id="customWeights" class="custom-weights is-hidden">
+            <label class="field-label compact" for="aestheticWeight" data-i18n="filters.aesthetic"></label>
+            <div class="range-row compact">
+              <input id="aestheticWeight" type="range" min="0" max="1" step="0.05" value="0.6" />
+              <span id="aestheticWeightText">60%</span>
+            </div>
+            <label class="field-label compact" for="technicalWeight" data-i18n="filters.technical"></label>
+            <div class="range-row compact">
+              <input id="technicalWeight" type="range" min="0" max="1" step="0.05" value="0.25" />
+              <span id="technicalWeightText">25%</span>
+            </div>
+            <label class="field-label compact" for="compositionLightWeight" data-i18n="filters.compositionLight"></label>
+            <div class="range-row compact">
+              <input id="compositionLightWeight" type="range" min="0" max="1" step="0.05" value="0.15" />
+              <span id="compositionLightWeightText">15%</span>
+            </div>
+          </div>
+          <label class="field-label" data-i18n="filters.minimum"></label>
+          <div class="threshold-grid">
+            <div class="threshold-item">
+              <div><span data-i18n="filters.recommendation"></span><strong id="minScoreText">0.0</strong></div>
+              <input id="minScore" type="range" min="0" max="10" step="0.1" value="0" />
+            </div>
+            <div class="threshold-item">
+              <div><span data-i18n="filters.modelQuality"></span><strong id="minModelQualityText">0.0</strong></div>
+              <input id="minModelQuality" type="range" min="0" max="10" step="0.1" value="0" />
+            </div>
+            <div class="threshold-item">
+              <div><span data-i18n="filters.aestheticReference"></span><strong id="minAestheticReferenceText">0.0</strong></div>
+              <input id="minAestheticReference" type="range" min="0" max="10" step="0.1" value="0" />
+            </div>
+            <div class="threshold-item">
+              <div><span data-i18n="filters.technicalReview"></span><strong id="minTechnicalText">0.0</strong></div>
+              <input id="minTechnical" type="range" min="0" max="10" step="0.1" value="0" />
+            </div>
+            <div class="threshold-item">
+              <div><span data-i18n="filters.llm"></span><strong id="minLlmReviewText">0.0</strong></div>
+              <input id="minLlmReview" type="range" min="0" max="10" step="0.1" value="0" />
+            </div>
+          </div>
+          <label id="modelAgreementLabel" class="field-label" data-i18n="filters.agreement"></label>
+          <p class="field-hint" data-i18n="filters.agreementHint"></p>
+          <input id="modelAgreement" type="hidden" value="all" />
+          <div id="modelAgreementOptions" class="filter-options" role="radiogroup" aria-labelledby="modelAgreementLabel"></div>
+          <label id="manualStatusFilterLabel" class="field-label" data-i18n="filters.manual"></label>
+          <input id="manualStatusFilter" type="hidden" value="all" />
+          <div id="manualStatusOptions" class="filter-options" role="radiogroup" aria-labelledby="manualStatusFilterLabel"></div>
+          <label id="colorLabelFilterLabel" class="field-label" data-i18n="filters.color"></label>
+          <input id="colorLabelFilter" type="hidden" value="all" />
+          <div id="colorLabelOptions" class="filter-options color-filter-options" role="radiogroup" aria-labelledby="colorLabelFilterLabel"></div>
+          <label class="field-label" for="limitInput" data-i18n="filters.limit"></label>
+          <div class="number-field">
+            <span class="number-field-icon" data-icon="layoutGrid"></span>
+            <input id="limitInput" class="text-input" type="number" min="1" max="500" step="1" value="80" />
+            <span data-i18n="filters.photosSuffix"></span>
+          </div>
+        </section>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="topbar-copy">
+            <div class="eyebrow" data-i18n="topbar.eyebrow"></div>
+            <h1 data-i18n="topbar.title"></h1>
+            <p data-i18n="topbar.subtitle"></p>
+          </div>
+          <div class="topbar-meta">
+            <div class="topbar-global-actions">
+              <button id="openShortcutHelpBtn" class="icon-button shortcut-help-button" type="button" aria-haspopup="dialog" aria-controls="shortcutHelpDialog" aria-expanded="false" data-i18n-aria-label="topbar.shortcuts" data-i18n-tooltip="topbar.shortcuts">
+                <span class="icon" data-icon="circleHelp"></span>
+              </button>
+              <div class="language-switch" data-language-switch>
+                <button id="languageMenuButton" class="language-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="languageMenu" data-i18n-aria-label="settings.languageLabel" data-i18n-tooltip="settings.languageLabel">
+                  <span class="icon" data-icon="globe" aria-hidden="true"></span>
+                  <span id="languageCurrentText" class="language-current"></span>
+                  <span class="language-chevron" data-icon="chevronDown" aria-hidden="true"></span>
+                </button>
+                <input id="languageSelect" type="hidden" value="zh-CN" />
+                <div id="languageMenu" class="language-menu" role="menu" data-i18n-aria-label="settings.languageLabel" hidden></div>
+              </div>
+            </div>
+            <div class="top-status">
+              <div id="modelStatusPill" class="status-pill model-status" tabindex="0" aria-describedby="modelTooltip">
+                <span id="modelDot" class="dot"></span>
+                <span id="modelLabel" data-i18n="topbar.modelStatus"></span>
+                <div id="modelTooltip" class="model-tooltip" role="tooltip"></div>
+              </div>
+              <div id="devicePill" class="status-pill" data-i18n="topbar.device"></div>
+            </div>
+          </div>
+        </header>
+
+        <section class="command-center" data-i18n-aria-label="command.aria">
+          <div class="command-main">
+            <div class="command-state">
+              <span id="commandDot" class="dot"></span>
+              <span id="commandState" data-i18n="command.state"></span>
+            </div>
+            <h2 id="commandTitle" data-i18n="command.title"></h2>
+            <p id="commandDetail" data-i18n="command.detail"></p>
+            <div id="commandProgress" class="command-progress is-hidden">
+              <div class="progress-head">
+                <span id="commandProgressLabel" data-i18n="command.progress"></span>
+                <span id="commandProgressDetail"></span>
+              </div>
+              <div class="progress-track"><div id="commandProgressBar" class="progress-bar"></div></div>
+              <div id="commandCurrentPhoto" class="command-current-photo is-hidden">
+                <img id="commandCurrentThumb" alt="" />
+                <div>
+                  <span data-i18n="command.processing"></span>
+                  <strong id="commandCurrentFile"></strong>
+                  <div id="commandCurrentStage" class="command-current-stage"></div>
+                  <div id="commandCompletedEvaluations" class="command-evaluation-chips"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="command-actions">
+            <button id="mainScoreBtn" class="button primary command-button" type="button" disabled><span class="icon" data-icon="play"></span><span data-i18n="command.start"></span></button>
+            <button id="commandNoticeActionBtn" class="button ghost command-notice-action is-hidden" type="button"><span class="icon" data-icon="undo"></span><span data-i18n="command.undo"></span></button>
+            <button id="pauseJobBtn" class="button ghost is-hidden" type="button"><span class="icon" data-icon="pause"></span><span data-i18n="command.pause"></span></button>
+          </div>
+        </section>
+
+        <section class="stats-grid" data-i18n-aria-label="stats.aria">
+          <div class="stat-card">
+            <span data-i18n="stats.scored"></span>
+            <strong id="statScored">0</strong>
+          </div>
+          <div class="stat-card">
+            <span data-i18n="stats.showing"></span>
+            <strong id="statShowing">0</strong>
+          </div>
+          <div class="stat-card">
+            <span data-i18n="stats.best"></span>
+            <strong id="statBest" data-i18n="stats.empty"></strong>
+          </div>
+          <div class="stat-card">
+            <span data-i18n="stats.average"></span>
+            <strong id="statAverage" data-i18n="stats.empty"></strong>
+          </div>
+        </section>
+
+        <nav class="view-tabs" data-i18n-aria-label="views.aria">
+          <button class="view-tab is-active" data-view="viewer" type="button" data-i18n-tooltip="views.viewer"><span data-icon="panelTop"></span><span data-i18n="views.viewer"></span></button>
+          <button class="view-tab" data-view="gallery" type="button" data-i18n-tooltip="views.gallery"><span data-icon="layoutGrid"></span><span data-i18n="views.gallery"></span></button>
+          <button class="view-tab" data-view="distribution" type="button" data-i18n-tooltip="views.distribution"><span data-icon="barChart"></span><span data-i18n="views.distribution"></span></button>
+          <button class="view-tab" data-view="export" type="button" data-i18n-tooltip="views.export"><span data-icon="archive"></span><span data-i18n="views.export"></span></button>
+        </nav>
+        <div id="filterScopeBar" class="filter-scope-bar is-hidden" aria-live="polite">
+          <div>
+            <span data-i18n="scope.current"></span>
+            <div id="filterScopeChips" class="filter-scope-chips"></div>
+          </div>
+          <button id="clearFilterScopeBtn" class="button ghost filter-scope-clear" type="button" data-i18n="scope.clear"></button>
+        </div>
+
+        <section id="viewerView" class="view-panel is-active">
+          <div id="emptyState" class="empty-state">
+            <div class="empty-symbol"><span class="empty-icon" data-icon="image"></span></div>
+            <h2 data-i18n="empty.viewerTitle"></h2>
+            <p data-i18n="empty.viewerText"></p>
+          </div>
+
+          <div id="viewerStage" class="viewer-stage is-hidden">
+            <div class="image-stage">
+              <div class="viewer-meta">
+                <span id="viewerCounter">0 / 0</span>
+                <strong id="viewerLevel" data-i18n="viewer.unscored"></strong>
+              </div>
+              <button id="prevBtn" class="nav-button left" type="button" data-i18n-aria-label="viewer.prev" data-i18n-tooltip="viewer.prev"><span class="nav-icon" data-icon="chevronLeft"></span></button>
+              <img id="mainImage" alt="" data-i18n-alt="viewer.currentPhotoAlt" />
+              <button id="nextBtn" class="nav-button right" type="button" data-i18n-aria-label="viewer.next" data-i18n-tooltip="viewer.next"><span class="nav-icon" data-icon="chevronRight"></span></button>
+            </div>
+            <div id="filmstrip" class="filmstrip"></div>
+            <aside class="inspector">
+              <div class="inspector-pinned">
+                <div class="score-hero">
+                  <div class="score-hero-main">
+                    <span data-i18n="viewer.recommendation"></span>
+                    <strong id="mainScore" data-i18n="score.noData"></strong>
+                  </div>
+                  <div id="mainStars" class="stars">☆☆☆☆☆</div>
+                  <p id="mainLevel" data-i18n="viewer.unscored"></p>
+                </div>
+                  <div class="manual-panel">
+                  <div class="manual-panel-head">
+                    <div class="manual-panel-title">
+                      <span data-i18n="manual.title"></span>
+                      <button id="markAdvanceToggle" class="mark-advance-toggle" type="button" aria-pressed="false" data-i18n-tooltip="manual.advanceTitle">
+                        <span data-icon="chevronRight" aria-hidden="true"></span><span data-i18n="manual.advance"></span>
+                      </button>
+                    </div>
+                      <strong id="manualStatusText" data-i18n="manual.status.unreviewed"></strong>
+                  </div>
+                  <div id="manualStars" class="manual-stars" data-i18n-aria-label="manual.ratingAria"></div>
+                  <div id="manualColorLabels" class="manual-color-labels" data-i18n-aria-label="manual.colorAria"></div>
+                  <div class="manual-actions">
+                    <button id="manualPickBtn" class="manual-action" type="button" data-i18n-tooltip="manual.pickTooltip" data-i18n-aria-label="manual.pick"><span data-icon="check"></span><span data-i18n="manual.pick"></span></button>
+                    <button id="manualHoldBtn" class="manual-action" type="button" data-i18n-tooltip="manual.holdTooltip" data-i18n-aria-label="manual.hold"><span data-icon="clock"></span><span data-i18n="manual.hold"></span></button>
+                    <button id="manualRejectBtn" class="manual-action" type="button" data-i18n-tooltip="manual.rejectTooltip" data-i18n-aria-label="manual.reject"><span data-icon="x"></span><span data-i18n="manual.reject"></span></button>
+                  </div>
+                  <div class="manual-accept-actions">
+                    <button id="acceptModelBtn" class="manual-accept" type="button" data-i18n-tooltip="manual.acceptModel" data-i18n-aria-label="manual.acceptModel"><span data-icon="sparkle"></span><span data-i18n="manual.acceptModel"></span></button>
+                    <button id="acceptLlmBtn" class="manual-accept" type="button" data-i18n-tooltip="manual.acceptLlm" data-i18n-aria-label="manual.acceptLlm"><span data-icon="brain"></span><span data-i18n="manual.acceptLlm"></span></button>
+                  </div>
+                  <p id="manualSourceText" class="manual-source" data-i18n="manual.sourceEmpty"></p>
+                </div>
+              </div>
+              <div class="inspector-scroll">
+                <div id="signalChips" class="signal-chips" role="list" data-i18n-aria-label="score.signalAria"></div>
+                <div id="scoreRows" class="score-rows"></div>
+              </div>
+              <div class="inspector-actions">
+                <a id="previewLink" class="button secondary" target="_blank" rel="noreferrer"><span class="icon" data-icon="externalLink"></span><span data-i18n="viewer.preview"></span></a>
+                <button id="revealBtn" class="button secondary" type="button"><span class="icon" data-icon="folder"></span><span data-i18n="viewer.reveal"></span></button>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="galleryView" class="view-panel">
+          <div class="gallery-bulk-toolbar" data-i18n-aria-label="gallery.bulkAria">
+            <div class="gallery-bulk-copy">
+              <div class="gallery-bulk-metric is-selected">
+                <span data-i18n="gallery.selected"></span>
+                <strong id="gallerySelectedCount" data-i18n="common.zeroPhotos"></strong>
+              </div>
+              <div class="gallery-bulk-metric">
+                <span data-i18n="gallery.filtered"></span>
+                <strong id="galleryBulkCount" data-i18n="common.zeroPhotos"></strong>
+              </div>
+              <div id="galleryBatchScopeText" class="batch-scope-pill is-filtered" aria-live="polite">
+                <span class="icon" data-icon="crosshair"></span>
+                <span id="galleryBatchScopeLabel" data-i18n="gallery.scopeDefault"></span>
+              </div>
+            </div>
+            <div class="gallery-bulk-actions">
+              <div class="gallery-action-group is-selection">
+                <button id="gallerySelectVisibleBtn" class="gallery-bulk-action is-select-visible" type="button" data-i18n-tooltip="gallery.selectCurrentTooltip" data-i18n-aria-label="gallery.selectCurrentTooltip">
+                  <span class="icon" data-icon="crosshair"></span><span data-i18n="gallery.selectCurrent"></span>
+                </button>
+                <button id="galleryClearSelectionBtn" class="gallery-bulk-action is-clear-selection" type="button" data-i18n-tooltip="gallery.clearSelectionTooltip" data-i18n-aria-label="gallery.clearSelectionTooltip">
+                  <span class="icon" data-icon="x"></span><span data-i18n="gallery.clearSelection"></span>
+                </button>
+              </div>
+              <div class="gallery-action-group is-decision">
+                <button id="galleryBatchPickBtn" class="gallery-bulk-action is-pick" type="button" data-i18n-tooltip="gallery.batchPickTooltip" data-i18n-aria-label="gallery.batchPickTooltip">
+                  <span class="icon" data-icon="check"></span><span data-i18n="manual.pick"></span>
+                </button>
+                <button id="galleryBatchHoldBtn" class="gallery-bulk-action is-pending" type="button" data-i18n-tooltip="gallery.batchHoldTooltip" data-i18n-aria-label="gallery.batchHoldTooltip">
+                  <span class="icon" data-icon="clock"></span><span data-i18n="manual.hold"></span>
+                </button>
+                <button id="galleryBatchRejectBtn" class="gallery-bulk-action is-reject" type="button" data-i18n-tooltip="gallery.batchRejectTooltip" data-i18n-aria-label="gallery.batchRejectTooltip">
+                  <span class="icon" data-icon="x"></span><span data-i18n="manual.reject"></span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div id="gallerySelectionSummary" class="gallery-selection-summary is-hidden" aria-live="polite"></div>
+          <div id="galleryGrid" class="gallery-grid"></div>
+          <div id="gallerySelectionMarquee" class="gallery-selection-marquee is-hidden" aria-hidden="true"></div>
+        </section>
+
+        <section id="distributionView" class="view-panel">
+          <div id="distributionChart" class="distribution-studio"></div>
+        </section>
+
+        <section id="exportView" class="view-panel">
+          <div class="delivery-overview" data-i18n-aria-label="export.collection">
+            <div class="delivery-hero">
+              <span data-i18n="export.collection"></span>
+              <strong id="deliveryReadyCount" data-i18n="common.zeroPhotos"></strong>
+              <p id="deliveryGuidance" data-i18n="export.guidance"></p>
+              <div class="delivery-meter" aria-hidden="true">
+                <i id="deliveryMeterPick" class="is-pick"></i>
+                <i id="deliveryMeterPending" class="is-pending"></i>
+                <i id="deliveryMeterReject" class="is-reject"></i>
+              </div>
+              <div class="delivery-actions">
+                <button id="deliveryReviewBtn" class="button secondary" type="button"><span class="icon" data-icon="layoutGrid"></span><span data-i18n="export.continueReview"></span></button>
+                <button id="deliverySelectedBtn" class="button secondary" type="button"><span class="icon" data-icon="eye"></span><span data-i18n="export.viewSelected"></span></button>
+              </div>
+            </div>
+            <div class="delivery-stats">
+              <div class="delivery-stat is-pick"><span data-i18n="manual.pick"></span><strong id="deliveryPickCount">0</strong></div>
+              <div class="delivery-stat is-pending"><span data-i18n="manual.hold"></span><strong id="deliveryPendingCount">0</strong></div>
+              <div class="delivery-stat is-reject"><span data-i18n="manual.reject"></span><strong id="deliveryRejectCount">0</strong></div>
+              <div class="delivery-stat"><span data-i18n="export.visiblePending"></span><strong id="deliveryVisiblePendingCount">0</strong></div>
+            </div>
+          </div>
+          <div class="panel export-panel">
+            <div>
+              <div class="section-title" data-i18n="export.sectionTitle"></div>
+              <p id="curationSummaryText" data-i18n="export.summaryEmpty"></p>
+            </div>
+            <div class="export-batch-tools">
+              <div id="exportBatchScopeText" class="batch-scope-pill is-filtered" aria-live="polite">
+                <span class="icon" data-icon="crosshair"></span>
+                <span id="exportBatchScopeLabel" data-i18n="gallery.scopeDefault"></span>
+              </div>
+              <div class="export-actions">
+                <button id="acceptFilteredModelBtn" class="button secondary" type="button"><span class="icon" data-icon="sparkle"></span><span data-i18n="export.acceptFiltered"></span></button>
+                <button id="acceptFilteredLlmBtn" class="button secondary" type="button"><span class="icon" data-icon="brain"></span><span data-i18n="manual.acceptLlm"></span></button>
+              </div>
+              <div class="export-utility-actions" data-i18n-aria-label="export.dataExportAria">
+                <a class="export-utility-link" href="/api/export"><span class="icon" data-icon="database"></span><span data-i18n="export.allCsv"></span></a>
+                <a class="export-utility-link" href="/api/export/selected"><span class="icon" data-icon="database"></span><span data-i18n="export.selectedCsv"></span></a>
+              </div>
+              <div id="batchColorLabels" class="batch-color-labels" data-i18n-aria-label="batch.colorAria"></div>
+            </div>
+          </div>
+          <div class="panel export-target-panel">
+            <div class="export-target-copy">
+              <span data-i18n="export.destination"></span>
+              <strong id="exportDestinationText" data-i18n="export.destinationEmpty"></strong>
+            </div>
+            <div class="export-target-actions">
+              <button id="pickExportFolderBtn" class="button secondary" type="button"><span class="icon" data-icon="folder"></span><span data-i18n="export.pickDestination"></span></button>
+              <button id="exportSelectedBtn" class="button primary" type="button"><span class="icon" data-icon="archive"></span><span data-i18n="export.selected"></span></button>
+            </div>
+            <div id="exportPreflight" class="export-preflight-wrap" aria-live="polite"></div>
+            <div id="exportResult" class="export-result-wrap" aria-live="polite"></div>
+            <p id="exportSelectedHint" class="export-hint"></p>
+          </div>
+          <div id="exportList" class="export-list"></div>
+        </section>
+      </main>
+
+      <div id="llmConfirmScrim" class="llm-confirm-scrim is-hidden" aria-hidden="true"></div>
+      <section id="llmConfirmDialog" class="llm-confirm-dialog is-hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="llmConfirmTitle" tabindex="-1">
+        <div class="llm-confirm-mark" data-icon="brain" aria-hidden="true"></div>
+        <div class="llm-confirm-copy">
+          <div class="section-kicker" data-i18n="llmConfirm.kicker"></div>
+          <h2 id="llmConfirmTitle" data-i18n="llmConfirm.title"></h2>
+          <p data-i18n="llmConfirm.copy"></p>
+        </div>
+        <dl class="llm-confirm-facts">
+          <div>
+            <dt data-i18n="llmConfirm.model"></dt>
+            <dd id="llmConfirmModel">-</dd>
+          </div>
+          <div>
+            <dt data-i18n="llmConfirm.endpoint"></dt>
+            <dd id="llmConfirmEndpoint">-</dd>
+          </div>
+          <div>
+            <dt data-i18n="llmConfirm.image"></dt>
+            <dd data-i18n="llmConfirm.compressed" data-i18n-aria-label="llmConfirm.compressed" data-i18n-tooltip="llmConfirm.compressed"></dd>
+          </div>
+        </dl>
+        <div class="llm-confirm-actions">
+          <button id="cancelLlmConfirmBtn" class="button ghost" type="button" data-i18n="common.cancel"></button>
+          <button id="localOnlyScoreBtn" class="button secondary" type="button">
+            <span class="icon" data-icon="cpu"></span><span data-i18n="llmConfirm.localOnly"></span>
+          </button>
+          <button id="confirmLlmScoreBtn" class="button primary" type="button">
+            <span class="icon" data-icon="brain"></span><span data-i18n="llmConfirm.continue"></span>
+          </button>
+        </div>
+      </section>
+
+      <div id="batchStatusConfirmScrim" class="batch-confirm-scrim is-hidden" aria-hidden="true"></div>
+      <section id="batchStatusConfirmDialog" class="batch-confirm-dialog is-hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="batchStatusConfirmTitle" tabindex="-1">
+        <div id="batchStatusConfirmMark" class="batch-confirm-mark is-pick" aria-hidden="true"><span data-icon="check"></span></div>
+        <div class="batch-confirm-copy">
+          <div class="section-kicker" data-i18n="batch.kicker"></div>
+          <h2 id="batchStatusConfirmTitle" data-i18n="batch.title"></h2>
+          <p id="batchStatusConfirmDetail" data-i18n="batch.detail"></p>
+        </div>
+        <dl class="batch-confirm-facts">
+          <div>
+            <dt data-i18n="batch.scope"></dt>
+            <dd id="batchStatusConfirmScope" data-i18n="batch.scopeFiltered"></dd>
+          </div>
+          <div>
+            <dt data-i18n="batch.count"></dt>
+            <dd id="batchStatusConfirmCount" data-i18n="common.zeroPhotos"></dd>
+          </div>
+          <div>
+            <dt data-i18n="batch.action"></dt>
+            <dd id="batchStatusConfirmAction" data-i18n="manual.pick"></dd>
+          </div>
+        </dl>
+        <div class="batch-confirm-actions">
+          <button id="cancelBatchStatusConfirmBtn" class="button ghost" type="button" data-i18n="common.cancel"></button>
+          <button id="confirmBatchStatusBtn" class="button primary" type="button">
+            <span class="icon" data-icon="check"></span><span data-i18n="batch.confirm"></span>
+          </button>
+        </div>
+      </section>
+
+      <div id="dangerConfirmScrim" class="danger-confirm-scrim is-hidden" aria-hidden="true"></div>
+      <section id="dangerConfirmDialog" class="danger-confirm-dialog is-hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="dangerConfirmTitle" tabindex="-1">
+        <div id="dangerConfirmMark" class="danger-confirm-mark" aria-hidden="true"><span data-icon="trash"></span></div>
+        <div class="danger-confirm-copy">
+          <div class="section-kicker" data-i18n="dangerConfirm.kicker"></div>
+          <h2 id="dangerConfirmTitle" data-i18n="dangerConfirm.title"></h2>
+          <p id="dangerConfirmDetail" data-i18n="dangerConfirm.detail"></p>
+        </div>
+        <div class="danger-confirm-actions">
+          <button id="cancelDangerConfirmBtn" class="button ghost" type="button" data-i18n="common.cancel"></button>
+          <button id="confirmDangerActionBtn" class="button primary danger-confirm-primary" type="button">
+            <span class="icon" data-icon="trash"></span><span data-i18n="dangerConfirm.confirm"></span>
+          </button>
+        </div>
+      </section>
+
+      <div id="settingsScrim" class="settings-scrim is-hidden" aria-hidden="true"></div>
+      <aside id="settingsDrawer" class="settings-drawer is-hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="settingsDrawerTitle" tabindex="-1">
+        <div class="settings-drawer-head">
+          <div>
+            <div class="section-kicker" data-i18n="settings.kicker"></div>
+            <h2 id="settingsDrawerTitle" data-i18n="settings.title"></h2>
+            <p data-i18n="settings.copy"></p>
+          </div>
+          <button id="closeSettingsDrawerBtn" class="icon-button settings-drawer-close" type="button" data-i18n-aria-label="settings.close" data-i18n-tooltip="settings.close">
+            <span class="icon" data-icon="x"></span>
+          </button>
+        </div>
+
+        <div class="settings-drawer-body">
+          <section class="drawer-section settings-panel" data-i18n-aria-label="settings.advancedAria">
+            <div class="drawer-section-head">
+              <span class="drawer-section-icon" data-icon="settings" aria-hidden="true"></span>
+              <div>
+                <strong data-i18n="settings.advancedTitle"></strong>
+                <small data-i18n="settings.advancedCopy"></small>
+              </div>
+            </div>
+            <label class="field-label" data-i18n="llm.service"></label>
+            <div class="llm-config">
+              <div class="llm-status-row">
+                <span id="llmStatusPill" class="llm-status-pill" data-i18n="llm.unconfigured"></span>
+                <span id="llmModelPreview" class="llm-model-preview" data-i18n="llm.defaultModel"></span>
+                <button id="editLlmConfigBtn" class="button ghost llm-edit-toggle" type="button">
+                  <span class="icon" data-icon="pencil"></span><span data-i18n="llm.edit"></span>
+                </button>
+                <button id="cancelLlmConfigBtn" class="button ghost llm-edit-toggle is-hidden" type="button">
+                  <span class="icon" data-icon="x"></span><span data-i18n="common.cancel"></span>
+                </button>
+              </div>
+              <div id="llmConfigReadonly" class="llm-readonly-card">
+                <div class="llm-readonly-item">
+                  <span data-i18n="llm.key"></span>
+                  <strong id="llmReadonlyKey" data-i18n="llm.unconfigured"></strong>
+                </div>
+                <div class="llm-readonly-item">
+                  <span data-i18n="llm.source"></span>
+                  <strong id="llmReadonlySource" data-i18n="llm.unconfigured"></strong>
+                </div>
+                <div class="llm-readonly-item">
+                  <span data-i18n="llm.endpoint"></span>
+                  <strong id="llmReadonlyBaseUrl" data-i18n="llm.defaultEndpoint"></strong>
+                </div>
+                <div class="llm-readonly-item">
+                  <span data-i18n="llm.model"></span>
+                  <strong id="llmReadonlyModel" data-i18n="llm.defaultModel"></strong>
+                </div>
+                <div class="llm-readonly-item">
+                  <span data-i18n="llm.prompt"></span>
+                  <strong id="llmReadonlyPrompt" data-i18n="llm.promptDefault"></strong>
+                </div>
+              </div>
+              <div id="llmConfigEditor" class="llm-config-editor is-hidden">
+                <div class="llm-editor-section">
+                  <div class="llm-editor-section-head"><span>01</span><strong data-i18n="llm.editor.connection"></strong></div>
+                  <input id="llmApiKeyInput" class="text-input" type="password" autocomplete="off" spellcheck="false" placeholder="API Key" />
+                  <input id="llmBaseUrlInput" class="text-input" type="url" spellcheck="false" data-i18n-placeholder="llm.baseUrlPlaceholder" />
+                </div>
+                <div class="llm-editor-section">
+                  <div class="llm-editor-section-head"><span>02</span><strong data-i18n="llm.editor.model"></strong></div>
+                  <div class="llm-model-picker">
+                    <div id="llmModelPicker" class="llm-model-combobox">
+                      <button id="llmModelButton" class="llm-model-button" type="button" aria-haspopup="listbox" aria-expanded="false">
+                        <span class="icon" data-icon="brain"></span>
+                        <span class="llm-model-button-copy">
+                          <strong id="llmModelButtonText" data-i18n="llm.defaultModel"></strong>
+                          <small id="llmModelButtonMeta" data-i18n="llm.pickFromList"></small>
+                        </span>
+                        <span class="icon llm-model-chevron" data-icon="chevronDown"></span>
+                      </button>
+                      <div id="llmModelMenu" class="llm-model-menu is-hidden">
+                        <label class="llm-model-search">
+                          <span class="icon" data-icon="search"></span>
+                          <input id="llmModelSearchInput" type="search" autocomplete="off" spellcheck="false" data-i18n-placeholder="llm.searchPlaceholder" />
+                        </label>
+                        <div id="llmModelList" class="llm-model-list" role="listbox" data-i18n-aria-label="llm.availableModels"></div>
+                      </div>
+                    </div>
+                      <button id="refreshLlmModelsBtn" class="button icon-button" type="button" data-i18n-aria-label="llm.refreshModels" data-i18n-tooltip="llm.refreshModels">
+                      <span class="icon" data-icon="refreshCw"></span>
+                    </button>
+                  </div>
+                  <div id="llmModelListHint" class="llm-model-list-hint" data-i18n="llm.modelHint"></div>
+                </div>
+                <div class="llm-editor-section">
+                  <div class="llm-editor-section-head"><span>03</span><strong data-i18n="llm.editor.review"></strong></div>
+                  <input id="llmPromptPreset" type="hidden" value="balanced" />
+                  <div id="llmPromptOptions" class="llm-prompt-options" role="radiogroup" data-i18n-aria-label="llm.promptAria"></div>
+                  <textarea id="llmCustomPromptInput" class="llm-custom-prompt" spellcheck="false" data-i18n-placeholder="llm.customPromptPlaceholder"></textarea>
+                  <label class="llm-persist-row">
+                    <input id="persistLlmConfig" type="checkbox" />
+                    <span data-i18n="llm.persist"></span>
+                  </label>
+                </div>
+                <div class="llm-actions">
+                  <button id="saveLlmConfigBtn" class="button ghost" type="button"><span class="icon" data-icon="sparkle"></span><span data-i18n="llm.save"></span></button>
+                  <button id="clearLlmKeyBtn" class="button ghost" type="button"><span class="icon" data-icon="trash"></span><span data-i18n="llm.clear"></span></button>
+                </div>
+              </div>
+              <p id="llmConfigHint" class="settings-copy" data-i18n="llm.configHint"></p>
+            </div>
+            <label class="field-label" data-i18n="network.title"></label>
+            <div class="segmented network-segmented" role="tablist" data-i18n-aria-label="network.title">
+              <button class="segment is-active" data-network="direct" type="button" data-i18n="network.direct"></button>
+              <button class="segment" data-network="system" type="button" data-i18n="network.system"></button>
+            </div>
+          </section>
+
+          <section class="drawer-section history-panel" data-i18n-aria-label="history.aria">
+            <div class="drawer-section-head">
+              <span class="drawer-section-icon" data-icon="undo" aria-hidden="true"></span>
+              <div>
+                <strong data-i18n="history.title"></strong>
+                <small data-i18n="history.copy"></small>
+              </div>
+            </div>
+            <div id="curationHistoryList" class="curation-history-list" aria-live="polite">
+              <div class="curation-history-empty" data-i18n="history.empty"></div>
+            </div>
+          </section>
+
+          <section class="drawer-section maintenance-panel" data-i18n-aria-label="maintenance.aria">
+            <div class="drawer-section-head">
+              <span class="drawer-section-icon" data-icon="hardDrive" aria-hidden="true"></span>
+              <div>
+                <strong data-i18n="maintenance.title"></strong>
+                <small data-i18n="maintenance.copy"></small>
+              </div>
+            </div>
+            <div class="maintenance-actions">
+              <button id="clearHistoryBtn" class="button danger maintenance-button" type="button">
+                <span class="icon" data-icon="trash"></span><span data-i18n="maintenance.clearScores"></span>
+              </button>
+              <button id="clearModelBtn" class="button secondary maintenance-button" type="button">
+                <span class="icon" data-icon="trash"></span><span data-i18n="maintenance.removeModels"></span>
+              </button>
+            </div>
+            <p class="maintenance-copy" data-i18n="maintenance.note"></p>
+          </section>
+        </div>
+      </aside>
+
+      <div id="shortcutHelpScrim" class="shortcut-help-scrim is-hidden" aria-hidden="true"></div>
+      <section id="shortcutHelpDialog" class="shortcut-help-dialog is-hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="shortcutHelpTitle" tabindex="-1">
+        <div class="shortcut-help-head">
+          <div>
+            <p data-i18n="shortcuts.kicker"></p>
+            <h2 id="shortcutHelpTitle" data-i18n="shortcuts.title"></h2>
+          </div>
+          <button id="closeShortcutHelpBtn" class="icon-button shortcut-help-close" type="button" data-i18n-aria-label="shortcuts.close" data-i18n-tooltip="shortcuts.close">
+            <span class="icon" data-icon="x"></span>
+          </button>
+        </div>
+        <div id="shortcutHelpList" class="shortcut-help-list"></div>
+      </section>
+    </div>
+
+    <script src="/static/locales/zh-CN.js" defer></script>
+    <script src="/static/locales/en.js" defer></script>
+    <script src="/static/i18n_messages.js" defer></script>
+    <script src="/static/i18n.js" defer></script>
+    <script src="/static/filter_state.js" defer></script>
+    <script src="/static/filter_presets.js" defer></script>
+    <script src="/static/culling_flow.js" defer></script>
+    <script src="/static/shortcuts.js" defer></script>
+    <script src="/static/gallery_keyboard.js" defer></script>
+    <script src="/static/viewer_keyboard.js" defer></script>
+    <script src="/static/manual_status.js" defer></script>
+    <script src="/static/llm_config_view.js" defer></script>
+    <script src="/static/command_view.js" defer></script>
+    <script src="/static/export_preflight.js" defer></script>
+    <script src="/static/export_preflight_state.js" defer></script>
+    <script src="/static/export_result_data.js" defer></script>
+    <script src="/static/export_result.js" defer></script>
+    <script src="/static/export_actions.js" defer></script>
+    <script src="/static/export_list.js" defer></script>
+    <script src="/static/batch_actions.js" defer></script>
+    <script src="/static/clipboard.js" defer></script>
+    <script src="/static/api_client.js" defer></script>
+    <script src="/static/distribution_model.js" defer></script>
+    <script src="/static/app_config.js" defer></script>
+    <script src="/static/icons.js" defer></script>
+    <script src="/static/ui_helpers.js" defer></script>
+    <script src="/static/gallery_view.js" defer></script>
+    <script src="/static/distribution_view.js" defer></script>
+    <script src="/static/viewer_inspector.js" defer></script>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

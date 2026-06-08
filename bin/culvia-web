@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+VENV=${CULVIA_VENV:-"$HOME/.venvs/culvia"}
+BASE_PYTHON=${PYTHON:-python3}
+
+if [ -x "$VENV/bin/python" ]; then
+  PY="$VENV/bin/python"
+elif [ -x "$VENV/Scripts/python.exe" ]; then
+  PY="$VENV/Scripts/python.exe"
+else
+  PY="$BASE_PYTHON"
+fi
+
+cd "$ROOT"
+exec "$PY" -c "from culvia.server import main; import sys; sys.argv[0] = 'bin/culvia-web'; raise SystemExit(main(sys.argv[1:]))" "$@"

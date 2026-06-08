@@ -1,0 +1,139 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "culvia"
+version = "0.1.0"
+description = "Photo curation and review application for photographers."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Culvia contributors" },
+]
+keywords = ["photography", "photo-culling", "aesthetic-scoring", "local-first", "desktop-app"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Web Environment",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Multimedia :: Graphics",
+]
+dependencies = [
+  "starlette",
+  "uvicorn",
+  "python-multipart",
+  "pandas",
+  "requests",
+  "torch",
+  "torchvision",
+  "transformers",
+  "pillow",
+  "pillow-heif",
+  "huggingface_hub",
+  "tqdm",
+]
+
+[project.optional-dependencies]
+desktop-runtime = [
+  "keyring>=25",
+]
+desktop = [
+  "pyinstaller>=6",
+  "keyring>=25",
+]
+release = [
+  "build>=1.2",
+  "twine>=5",
+  "wheel>=0.43",
+]
+dev = [
+  "pre-commit>=3.7",
+  "ruff>=0.8",
+]
+
+[project.scripts]
+culvia = "culvia.cli:main"
+culvia-web = "culvia.server:main"
+culvia-supervisor = "culvia.supervisor:main"
+
+[project.urls]
+Homepage = "https://github.com/yangzhg/culvia"
+Documentation = "https://github.com/yangzhg/culvia#readme"
+Issues = "https://github.com/yangzhg/culvia/issues"
+Source = "https://github.com/yangzhg/culvia"
+
+[tool.setuptools]
+packages = ["culvia"]
+py-modules = ["culvia_app"]
+
+[tool.setuptools.data-files]
+"share/culvia/web" = [
+  "web/index.html",
+  "web/favicon.svg",
+  "web/i18n_messages.js",
+  "web/i18n.js",
+  "web/filter_state.js",
+  "web/filter_presets.js",
+  "web/culling_flow.js",
+  "web/shortcuts.js",
+  "web/gallery_keyboard.js",
+  "web/viewer_keyboard.js",
+  "web/manual_status.js",
+  "web/llm_config_view.js",
+  "web/command_view.js",
+  "web/export_preflight.js",
+  "web/export_preflight_state.js",
+  "web/export_result_data.js",
+  "web/export_result.js",
+  "web/export_actions.js",
+  "web/export_list.js",
+  "web/batch_actions.js",
+  "web/clipboard.js",
+  "web/api_client.js",
+  "web/distribution_model.js",
+  "web/distribution_view.js",
+  "web/viewer_inspector.js",
+  "web/app_config.js",
+  "web/icons.js",
+  "web/ui_helpers.js",
+  "web/gallery_view.js",
+  "web/app.js",
+  "web/styles.css",
+]
+"share/culvia/web/styles" = [
+  "web/styles/00-foundation.css",
+  "web/styles/10-settings.css",
+  "web/styles/20-workbench.css",
+  "web/styles/30-viewer.css",
+  "web/styles/40-gallery.css",
+  "web/styles/50-distribution.css",
+  "web/styles/60-export.css",
+  "web/styles/90-responsive.css",
+]
+"share/culvia/web/locales" = [
+  "web/locales/zh-CN.js",
+  "web/locales/en.js",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = [
+  "analysis_cache",
+  "build",
+  "dist",
+  "culvia_uploads",
+  "model_cache",
+  "thumbnail_cache",
+  "upload_cache",
+]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]

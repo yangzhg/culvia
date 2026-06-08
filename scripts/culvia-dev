@@ -1,0 +1,289 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+VENV=${CULVIA_VENV:-"$HOME/.venvs/culvia"}
+BASE_PYTHON=${PYTHON:-python3}
+
+show_help() {
+  cat <<'EOF'
+Culvia developer command runner
+
+Usage:
+  scripts/culvia-dev <command> [args...]
+
+Environment:
+  CULVIA_VENV  Virtualenv path. Default: ~/.venvs/culvia
+  PYTHON          Python executable used to create the virtualenv. Default: python3
+
+Commands:
+  init                 Create/update the dev virtualenv and install .[desktop,release,dev]
+  install              Create/update the virtualenv and install the runtime package
+  web [args...]        Start the Web server through bin/culvia-web
+  server [args...]     Start the supervised local Web app from the source checkout
+  cli [args...]        Run the batch scoring CLI
+  runtime-config       Show the persisted desktop runtime config
+  runtime-configure    Update the persisted desktop runtime config
+  runtime-reset-config Remove the persisted desktop runtime config
+  runtime-doctor       Inspect the app-managed Python runtime
+  runtime-create       Create the app-managed Python virtualenv
+  runtime-install      Install Culvia into the app-managed Python runtime
+  runtime-ensure       Create and repair the app-managed Python runtime
+  test                 Run the unit test suite
+  js-check             Check all web/**/*.js files with node --check
+  lint                 Run high-signal lint, syntax, format, and secret checks
+  format               Format Python and Rust source files
+  pre-commit-install   Install Git pre-commit hooks
+  pre-commit           Run all pre-commit hooks against the repository
+  gate                 Run formal gate without release smoke
+  gate-full            Run the full formal gate
+  desktop-ready          Run Desktop readiness checks
+  desktop-dev          Install desktop npm deps and run the dev shell
+  app-icons            Sync web favicon, desktop icons, and splash mark from assets/brand/culvia-icon.svg
+  backend-plan         Check the PyInstaller backend build plan
+  backend-placeholder  Ensure the desktop compile-check backend placeholder
+  backend-build        Build the production backend
+  python-release-plan  Print the pip wheel/sdist release build command
+  python-release       Build and verify pip wheel/sdist artifacts under dist/python
+  macos-release-plan   Print the local macOS release build plan
+  macos-release        Build the local macOS app/dmg release
+  macos-lite-release-plan
+                       Print the local macOS Lite app/dmg release plan
+  macos-lite-release   Build the local macOS Lite app/dmg release
+  macos-notarized-release-plan
+                       Print the strict Developer ID/notarized macOS release plan
+  macos-notarized-release
+                       Build the strict Developer ID/notarized macOS release
+  windows-release-plan Print the Windows native release contract
+  windows-release      Run the Windows native release contract on Windows
+  windows-lite-release-plan
+                       Print the Windows Lite native release contract
+  windows-lite-release Run the Windows Lite native release contract on Windows
+  linux-release-plan   Print the Linux native release contract
+  linux-release        Run the Linux native release contract on Linux
+  linux-lite-release-plan
+                       Print the Linux Lite native release contract
+  linux-lite-release   Run the Linux Lite native release contract on Linux
+  lite-release-plan    Print the Lite release plan for the current OS
+  lite-release         Build the Lite release for the current OS
+  release-status       Print the release status report
+  clean [args...]      Run runtime artifact cleanup; pass --apply to delete
+EOF
+}
+
+venv_python_path() {
+  if [ -x "$VENV/bin/python" ]; then
+    printf '%s\n' "$VENV/bin/python"
+    return 0
+  fi
+  printf '%s\n' "$BASE_PYTHON"
+}
+
+ensure_venv() {
+  if [ ! -x "$VENV/bin/python" ]; then
+    mkdir -p "$(dirname "$VENV")"
+    "$BASE_PYTHON" -m venv "$VENV"
+  fi
+}
+
+run_python_main() {
+  module=$1
+  display_name=$2
+  shift 2
+  py=$(venv_python_path)
+  cd "$ROOT"
+  "$py" -c "from $module import main; import sys; sys.argv[0] = '$display_name'; raise SystemExit(main(sys.argv[1:]))" "$@"
+}
+
+run_tool() {
+  tool=$1
+  shift
+  py=$(venv_python_path)
+  cd "$ROOT"
+  "$py" "$tool" "$@"
+}
+
+run_bin() {
+  command=$1
+  shift
+  cd "$ROOT"
+  "./bin/$command" "$@"
+}
+
+command=${1:-help}
+if [ $# -gt 0 ]; then
+  shift
+fi
+
+case "$command" in
+  help|-h|--help)
+    show_help
+    ;;
+  init)
+    ensure_venv
+    "$VENV/bin/python" -m pip install -U pip
+    cd "$ROOT"
+    "$VENV/bin/python" -m pip install -e '.[desktop,release,dev]'
+    ;;
+  install)
+    ensure_venv
+    "$VENV/bin/python" -m pip install -U pip
+    cd "$ROOT"
+    "$VENV/bin/python" -m pip install -e .
+    ;;
+  web)
+    run_bin culvia-web "$@"
+    ;;
+  server)
+    run_python_main culvia.supervisor culvia-supervisor "$@"
+    ;;
+  cli)
+    run_python_main culvia.cli culvia "$@"
+    ;;
+  runtime-config)
+    run_python_main culvia.runtime_manager "culvia runtime" config "$@"
+    ;;
+  runtime-configure)
+    run_python_main culvia.runtime_manager "culvia runtime" configure "$@"
+    ;;
+  runtime-reset-config)
+    run_python_main culvia.runtime_manager "culvia runtime" reset-config "$@"
+    ;;
+  runtime-doctor)
+    run_python_main culvia.runtime_manager "culvia runtime" doctor "$@"
+    ;;
+  runtime-create)
+    run_python_main culvia.runtime_manager "culvia runtime" create "$@"
+    ;;
+  runtime-install)
+    run_python_main culvia.runtime_manager "culvia runtime" install "$@"
+    ;;
+  runtime-ensure)
+    run_python_main culvia.runtime_manager "culvia runtime" ensure "$@"
+    ;;
+  test)
+    run_tool -m unittest discover -s tests
+    ;;
+  js-check)
+    run_tool tools/pre_commit_checks.py js-syntax
+    ;;
+  lint)
+    run_tool -m ruff format --check culvia culvia_app.py tests tools desktop/tauri/scripts
+    run_tool -m ruff check culvia culvia_app.py tests tools desktop/tauri/scripts
+    run_tool tools/pre_commit_checks.py js-syntax
+    run_tool tools/pre_commit_checks.py shell-syntax
+    run_tool tools/pre_commit_checks.py makefile
+    run_tool tools/pre_commit_checks.py rust-format
+    run_tool tools/pre_commit_checks.py secret-scan
+    ;;
+  format)
+    run_tool -m ruff format culvia culvia_app.py tests tools desktop/tauri/scripts
+    run_tool tools/pre_commit_checks.py rust-format --fix
+    ;;
+  pre-commit-install)
+    run_tool -m pre_commit install
+    ;;
+  pre-commit)
+    run_tool -m pre_commit run --all-files
+    ;;
+  gate)
+    run_tool tools/formal_gate.py --skip-release-smoke
+    ;;
+  gate-full)
+    run_tool tools/formal_gate.py
+    ;;
+  desktop-ready)
+    run_tool tools/check_desktop_readiness.py
+    ;;
+  desktop-dev)
+    cd "$ROOT"
+    npm --prefix desktop/tauri install
+    npm --prefix desktop/tauri run tauri:dev
+    ;;
+  app-icons)
+    run_tool tools/generate_app_icons.py "$@"
+    ;;
+  backend-plan)
+    run_tool desktop/tauri/scripts/build-backend.py --check-plan
+    ;;
+  backend-placeholder)
+    run_tool desktop/tauri/scripts/build-backend.py --ensure-placeholder
+    ;;
+  backend-build)
+    run_tool desktop/tauri/scripts/build-backend.py --build
+    ;;
+  python-release-plan)
+    printf '%s\n' "python tools/release_smoke.py --build --wheelhouse dist/python --build-sdist --dist-dir dist/python --install --twine-check --strict"
+    ;;
+  python-release)
+    run_tool tools/release_smoke.py --build --wheelhouse "$ROOT/dist/python" --build-sdist --dist-dir "$ROOT/dist/python" --install --twine-check --strict
+    ;;
+  macos-release-plan)
+    run_tool tools/build_macos_app.py --clean-first --check-plan
+    ;;
+  macos-release)
+    run_tool tools/build_macos_app.py --clean-first
+    ;;
+  macos-lite-release-plan)
+    run_tool tools/build_macos_app.py --clean-first --runtime-profile lite --check-plan
+    ;;
+  macos-lite-release)
+    run_tool tools/build_macos_app.py --clean-first --runtime-profile lite
+    ;;
+  macos-notarized-release-plan)
+    run_tool tools/build_macos_app.py --clean-first --strict-release-signing --strict-artifacts --check-plan
+    ;;
+  macos-notarized-release)
+    run_tool tools/build_macos_app.py --clean-first --strict-release-signing --strict-artifacts
+    ;;
+  windows-release-plan)
+    run_tool tools/desktop_release_contract.py --platform windows --check-plan
+    ;;
+  windows-release)
+    run_tool tools/desktop_release_contract.py --platform windows --run
+    ;;
+  windows-lite-release-plan)
+    run_tool tools/desktop_release_contract.py --platform windows --profile lite --check-plan
+    ;;
+  windows-lite-release)
+    run_tool tools/desktop_release_contract.py --platform windows --profile lite --run
+    ;;
+  linux-release-plan)
+    run_tool tools/desktop_release_contract.py --platform linux --check-plan
+    ;;
+  linux-release)
+    run_tool tools/desktop_release_contract.py --platform linux --run
+    ;;
+  linux-lite-release-plan)
+    run_tool tools/desktop_release_contract.py --platform linux --profile lite --check-plan
+    ;;
+  linux-lite-release)
+    run_tool tools/desktop_release_contract.py --platform linux --profile lite --run
+    ;;
+  lite-release-plan)
+    case "$(uname -s)" in
+      Darwin) run_tool tools/build_macos_app.py --clean-first --runtime-profile lite --check-plan ;;
+      Linux) run_tool tools/desktop_release_contract.py --platform linux --profile lite --check-plan ;;
+      *) printf 'Lite release on Windows should use scripts/culvia-dev.ps1 lite-release-plan\n' >&2; exit 2 ;;
+    esac
+    ;;
+  lite-release)
+    case "$(uname -s)" in
+      Darwin) run_tool tools/build_macos_app.py --clean-first --runtime-profile lite ;;
+      Linux) run_tool tools/desktop_release_contract.py --platform linux --profile lite --run ;;
+      *) printf 'Lite release on Windows should use scripts/culvia-dev.ps1 lite-release\n' >&2; exit 2 ;;
+    esac
+    ;;
+  release-status)
+    run_tool tools/release_status_report.py
+    ;;
+  clean)
+    run_tool tools/clean_runtime_artifacts.py "$@"
+    ;;
+  *)
+    printf 'Unknown command: %s\n\n' "$command" >&2
+    show_help >&2
+    exit 2
+    ;;
+esac

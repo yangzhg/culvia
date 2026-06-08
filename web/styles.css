@@ -1,0 +1,9 @@
+/* Compatibility stylesheet. The application loads split CSS files from web/styles/ directly. */
+@import url('/static/styles/00-foundation.css');
+@import url('/static/styles/10-settings.css');
+@import url('/static/styles/20-workbench.css');
+@import url('/static/styles/30-viewer.css');
+@import url('/static/styles/40-gallery.css');
+@import url('/static/styles/50-distribution.css');
+@import url('/static/styles/60-export.css');
+@import url('/static/styles/90-responsive.css');

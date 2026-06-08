@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+import unittest
+from pathlib import Path
+
+from culvia.source_requests import (
+    normalize_cache_path,
+    normalize_source_folders,
+    normalize_source_mode,
+    normalize_uploaded_path_values,
+    source_request_from_payload,
+)
+
+
+class SourceRequestTests(unittest.TestCase):
+    def test_normalize_source_mode_falls_back_to_folders(self) -> None:
+        self.assertEqual(normalize_source_mode("uploads"), "uploads")
+        self.assertEqual(normalize_source_mode("unknown"), "folders")
+        self.assertEqual(normalize_source_mode(None), "folders")
+
+    def test_normalize_source_folders_trims_deduplicates_and_accepts_single_value(self) -> None:
+        self.assertEqual(normalize_source_folders([" /a ", "", "/a", Path("/b")]), ["/a", "/b"])
+        self.assertEqual(normalize_source_folders(" /single "), ["/single"])
+
+    def test_normalize_uploaded_path_values_preserves_raw_values_for_sanitizer(self) -> None:
+        path = Path("/tmp/a.jpg")
+        self.assertEqual(normalize_uploaded_path_values(path), [path])
+        self.assertEqual(normalize_uploaded_path_values(["/a.jpg", "/b.jpg"]), ["/a.jpg", "/b.jpg"])
+        self.assertEqual(normalize_uploaded_path_values(None), [])
+
+    def test_normalize_cache_path_defaults_and_rejects_unknown_suffix(self) -> None:
+        self.assertEqual(normalize_cache_path("", default_cache_path="/tmp/default.sqlite"), "/tmp/default.sqlite")
+
+        with self.assertRaisesRegex(ValueError, "SQLite"):
+            normalize_cache_path("/tmp/notes.txt", default_cache_path="/tmp/default.sqlite")
+
+        with self.assertRaisesRegex(ValueError, "SQLite"):
+            normalize_cache_path("/tmp/scores.csv", default_cache_path="/tmp/default.sqlite")
+
+    def test_source_request_from_payload_normalizes_all_fields(self) -> None:
+        source = source_request_from_payload(
+            {
+                "mode": "uploads",
+                "folders": [" /photos ", "/photos"],
+                "cachePath": " /tmp/scores.sqlite3 ",
+                "uploadedPaths": ["/tmp/a.jpg"],
+            },
+            default_cache_path="/tmp/default.sqlite",
+        )
+
+        self.assertEqual(source.mode, "uploads")
+        self.assertEqual(source.folders, ["/photos"])
+        self.assertEqual(source.cache_path, "/tmp/scores.sqlite3")
+        self.assertEqual(source.uploaded_paths, ["/tmp/a.jpg"])
+
+
+if __name__ == "__main__":
+    unittest.main()

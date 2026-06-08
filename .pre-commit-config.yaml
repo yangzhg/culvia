@@ -1,0 +1,65 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=10240"]
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-shebang-scripts-are-executable
+        exclude: \.rs$
+      - id: check-toml
+      - id: check-yaml
+      - id: debug-statements
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: Python format (ruff)
+        entry: ruff format --check
+        language: python
+        additional_dependencies: ["ruff>=0.8"]
+        types_or: [python, pyi]
+      - id: ruff-high-signal-lint
+        name: Python lint (ruff high-signal errors)
+        entry: ruff check --select E9,F63,F7,F82
+        language: python
+        additional_dependencies: ["ruff>=0.8"]
+        types_or: [python, pyi]
+      - id: web-js-syntax
+        name: Web JavaScript syntax
+        entry: python tools/pre_commit_checks.py js-syntax
+        language: python
+        files: ^web/.*\.js$
+        pass_filenames: false
+      - id: shell-syntax
+        name: POSIX shell syntax
+        entry: python tools/pre_commit_checks.py shell-syntax
+        language: python
+        files: ^(bin/culvia-web|scripts/culvia-dev)$
+        pass_filenames: false
+      - id: makefile-smoke
+        name: Makefile smoke
+        entry: python tools/pre_commit_checks.py makefile
+        language: python
+        files: ^(Makefile|scripts/culvia-dev|scripts/culvia-dev\.ps1|bin/culvia-web)$
+        pass_filenames: false
+      - id: rust-format
+        name: Rust format
+        entry: python tools/pre_commit_checks.py rust-format
+        language: python
+        files: ^desktop/tauri/src-tauri/.*\.(rs|toml)$
+        pass_filenames: false
+      - id: secret-scan
+        name: Secret scan
+        entry: python tools/pre_commit_checks.py secret-scan
+        language: python
+        always_run: true
+        pass_filenames: false
