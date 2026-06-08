@@ -885,7 +885,7 @@ body.is-batch-confirm-open {
 
 .llm-model-picker {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
 }
@@ -1054,27 +1054,31 @@ body.is-batch-confirm-open {
   font-weight: 680;
 }
 
-.llm-model-picker .icon-button {
-  display: grid;
-  place-items: center;
-  width: 42px;
+.llm-fetch-models-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
   height: 42px;
   min-height: 42px;
-  padding: 0;
+  padding: 0 12px;
   border-radius: 14px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 780;
 }
 
-.llm-model-picker .icon-button .icon {
+.llm-fetch-models-button .icon {
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   margin: 0;
 }
 
-.llm-model-picker .icon-button svg {
-  width: 18px;
-  height: 18px;
+.llm-fetch-models-button svg {
+  width: 16px;
+  height: 16px;
 }
 
 .llm-model-list-hint {
@@ -1132,6 +1136,34 @@ body.is-batch-confirm-open {
   color: var(--ink);
   border-color: rgba(var(--accent-rgb), 0.28);
   background: var(--accent-wash);
+}
+
+.llm-preset-prompt {
+  display: grid;
+  gap: 5px;
+  padding: 9px 10px;
+  border: 1px solid rgba(60, 60, 67, 0.1);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.44);
+}
+
+.llm-preset-prompt span {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 760;
+}
+
+.llm-preset-prompt p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 
 .llm-custom-prompt {

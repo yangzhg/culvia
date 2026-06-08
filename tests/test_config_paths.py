@@ -37,6 +37,17 @@ class ConfigPathTests(unittest.TestCase):
             with patch.dict(os.environ, {"CULVIA_UPLOAD_DIR": str(current)}, clear=False):
                 self.assertEqual(settings.upload_cache_dir(), current)
 
+    def test_default_photo_dirs_are_empty_without_explicit_configuration(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(settings.default_photo_dirs(), [])
+
+    def test_default_photo_dirs_use_explicit_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first"
+            second = Path(tmp) / "second"
+            with patch.dict(os.environ, {"CULVIA_PHOTO_DIRS": os.pathsep.join([str(first), str(second)])}, clear=True):
+                self.assertEqual(settings.default_photo_dirs(), [str(first), str(second)])
+
     def test_user_dirs_are_cross_platform(self) -> None:
         with patch.dict(os.environ, {}, clear=True), patch("sys.platform", "linux"):
             self.assertEqual(settings.user_data_dir(), Path.home() / ".local" / "share" / settings.APP_SLUG)

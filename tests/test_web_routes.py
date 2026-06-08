@@ -42,6 +42,7 @@ class WebRouteTests(unittest.TestCase):
                 ("/api/models", "api_models", ("POST",)),
                 ("/api/cache", "api_cache", ("POST",)),
                 ("/api/cache/clear", "api_clear_history", ("POST",)),
+                ("/api/data/clear", "api_clear_local_data", ("POST",)),
                 ("/api/model/clear", "api_clear_model", ("POST",)),
                 ("/api/upload", "api_upload", ("POST",)),
                 ("/api/score", "api_score", ("POST",)),

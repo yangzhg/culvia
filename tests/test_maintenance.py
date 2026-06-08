@@ -6,6 +6,7 @@ from pathlib import Path
 
 from culvia.maintenance import (
     clear_history_cache,
+    clear_local_data,
     clear_model_caches,
     remove_path_safely,
     resolve_history_cache_path,
@@ -46,16 +47,52 @@ class MaintenanceTests(unittest.TestCase):
             repo_root = root / "hf"
             repo_dir = "models--unit--model"
             repo_path = repo_root / repo_dir
+            lock_path = repo_root / ".locks" / repo_dir
             app_model_dir.mkdir()
             repo_path.mkdir(parents=True)
+            lock_path.mkdir(parents=True)
 
             result = clear_model_caches(app_model_dir, [repo_dir], repo_root)
 
             self.assertTrue(result.deleted)
             self.assertEqual(result.to_payload()["kind"], "model")
-            self.assertEqual(result.to_payload()["paths"], [str(app_model_dir), str(repo_path)])
+            self.assertEqual(result.to_payload()["paths"], [str(app_model_dir), str(repo_path), str(lock_path)])
             self.assertFalse(app_model_dir.exists())
             self.assertFalse(repo_path.exists())
+            self.assertFalse(lock_path.exists())
+
+    def test_clear_local_data_removes_records_caches_models_and_locks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_path = root / "scores.sqlite"
+            upload_dir = root / "uploads"
+            thumb_dir = root / "thumbnails"
+            analysis_dir = root / "analysis"
+            app_model_dir = root / "app_models"
+            repo_root = root / "hf"
+            repo_dir = "models--unit--model"
+            repo_path = repo_root / repo_dir
+            lock_path = repo_root / ".locks" / repo_dir
+            for path in (upload_dir, thumb_dir, analysis_dir, app_model_dir, repo_path, lock_path):
+                path.mkdir(parents=True)
+                (path / "file.bin").write_bytes(b"data")
+            cache_path.write_text("scores", encoding="utf-8")
+
+            result = clear_local_data(
+                cache_path=cache_path,
+                upload_cache_dir=upload_dir,
+                thumbnail_cache_dir=thumb_dir,
+                analysis_image_cache_dir=analysis_dir,
+                app_model_cache_dir=app_model_dir,
+                model_repo_cache_dirs=[repo_dir],
+                huggingface_cache_root=repo_root,
+            )
+
+            payload = result.to_payload()
+            self.assertTrue(payload["deleted"])
+            self.assertEqual(payload["kind"], "localData")
+            for path in (cache_path, upload_dir, thumb_dir, analysis_dir, app_model_dir, repo_path, lock_path):
+                self.assertFalse(path.exists())
 
     def test_clear_model_caches_rejects_path_escape_repo_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

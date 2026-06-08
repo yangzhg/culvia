@@ -131,6 +131,8 @@ class FrontendI18nTests(unittest.TestCase):
             't("source.uploading")',
             't("maintenance.clearScoresConfirm")',
             't("maintenance.clearScoresConfirmTitle")',
+            't("maintenance.clearLocalDataConfirm")',
+            't("maintenance.clearLocalDataConfirmTitle")',
             't("maintenance.removeModelsConfirm")',
             't("maintenance.removeModelsConfirmTitle")',
             't("llm.clearKeyConfirm")',

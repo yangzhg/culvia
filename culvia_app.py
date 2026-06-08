@@ -13,7 +13,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 
 from culvia.api_errors import api_error_response
-from culvia.app_state import AppStateStore, empty_job
+from culvia.app_state import AppStateStore, create_initial_state, empty_job
 from culvia.cache_schema import SQLITE_CACHE_EXTENSIONS
 from culvia.capabilities import local_capabilities
 from culvia.config_payloads import (
@@ -62,7 +62,7 @@ from culvia.llm_config_service import (
     apply_llm_config_action,
     refresh_persisted_llm_config_action,
 )
-from culvia.maintenance import clear_history_cache, clear_model_caches, resolve_history_cache_path
+from culvia.maintenance import clear_history_cache, clear_local_data, clear_model_caches, resolve_history_cache_path
 from culvia.media_service import (
     ensure_thumbnail_file as _ensure_thumbnail_file,
     image_url as _image_url,
@@ -184,6 +184,7 @@ from culvia.curation_targets import frame_file_ids
 from culvia.scoring import (
     DEFAULT_CACHE_PATH,
     DEFAULT_PHOTO_DIRS,
+    ANALYSIS_IMAGE_CACHE_DIR,
     clear_session_llm_config,
     clear_secure_llm_config,
     get_device,
@@ -829,6 +830,75 @@ async def api_clear_history(request: Request) -> JSONResponse:
     return JSONResponse(payload)
 
 
+async def api_clear_local_data(request: Request) -> JSONResponse:
+    state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return api_error_response("jobRunningClearLocalData", "评分任务运行中，暂时不能重置本机数据。", status_code=409)
+
+    payload = await request.json()
+    with state_store.lock:
+        current_cache_path = str(state_store.data["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+    cache_path, error = resolve_history_cache_path(
+        payload.get("cachePath"),
+        current_cache_path=current_cache_path,
+        default_cache_path=DEFAULT_CACHE_PATH,
+        allowed_suffixes=SQLITE_CACHE_EXTENSIONS,
+    )
+    if cache_path is None:
+        return api_error_response(
+            "localDataCachePathInvalid",
+            error or "评分记录路径不可用。",
+            status_code=400,
+            params={"reason": error or ""},
+        )
+
+    secret_warning = ""
+    try:
+        delete_llm_api_key()
+    except SecretStoreUnavailable:
+        pass
+    except SecretStoreError as exc:
+        secret_warning = str(exc)
+
+    clear_session_llm_config()
+    clear_secure_llm_config()
+    set_persisted_llm_config({})
+    MODEL_RUNTIME.clear()
+
+    try:
+        result = clear_local_data(
+            cache_path=cache_path,
+            upload_cache_dir=UPLOAD_CACHE_DIR,
+            thumbnail_cache_dir=THUMBNAIL_CACHE_DIR,
+            analysis_image_cache_dir=ANALYSIS_IMAGE_CACHE_DIR,
+            app_model_cache_dir=APP_MODEL_CACHE_DIR,
+            model_repo_cache_dirs=MODEL_REPO_CACHE_DIRS,
+            huggingface_cache_root=get_huggingface_cache_root(),
+        )
+    except ValueError as exc:
+        return api_error_response("localDataClearInvalid", str(exc), status_code=400, params={"reason": str(exc)})
+    except OSError as exc:
+        return api_error_response(
+            "localDataClearFailed", f"清理失败：{exc}", status_code=500, params={"reason": str(exc)}
+        )
+
+    next_state = create_initial_state(
+        scores_df=pd.DataFrame(columns=CSV_COLUMNS),
+        default_photo_dirs=[],
+        default_cache_path=str(cache_path),
+        filter_defaults=FILTER_DEFAULTS,
+        default_selected_models=DEFAULT_SELECTED_MODELS,
+    )
+    with state_store.lock:
+        state_store.data.clear()
+        state_store.data.update(next_state)
+    response_payload = state_payload(state_store)
+    response_payload["maintenance"] = result.to_payload()
+    if secret_warning:
+        response_payload["maintenance"]["secretWarning"] = secret_warning
+    return JSONResponse(response_payload)
+
+
 async def api_clear_model(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
     if job_is_running(state_store):
@@ -1268,6 +1338,7 @@ def route_handlers() -> WebRouteHandlers:
         api_models=api_models,
         api_cache=api_cache,
         api_clear_history=api_clear_history,
+        api_clear_local_data=api_clear_local_data,
         api_clear_model=api_clear_model,
         api_upload=api_upload,
         api_score=api_score,

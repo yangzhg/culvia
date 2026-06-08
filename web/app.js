@@ -794,6 +794,7 @@ function applyLlmPromptOptionSelection(container, selectedButton) {
     container,
     llmConfigView.promptSelectionDomPlan(selectedButton.dataset.llmPrompt || "balanced"),
   );
+  setTextWithHint("#llmPresetPromptPreview", selectedButton.dataset.llmPromptText || "");
 }
 
 function bindLlmPromptOptionButtons(container) {
@@ -809,6 +810,7 @@ function renderLlmPromptOptions(llm) {
   const selectedPrompt = llm.promptPreset || "balanced";
   if (input) input.value = selectedPrompt;
   container.innerHTML = llmConfigView.promptOptionsMarkup(llmConfigView.promptOptionViews(llm));
+  setTextWithHint("#llmPresetPromptPreview", llmConfigView.promptPresetPrompt(llm, selectedPrompt));
   bindLlmPromptOptionButtons(container);
 }
 
@@ -822,7 +824,15 @@ function closeLlmModelMenu() {
   renderLlmConfig();
 }
 
-function toggleLlmModelMenu() {
+async function toggleLlmModelMenu() {
+  if (!llmModelMenuOpen && llmConfigEditing && !llmModelOptions.length && !llmModelsLoading) {
+    const hasInputKey = Boolean($("#llmApiKeyInput")?.value?.trim());
+    if (hasInputKey || appState?.llm?.configured) {
+      const result = await loadLlmModels({ openMenu: true });
+      if (result?.ok) focusLlmModelSearchSoon();
+      return;
+    }
+  }
   llmModelMenuOpen = !llmModelMenuOpen;
   renderLlmConfig();
   if (llmModelMenuOpen) focusLlmModelSearchSoon();
@@ -873,11 +883,14 @@ function applyLlmConfigDomPlan(plan) {
   plan.inputs.forEach((item) => {
     const input = $(item.selector);
     if (!input || document.activeElement === input) return;
+    if (llmConfigEditing) return;
     if ("value" in item) input.value = item.value;
     if ("placeholder" in item) input.placeholder = item.placeholder;
   });
   const refreshButton = $(plan.refreshButton.selector);
-  if (refreshButton) refreshButton.innerHTML = iconMarkup(plan.refreshButton.icon);
+  if (refreshButton) setButtonLabel(refreshButton, plan.refreshButton.icon, plan.refreshButton.label);
+  const saveButton = $(plan.saveButton.selector);
+  if (saveButton) setButtonLabel(saveButton, plan.saveButton.icon, plan.saveButton.label);
   return true;
 }
 
@@ -895,6 +908,10 @@ function renderLlmConfig() {
   const refreshButton = $(domPlan.refreshButton.selector);
   if (refreshButton) {
     refreshButton.disabled = Boolean(appState?.job?.running) || llmModelsLoading;
+  }
+  const saveButton = $(domPlan.saveButton.selector);
+  if (saveButton) {
+    saveButton.disabled = Boolean(appState?.job?.running) || llmModelsLoading;
   }
 }
 
@@ -993,6 +1010,7 @@ function renderProgress(job) {
   jobBox?.classList.add("is-hidden");
 
   $("#mainScoreBtn").disabled = Boolean(job?.running) || Boolean(commandNotice?.loading) || !hasSelectedSource();
+  $("#clearLocalDataBtn").disabled = Boolean(job?.running) || Boolean(commandNotice?.loading);
   $("#clearHistoryBtn").disabled = Boolean(job?.running) || Boolean(commandNotice?.loading);
   $("#clearModelBtn").disabled = Boolean(job?.running) || Boolean(commandNotice?.loading);
   $("#pauseJobBtn").disabled = !Boolean(job?.running) || Boolean(commandNotice?.loading);
@@ -2842,12 +2860,55 @@ async function clearHistoryCache() {
       title: t("maintenance.clearScoresTitle"),
       detail: t("maintenance.clearScoresDetail"),
     });
+    render();
   } catch (error) {
     showCommandNotice(
       {
         tone: "danger",
         state: t("maintenance.clearScoresFailureState"),
         title: t("maintenance.clearScoresFailureTitle"),
+        detail: errorMessage(error),
+      },
+      4200,
+    );
+  }
+}
+
+async function clearLocalData() {
+  if (!appState) return;
+  const cachePath = $("#cacheInput").value.trim();
+  const ok = await requestDangerConfirm({
+    confirmIcon: "trash",
+    confirmLabel: t("maintenance.clearLocalData"),
+    detail: t("maintenance.clearLocalDataConfirm"),
+    title: t("maintenance.clearLocalDataConfirmTitle"),
+  });
+  if (!ok) return;
+  try {
+    appState = await postJson("/api/data/clear", { cachePath });
+    curationHistory = [];
+    curationHistoryError = "";
+    selectedGalleryIds.clear();
+    gallerySelectionAnchorId = "";
+    selectedIndex = 0;
+    llmModelOptions = [];
+    llmModelListMessage = "";
+    llmSelectedModel = appState?.llm?.model || "";
+    llmConfigEditing = false;
+    llmModelMenuOpen = false;
+    showCommandNotice({
+      tone: "ready",
+      state: t("maintenance.clearLocalDataState"),
+      title: t("maintenance.clearLocalDataTitle"),
+      detail: t("maintenance.clearLocalDataDetail"),
+    });
+    render();
+  } catch (error) {
+    showCommandNotice(
+      {
+        tone: "danger",
+        state: t("maintenance.clearLocalDataFailureState"),
+        title: t("maintenance.clearLocalDataFailureTitle"),
         detail: errorMessage(error),
       },
       4200,
@@ -2872,6 +2933,7 @@ async function clearModelCache() {
       title: t("maintenance.removeModelsTitle"),
       detail: t("maintenance.removeModelsDetail"),
     });
+    render();
   } catch (error) {
     showCommandNotice(
       {
@@ -2885,22 +2947,33 @@ async function clearModelCache() {
   }
 }
 
-async function loadLlmModels() {
+async function loadLlmModels({ payloadOverrides = {}, openMenu = false, announce = true } = {}) {
   if (!appState || llmModelsLoading) return;
   llmModelsLoading = true;
   llmModelListMessage = "";
   renderLlmConfig();
   try {
-    const result = await postJson("/api/llm-models", llmConnectionPayload());
+    const result = await postJson("/api/llm-models", llmConnectionPayload(payloadOverrides));
     llmModelOptions = result.models || [];
     llmModelListMessage = llmConfigView.modelListResultMessage(llmModelOptions);
+    if (!llmSelectedModel) {
+      llmSelectedModel = result.currentModel || llmModelOptions[0]?.value || appState?.llm?.model || "";
+    }
+    if (openMenu && llmModelOptions.length > 0) {
+      llmConfigEditing = true;
+      llmModelMenuOpen = true;
+      llmModelSearchQuery = "";
+    }
     renderLlmConfig();
-    showCommandNotice({
-      tone: "ready",
-      state: t("llm.modelsLoadedState"),
-      title: t("llm.modelsLoadedTitle"),
-      detail: llmModelListMessage,
-    });
+    if (announce) {
+      showCommandNotice({
+        tone: "ready",
+        state: t("llm.modelsLoadedState"),
+        title: t("llm.modelsLoadedTitle"),
+        detail: llmModelListMessage,
+      });
+    }
+    return { ok: true, models: llmModelOptions, message: llmModelListMessage };
   } catch (error) {
     llmModelListMessage = errorMessage(error);
     renderLlmConfig();
@@ -2913,6 +2986,7 @@ async function loadLlmModels() {
       },
       4200,
     );
+    return { ok: false, message: llmModelListMessage };
   } finally {
     llmModelsLoading = false;
     renderLlmConfig();
@@ -2956,15 +3030,24 @@ function llmConfigFormPayload(overrides = {}) {
   return llmConfigView.configFormPayload(llmConfigRawValues(overrides));
 }
 
+function resetLlmModelCatalogForConnectionChange() {
+  if (!llmModelOptions.length && !llmModelListMessage) return;
+  llmModelOptions = [];
+  llmModelMenuOpen = false;
+  llmModelSearchQuery = "";
+  llmModelListMessage = t("llm.connectionChanged");
+  renderLlmConfig();
+}
+
 async function saveLlmConfig() {
   if (!appState) return;
   const payload = llmConfigFormPayload();
   try {
     appState = await postJson("/api/llm-config", payload);
-    llmConfigEditing = false;
     llmModelMenuOpen = false;
     llmModelSearchQuery = "";
     llmSelectedModel = appState?.llm?.model || payload.model;
+    llmConfigEditing = false;
     showCommandNotice({
       tone: appState.llm?.configured ? "ready" : "partial",
       state: appState.llm?.configured ? t("llm.saveState") : t("llm.needsConfigState"),
@@ -3005,6 +3088,8 @@ async function clearLlmKey() {
     llmConfigEditing = false;
     llmModelMenuOpen = false;
     llmSelectedModel = appState?.llm?.model || "";
+    llmModelOptions = [];
+    llmModelListMessage = "";
     showCommandNotice({
       tone: "partial",
       state: t("llm.clearKeyState"),
@@ -3853,6 +3938,7 @@ function bindEvents() {
   $("#cancelDangerConfirmBtn").addEventListener("click", () => closeDangerConfirm());
   $("#dangerConfirmScrim").addEventListener("click", () => closeDangerConfirm());
   $("#pauseJobBtn").addEventListener("click", toggleJobPause);
+  $("#clearLocalDataBtn").addEventListener("click", clearLocalData);
   $("#clearHistoryBtn").addEventListener("click", clearHistoryCache);
   $("#clearModelBtn").addEventListener("click", clearModelCache);
   $("#clearFilterScopeBtn").addEventListener("click", clearFilterScope);
@@ -3872,7 +3958,9 @@ function bindEvents() {
   $("#llmModelSearchInput").addEventListener("input", handleLlmModelSearchInput);
   $("#llmModelSearchInput").addEventListener("keydown", handleLlmModelSearchKeydown);
   document.addEventListener("click", handleLlmModelDocumentClick);
-  $("#refreshLlmModelsBtn").addEventListener("click", loadLlmModels);
+  $("#refreshLlmModelsBtn").addEventListener("click", () => loadLlmModels());
+  $("#llmApiKeyInput").addEventListener("input", resetLlmModelCatalogForConnectionChange);
+  $("#llmBaseUrlInput").addEventListener("input", resetLlmModelCatalogForConnectionChange);
   $("#saveLlmConfigBtn").addEventListener("click", saveLlmConfig);
   $("#clearLlmKeyBtn").addEventListener("click", clearLlmKey);
   const modelStatusPill = $("#modelStatusPill");

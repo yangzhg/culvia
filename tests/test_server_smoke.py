@@ -416,6 +416,89 @@ class ServerSmokeTests(unittest.TestCase):
             self.assertEqual(response.json()["errorCode"], "historyCachePathInvalid")
             self.assertTrue(other_cache.exists())
 
+    def test_clear_local_data_removes_app_data_models_and_resets_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_path = str(root / "scores.sqlite")
+            scoring.save_cache_records(
+                pd.DataFrame(
+                    [
+                        {
+                            "file_id": "image-1",
+                            "path": "/photos/a.jpg",
+                            "folder": "/photos",
+                            "filename": "a.jpg",
+                            "error": "",
+                            "overall_0_10": 8.0,
+                        }
+                    ]
+                ),
+                cache_path,
+            )
+            photo_curation.save_photo_mark(cache_path, "image-1", status="pick", rating=5)
+            source_df = pd.DataFrame(
+                [
+                    {
+                        "file_id": "image-1",
+                        "path": "/photos/a.jpg",
+                        "folder": "/photos",
+                        "filename": "a.jpg",
+                        "error": "",
+                        "overall_0_10": 8.0,
+                    }
+                ]
+            )
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=source_df,
+                    default_photo_dirs=["/photos"],
+                    default_cache_path=cache_path,
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+                )
+            )
+            with store.lock:
+                store.data["source"]["uploadedPaths"] = [str(root / "uploads" / "a.jpg")]
+                store.data["network"]["mode"] = "system"
+                store.data["job"].update({"phase": "done", "title": "已有结果"})
+
+            upload_dir = root / "uploads"
+            thumb_dir = root / "thumbnails"
+            analysis_dir = root / "analysis"
+            app_model_dir = root / "app_models"
+            repo_root = root / "hf"
+            repo_dir = "models--unit--model"
+            repo_path = repo_root / repo_dir
+            lock_path = repo_root / ".locks" / repo_dir
+            for path in (upload_dir, thumb_dir, analysis_dir, app_model_dir, repo_path, lock_path):
+                path.mkdir(parents=True)
+                (path / "file.bin").write_bytes(b"data")
+
+            client = TestClient(culvia_app.create_app(store))
+            with (
+                patch("culvia_app.UPLOAD_CACHE_DIR", upload_dir),
+                patch("culvia_app.THUMBNAIL_CACHE_DIR", thumb_dir),
+                patch("culvia_app.ANALYSIS_IMAGE_CACHE_DIR", analysis_dir),
+                patch("culvia_app.APP_MODEL_CACHE_DIR", app_model_dir),
+                patch("culvia_app.MODEL_REPO_CACHE_DIRS", [repo_dir]),
+                patch("culvia_app.get_huggingface_cache_root", return_value=repo_root),
+                patch("culvia_app.delete_llm_api_key") as delete_key,
+            ):
+                response = client.post("/api/data/clear", json={"cachePath": cache_path})
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["maintenance"]["kind"], "localData")
+            delete_key.assert_called_once_with()
+            for path in (Path(cache_path), upload_dir, thumb_dir, analysis_dir, app_model_dir, repo_path, lock_path):
+                self.assertFalse(path.exists())
+            with store.lock:
+                self.assertTrue(scoring.normalize_score_dataframe(store.data["scores_df"]).empty)
+                self.assertEqual(store.data["source"]["folders"], [])
+                self.assertEqual(store.data["source"]["uploadedPaths"], [])
+                self.assertEqual(store.data["source"]["cachePath"], cache_path)
+                self.assertEqual(store.data["network"]["mode"], "direct")
+                self.assertEqual(store.data["job"]["phase"], "idle")
+
     def test_injected_state_store_serves_upload_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             upload_root = Path(tmp) / "uploads"

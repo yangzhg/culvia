@@ -35,6 +35,26 @@ class ModelClearResult:
         }
 
 
+@dataclass(frozen=True)
+class LocalDataClearResult:
+    history: HistoryClearResult
+    models: ModelClearResult
+    paths: list[Path]
+
+    @property
+    def deleted(self) -> bool:
+        return self.history.deleted or self.models.deleted or bool(self.paths)
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "kind": "localData",
+            "deleted": self.deleted,
+            "history": self.history.to_payload(),
+            "models": self.models.to_payload(),
+            "paths": [str(path) for path in self.paths],
+        }
+
+
 def resolve_history_cache_path(
     requested_path: object,
     *,
@@ -86,12 +106,35 @@ def clear_model_caches(
     huggingface_cache_root: Path,
 ) -> ModelClearResult:
     repo_cache_paths = [huggingface_cache_root / repo_dir for repo_dir in model_repo_cache_dirs]
+    lock_cache_paths = [huggingface_cache_root / ".locks" / repo_dir for repo_dir in model_repo_cache_dirs]
     for repo_dir, path in zip(model_repo_cache_dirs, repo_cache_paths):
+        if path.name != repo_dir:
+            raise ValueError("模型缓存路径异常，未执行清理。")
+    for repo_dir, path in zip(model_repo_cache_dirs, lock_cache_paths):
         if path.name != repo_dir:
             raise ValueError("模型缓存路径异常，未执行清理。")
 
     deleted_paths: list[Path] = []
-    for path in (app_model_cache_dir, *repo_cache_paths):
+    for path in (app_model_cache_dir, *repo_cache_paths, *lock_cache_paths):
         if remove_path_safely(path):
             deleted_paths.append(path)
     return ModelClearResult(paths=deleted_paths)
+
+
+def clear_local_data(
+    *,
+    cache_path: Path,
+    upload_cache_dir: Path,
+    thumbnail_cache_dir: Path,
+    analysis_image_cache_dir: Path,
+    app_model_cache_dir: Path,
+    model_repo_cache_dirs: Iterable[str],
+    huggingface_cache_root: Path,
+) -> LocalDataClearResult:
+    history_result = clear_history_cache(cache_path)
+    model_result = clear_model_caches(app_model_cache_dir, model_repo_cache_dirs, huggingface_cache_root)
+    deleted_paths: list[Path] = []
+    for path in (upload_cache_dir, thumbnail_cache_dir, analysis_image_cache_dir):
+        if remove_path_safely(path):
+            deleted_paths.append(path)
+    return LocalDataClearResult(history=history_result, models=model_result, paths=deleted_paths)

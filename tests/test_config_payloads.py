@@ -47,7 +47,7 @@ class ConfigPayloadTests(unittest.TestCase):
             base_url="https://example.test/v1",
             endpoint="https://example.test/v1/chat/completions",
             custom_prompt="更重视情绪",
-            prompt_presets={"balanced": {"label": "综合", "description": "审美优先"}},
+            prompt_presets={"balanced": {"label": "综合", "description": "审美优先", "prompt": "默认提示词文本"}},
             mask_api_key=lambda key: f"{key[:4]}****{key[-4:]}",
         )
 
@@ -56,7 +56,10 @@ class ConfigPayloadTests(unittest.TestCase):
         self.assertNotIn("test-api-key", str(payload))
         self.assertEqual(payload["source"], "session")
         self.assertEqual(payload["inputMode"], "text")
-        self.assertEqual(payload["promptPresets"], [{"value": "balanced", "label": "综合", "description": "审美优先"}])
+        self.assertEqual(
+            payload["promptPresets"],
+            [{"value": "balanced", "label": "综合", "description": "审美优先", "prompt": "默认提示词文本"}],
+        )
 
     def test_llm_config_payload_hides_unconfigured_key(self) -> None:
         payload = llm_config_payload(

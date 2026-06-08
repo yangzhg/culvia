@@ -61,6 +61,7 @@ def llm_config_payload(
                 "value": key,
                 "label": str(config["label"]),
                 "description": str(config["description"]),
+                "prompt": str(config.get("prompt") or ""),
             }
             for key, config in prompt_presets.items()
         ],

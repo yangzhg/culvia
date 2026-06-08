@@ -34,6 +34,12 @@ window.CulviaLlmConfigView = (() => {
     return preset?.label || selected || t("llm.promptDefault");
   }
 
+  function promptPresetPrompt(llm, selectedPrompt = "") {
+    const selected = selectedPrompt || llm?.promptPreset || "balanced";
+    const preset = (llm?.promptPresets || []).find((option) => option.value === selected);
+    return preset?.prompt || "";
+  }
+
   function customPromptSummary(value, limit = 24) {
     const text = String(value || "").trim();
     if (!text) return "";
@@ -96,6 +102,7 @@ window.CulviaLlmConfigView = (() => {
         className: `llm-prompt-option ${active ? "is-active" : ""}`.trim(),
         description: option.description || "",
         label: option.label,
+        prompt: option.prompt || "",
         value: option.value,
       };
     });
@@ -167,6 +174,7 @@ window.CulviaLlmConfigView = (() => {
         role="radio"
         aria-checked="${escapeHtml(option.ariaChecked)}"
         data-llm-prompt="${escapeHtml(option.value)}"
+        data-llm-prompt-text="${escapeHtml(option.prompt || "")}"
       >
         <span>${escapeHtml(option.label)}</span>
         <small>${escapeHtml(option.description || "")}</small>
@@ -216,13 +224,17 @@ window.CulviaLlmConfigView = (() => {
     return payload;
   }
 
-  function configViewState(llm = {}, { editing = false, modelsLoading = false, modelListMessage = "" } = {}) {
+  function configViewState(
+    llm = {},
+    { editing = false, modelsLoading = false, modelListMessage = "" } = {},
+  ) {
     const configured = Boolean(llm?.configured);
     const promptLabel = promptPresetLabel(llm);
     const customSummary = customPromptSummary(llm?.customPrompt);
     const model = llm?.model || t("llm.defaultModel");
     const keyLabel = llm?.keyLabel || t("llm.keyConfigured");
     const source = configured ? sourceLabel(llm?.source) : t("llmConfirm.unconfigured");
+    const saveLabel = modelsLoading ? t("llm.loadingModels") : t("llm.saveSettings");
     return {
       configured,
       statusText: configured ? t("llm.keyConfigured") : t("llmConfirm.unconfigured"),
@@ -254,6 +266,10 @@ window.CulviaLlmConfigView = (() => {
         ? t("llm.loadingModels")
         : modelListMessage || (configured ? t("llm.fetchModelsReady") : t("llm.modelHint")),
       refreshIcon: modelsLoading ? "loader" : "refreshCw",
+      saveButton: {
+        icon: modelsLoading ? "loader" : "sparkle",
+        label: saveLabel,
+      },
     };
   }
 
@@ -277,7 +293,13 @@ window.CulviaLlmConfigView = (() => {
       ],
       refreshButton: {
         icon: viewState.refreshIcon,
+        label: t("llm.fetchModelsShort"),
         selector: "#refreshLlmModelsBtn",
+      },
+      saveButton: {
+        icon: viewState.saveButton.icon,
+        label: viewState.saveButton.label,
+        selector: "#saveLlmConfigBtn",
       },
       status: {
         ready: viewState.statusReady,
@@ -322,6 +344,7 @@ window.CulviaLlmConfigView = (() => {
     promptOptionViews,
     promptOptionsMarkup,
     promptPresetLabel,
+    promptPresetPrompt,
     sourceLabel,
   };
 })();

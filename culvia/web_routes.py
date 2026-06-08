@@ -31,6 +31,7 @@ class WebRouteHandlers:
     api_models: RouteEndpoint
     api_cache: RouteEndpoint
     api_clear_history: RouteEndpoint
+    api_clear_local_data: RouteEndpoint
     api_clear_model: RouteEndpoint
     api_upload: RouteEndpoint
     api_score: RouteEndpoint
@@ -67,6 +68,7 @@ APP_ROUTE_SPECS: tuple[RouteSpec, ...] = (
     RouteSpec("/api/models", "api_models", ("POST",)),
     RouteSpec("/api/cache", "api_cache", ("POST",)),
     RouteSpec("/api/cache/clear", "api_clear_history", ("POST",)),
+    RouteSpec("/api/data/clear", "api_clear_local_data", ("POST",)),
     RouteSpec("/api/model/clear", "api_clear_model", ("POST",)),
     RouteSpec("/api/upload", "api_upload", ("POST",)),
     RouteSpec("/api/score", "api_score", ("POST",)),

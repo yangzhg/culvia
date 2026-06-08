@@ -58,11 +58,15 @@ class FrontendLlmConfigViewTests(unittest.TestCase):
             const llm = {
               promptPreset: "retouching",
               promptPresets: [
-                { value: "balanced", label: "综合" },
-                { value: "retouching", label: "修图" },
+                { value: "balanced", label: "综合", prompt: "综合默认提示词" },
+                { value: "retouching", label: "修图", prompt: "修图默认提示词" },
               ],
             };
             if (view.promptPresetLabel(llm) !== "修图") throw new Error("prompt preset label is wrong");
+            if (view.promptPresetPrompt(llm) !== "修图默认提示词") throw new Error("prompt preset text is wrong");
+            if (view.promptPresetPrompt(llm, "balanced") !== "综合默认提示词") {
+              throw new Error("explicit prompt preset text is wrong");
+            }
             if (view.promptPresetLabel({ promptPreset: "unknown", promptPresets: [] }) !== "unknown") {
               throw new Error("unknown prompt preset should pass through");
             }
@@ -143,8 +147,8 @@ class FrontendLlmConfigViewTests(unittest.TestCase):
             const promptViews = view.promptOptionViews({
               promptPreset: "retouching",
               promptPresets: [
-                { value: "balanced", label: "综合", description: "整体" },
-                { value: "retouching", label: "修图", description: "后期" },
+                { value: "balanced", label: "综合", description: "整体", prompt: "综合提示词" },
+                { value: "retouching", label: "修图", description: "后期", prompt: "修图提示词" },
               ],
             });
             if (promptViews.length !== 2) throw new Error("prompt option views missing");
@@ -153,6 +157,9 @@ class FrontendLlmConfigViewTests(unittest.TestCase):
             }
             if (promptViews[1].ariaChecked !== "true") {
               throw new Error("active prompt option view is wrong");
+            }
+            if (promptViews[1].prompt !== "修图提示词") {
+              throw new Error("prompt option should carry default prompt text");
             }
             """
         )
@@ -267,6 +274,14 @@ class FrontendLlmConfigViewTests(unittest.TestCase):
             }
             if (loadingState.modelListHint !== "正在读取模型列表..." || loadingState.refreshIcon !== "loader") {
               throw new Error("loading model list state is wrong");
+            }
+            if (loadingState.saveButton.label !== "正在读取模型列表...") {
+              throw new Error("save button should show loading state while models load");
+            }
+
+            const unconfiguredState = view.configViewState({ configured: false });
+            if (unconfiguredState.saveButton.label !== "保存设置") {
+              throw new Error("save button should be final save, not an intermediate fetch action");
             }
             """
         )

@@ -539,8 +539,8 @@
             <label class="field-label" data-i18n="llm.service"></label>
             <div class="llm-config">
               <div class="llm-status-row">
-                <span id="llmStatusPill" class="llm-status-pill" data-i18n="llm.unconfigured"></span>
-                <span id="llmModelPreview" class="llm-model-preview" data-i18n="llm.defaultModel"></span>
+                <span id="llmStatusPill" class="llm-status-pill"></span>
+                <span id="llmModelPreview" class="llm-model-preview"></span>
                 <button id="editLlmConfigBtn" class="button ghost llm-edit-toggle" type="button">
                   <span class="icon" data-icon="pencil"></span><span data-i18n="llm.edit"></span>
                 </button>
@@ -551,23 +551,23 @@
               <div id="llmConfigReadonly" class="llm-readonly-card">
                 <div class="llm-readonly-item">
                   <span data-i18n="llm.key"></span>
-                  <strong id="llmReadonlyKey" data-i18n="llm.unconfigured"></strong>
+                  <strong id="llmReadonlyKey"></strong>
                 </div>
                 <div class="llm-readonly-item">
                   <span data-i18n="llm.source"></span>
-                  <strong id="llmReadonlySource" data-i18n="llm.unconfigured"></strong>
+                  <strong id="llmReadonlySource"></strong>
                 </div>
                 <div class="llm-readonly-item">
                   <span data-i18n="llm.endpoint"></span>
-                  <strong id="llmReadonlyBaseUrl" data-i18n="llm.defaultEndpoint"></strong>
+                  <strong id="llmReadonlyBaseUrl"></strong>
                 </div>
                 <div class="llm-readonly-item">
                   <span data-i18n="llm.model"></span>
-                  <strong id="llmReadonlyModel" data-i18n="llm.defaultModel"></strong>
+                  <strong id="llmReadonlyModel"></strong>
                 </div>
                 <div class="llm-readonly-item">
                   <span data-i18n="llm.prompt"></span>
-                  <strong id="llmReadonlyPrompt" data-i18n="llm.promptDefault"></strong>
+                  <strong id="llmReadonlyPrompt"></strong>
                 </div>
               </div>
               <div id="llmConfigEditor" class="llm-config-editor is-hidden">
@@ -583,8 +583,8 @@
                       <button id="llmModelButton" class="llm-model-button" type="button" aria-haspopup="listbox" aria-expanded="false">
                         <span class="icon" data-icon="brain"></span>
                         <span class="llm-model-button-copy">
-                          <strong id="llmModelButtonText" data-i18n="llm.defaultModel"></strong>
-                          <small id="llmModelButtonMeta" data-i18n="llm.pickFromList"></small>
+                          <strong id="llmModelButtonText"></strong>
+                          <small id="llmModelButtonMeta"></small>
                         </span>
                         <span class="icon llm-model-chevron" data-icon="chevronDown"></span>
                       </button>
@@ -596,16 +596,20 @@
                         <div id="llmModelList" class="llm-model-list" role="listbox" data-i18n-aria-label="llm.availableModels"></div>
                       </div>
                     </div>
-                      <button id="refreshLlmModelsBtn" class="button icon-button" type="button" data-i18n-aria-label="llm.refreshModels" data-i18n-tooltip="llm.refreshModels">
-                      <span class="icon" data-icon="refreshCw"></span>
+                    <button id="refreshLlmModelsBtn" class="button ghost llm-fetch-models-button" type="button" data-i18n-aria-label="llm.refreshModels" data-i18n-tooltip="llm.refreshModels">
+                      <span class="icon" data-icon="refreshCw"></span><span data-i18n="llm.fetchModelsShort"></span>
                     </button>
                   </div>
-                  <div id="llmModelListHint" class="llm-model-list-hint" data-i18n="llm.modelHint"></div>
+                  <div id="llmModelListHint" class="llm-model-list-hint"></div>
                 </div>
                 <div class="llm-editor-section">
                   <div class="llm-editor-section-head"><span>03</span><strong data-i18n="llm.editor.review"></strong></div>
                   <input id="llmPromptPreset" type="hidden" value="balanced" />
                   <div id="llmPromptOptions" class="llm-prompt-options" role="radiogroup" data-i18n-aria-label="llm.promptAria"></div>
+                  <div class="llm-preset-prompt">
+                    <span data-i18n="llm.defaultPrompt"></span>
+                    <p id="llmPresetPromptPreview"></p>
+                  </div>
                   <textarea id="llmCustomPromptInput" class="llm-custom-prompt" spellcheck="false" data-i18n-placeholder="llm.customPromptPlaceholder"></textarea>
                   <label class="llm-persist-row">
                     <input id="persistLlmConfig" type="checkbox" />
@@ -648,10 +652,13 @@
               </div>
             </div>
             <div class="maintenance-actions">
-              <button id="clearHistoryBtn" class="button danger maintenance-button" type="button">
+              <button id="clearLocalDataBtn" class="button danger maintenance-button" type="button" data-i18n-tooltip="maintenance.clearLocalDataTooltip" data-i18n-aria-label="maintenance.clearLocalDataTooltip">
+                <span class="icon" data-icon="trash"></span><span data-i18n="maintenance.clearLocalData"></span>
+              </button>
+              <button id="clearHistoryBtn" class="button danger maintenance-button" type="button" data-i18n-tooltip="maintenance.clearScoresTooltip" data-i18n-aria-label="maintenance.clearScoresTooltip">
                 <span class="icon" data-icon="trash"></span><span data-i18n="maintenance.clearScores"></span>
               </button>
-              <button id="clearModelBtn" class="button secondary maintenance-button" type="button">
+              <button id="clearModelBtn" class="button secondary maintenance-button" type="button" data-i18n-tooltip="maintenance.clearModelCacheTooltip" data-i18n-aria-label="maintenance.clearModelCacheTooltip">
                 <span class="icon" data-icon="trash"></span><span data-i18n="maintenance.removeModels"></span>
               </button>
             </div>

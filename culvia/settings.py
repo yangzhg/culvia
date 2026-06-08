@@ -60,10 +60,7 @@ def default_photo_dirs() -> list[str]:
     override = os.environ.get("CULVIA_PHOTO_DIRS")
     if override:
         return [str(Path(item).expanduser()) for item in override.split(os.pathsep) if item.strip()]
-
-    candidates = [Path.home() / "Pictures"]
-    existing = [str(path) for path in candidates if path.exists()]
-    return existing or [str(Path.home() / "Pictures")]
+    return []
 
 
 def rsinema_model_cache_dir() -> Path:
