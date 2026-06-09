@@ -239,6 +239,14 @@ window.CulviaViewerInspector = (() => {
     const llmSummaryRows = renderLlmRows(llmSummaryFields);
     const llmAestheticRows = renderLlmRows(llmAestheticFields);
     const llmTechnicalRows = renderLlmRows(llmTechnicalFields);
+    const llmMetricContent = [
+      hasLlmScores ? llmSummaryRows : showMissingScoreDetails ? missingNote(t("score.llm.missingNote")) : "",
+      llmAestheticRows ? `<div class="score-subtitle">${escapeHtml(t("score.llm.aestheticSubtitle"))}</div>${llmAestheticRows}` : "",
+      llmTechnicalRows ? `<div class="score-subtitle">${escapeHtml(t("score.llm.technicalSubtitle"))}</div>${llmTechnicalRows}` : "",
+    ]
+      .filter(Boolean)
+      .join("");
+    const llmInsightContent = photo.llmInsight || showMissingScoreDetails ? renderLlmInsight(photo.llmInsight) : "";
     const tags = (photo.technicalTags || [])
       .map((tag) => {
         const label = localizedTechnicalTag(tag);
@@ -274,12 +282,12 @@ window.CulviaViewerInspector = (() => {
       : "";
     const llmGroup = hasLlmScores || photo.llmInsight || showMissingScoreDetails
       ? `
-        <div class="score-group">
+        <div class="score-group score-llm-group">
           ${sourceTitle(t("score.llm.title"), appState.llm?.model || t("score.llm.source"), photo.llmReviewTexts?.llm_review_overall, t("score.notReviewed"))}
-          ${hasLlmScores ? llmSummaryRows : showMissingScoreDetails ? missingNote(t("score.llm.missingNote")) : ""}
-          ${llmAestheticRows ? `<div class="score-subtitle">${escapeHtml(t("score.llm.aestheticSubtitle"))}</div>${llmAestheticRows}` : ""}
-          ${llmTechnicalRows ? `<div class="score-subtitle">${escapeHtml(t("score.llm.technicalSubtitle"))}</div>${llmTechnicalRows}` : ""}
-          ${photo.llmInsight || showMissingScoreDetails ? renderLlmInsight(photo.llmInsight) : ""}
+          <div class="score-llm-layout">
+            ${llmMetricContent ? `<div class="score-llm-metrics">${llmMetricContent}</div>` : ""}
+            ${llmInsightContent ? `<div class="score-llm-insight">${llmInsightContent}</div>` : ""}
+          </div>
         </div>
       `
       : "";
@@ -372,21 +380,23 @@ window.CulviaViewerInspector = (() => {
       )
       .join("");
     const html = `
-      <div class="score-detail-toolbar">
-        <span>${escapeHtml(t("score.detailTitle"))}</span>
-        <button
-          id="toggleMissingScoreDetails"
-          class="score-missing-toggle ${showMissingScoreDetails ? "is-active" : ""}"
-          type="button"
-          aria-label="${escapeHtml(missingCount ? t("score.missingTooltip", { count: missingCount }) : t("score.noMissingTooltip"))}"
-          data-ui-tooltip="${escapeHtml(missingCount ? t("score.missingTooltip", { count: missingCount }) : t("score.noMissingTooltip"))}"
-        >
-          ${iconMarkup("eye")}
-          ${escapeHtml(showMissingScoreDetails ? t("score.hideMissing") : t("score.showMissing"))}
-        </button>
-      </div>
-      <div class="score-detail-tabs" role="tablist" aria-label="${escapeHtml(t("score.detailAria"))}">
-        ${detailTabs}
+      <div class="score-detail-sticky">
+        <div class="score-detail-toolbar">
+          <span>${escapeHtml(t("score.detailTitle"))}</span>
+          <button
+            id="toggleMissingScoreDetails"
+            class="score-missing-toggle ${showMissingScoreDetails ? "is-active" : ""}"
+            type="button"
+            aria-label="${escapeHtml(missingCount ? t("score.missingTooltip", { count: missingCount }) : t("score.noMissingTooltip"))}"
+            data-ui-tooltip="${escapeHtml(missingCount ? t("score.missingTooltip", { count: missingCount }) : t("score.noMissingTooltip"))}"
+          >
+            ${iconMarkup("eye")}
+            ${escapeHtml(showMissingScoreDetails ? t("score.hideMissing") : t("score.showMissing"))}
+          </button>
+        </div>
+        <div class="score-detail-tabs" role="tablist" aria-label="${escapeHtml(t("score.detailAria"))}">
+          ${detailTabs}
+        </div>
       </div>
       ${
         activeDetailView.content

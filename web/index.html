@@ -8,11 +8,11 @@
     <link rel="stylesheet" href="/static/styles/00-foundation.css" />
     <link rel="stylesheet" href="/static/styles/10-settings.css" />
     <link rel="stylesheet" href="/static/styles/20-workbench.css?v=20260609-source-list" />
-    <link rel="stylesheet" href="/static/styles/30-viewer.css?v=20260609-score-details-fix" />
-    <link rel="stylesheet" href="/static/styles/40-gallery.css?v=20260609-source-preview" />
+    <link rel="stylesheet" href="/static/styles/30-viewer.css?v=20260609-viewer-details-sticky-group" />
+    <link rel="stylesheet" href="/static/styles/40-gallery.css?v=20260609-viewer-details-layout" />
     <link rel="stylesheet" href="/static/styles/50-distribution.css" />
     <link rel="stylesheet" href="/static/styles/60-export.css" />
-    <link rel="stylesheet" href="/static/styles/90-responsive.css" />
+    <link rel="stylesheet" href="/static/styles/90-responsive.css?v=20260609-viewer-details-tall" />
   </head>
   <body>
     <div class="app-shell">
@@ -293,6 +293,9 @@
               <button id="nextBtn" class="nav-button right" type="button" data-i18n-aria-label="viewer.next" data-i18n-tooltip="viewer.next"><span class="nav-icon" data-icon="chevronRight"></span></button>
             </div>
             <div id="filmstrip" class="filmstrip"></div>
+            <section class="viewer-details" data-i18n-aria-label="score.detailTitle">
+              <div id="scoreRows" class="score-rows"></div>
+            </section>
             <aside class="inspector">
               <div class="inspector-pinned">
                 <div class="score-hero">
@@ -329,7 +332,6 @@
               </div>
               <div class="inspector-scroll">
                 <div id="signalChips" class="signal-chips" role="list" data-i18n-aria-label="score.signalAria"></div>
-                <div id="scoreRows" class="score-rows"></div>
               </div>
               <div class="inspector-actions">
                 <a id="previewLink" class="button secondary" target="_blank" rel="noreferrer"><span class="icon" data-icon="externalLink"></span><span data-i18n="viewer.preview"></span></a>
@@ -730,7 +732,7 @@
     <script src="/static/ui_helpers.js" defer></script>
     <script src="/static/gallery_view.js?v=20260609-source-preview" defer></script>
     <script src="/static/distribution_view.js" defer></script>
-    <script src="/static/viewer_inspector.js" defer></script>
-    <script src="/static/app.js?v=20260609-native-preview" defer></script>
+    <script src="/static/viewer_inspector.js?v=20260609-viewer-details-sticky-group" defer></script>
+    <script src="/static/app.js?v=20260609-viewer-details-layout" defer></script>
   </body>
 </html>

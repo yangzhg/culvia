@@ -77,6 +77,8 @@ let galleryMarqueeState = null;
 let gallerySuppressNextCardClick = false;
 let uiTooltipAnchor = null;
 let uiTooltipRaf = 0;
+let galleryRatingTooltipHideTimer = null;
+let galleryRatingTooltipBridgeTarget = null;
 let curationHistory = [];
 let sourceInputsDirty = false;
 let sourcePreviewTimer = null;
@@ -2376,6 +2378,16 @@ function ensureGalleryRatingTooltip(rating) {
   return tooltipNode;
 }
 
+function hideGalleryRatingTooltip(rating) {
+  if (!rating) return;
+  rating.classList.remove("is-tooltip-bridging");
+  rating.closest(".photo-card")?.classList.remove("is-tooltip-open");
+  rating.querySelector(".rating-tooltip")?.remove();
+  if (galleryRatingTooltipBridgeTarget === rating) {
+    galleryRatingTooltipBridgeTarget = null;
+  }
+}
+
 function placeGalleryRatingTooltip(rating) {
   const tooltip = ensureGalleryRatingTooltip(rating);
   if (!tooltip) return;
@@ -2393,6 +2405,15 @@ function placeGalleryRatingTooltip(rating) {
 function handleGalleryTooltipIntent(event) {
   const rating = event.target?.closest?.("#galleryGrid .gallery-rating");
   if (!rating) return;
+  if (galleryRatingTooltipHideTimer) {
+    window.clearTimeout(galleryRatingTooltipHideTimer);
+    galleryRatingTooltipHideTimer = null;
+  }
+  if (galleryRatingTooltipBridgeTarget && galleryRatingTooltipBridgeTarget !== rating) {
+    hideGalleryRatingTooltip(galleryRatingTooltipBridgeTarget);
+  }
+  rating.classList.remove("is-tooltip-bridging");
+  galleryRatingTooltipBridgeTarget = null;
   placeGalleryRatingTooltip(rating);
 }
 
@@ -2401,8 +2422,19 @@ function clearGalleryTooltipPlacement(event) {
   if (!rating) return;
   const nextTarget = event.relatedTarget;
   if (nextTarget && rating.contains(nextTarget)) return;
-  rating.closest(".photo-card")?.classList.remove("is-tooltip-open");
-  rating.querySelector(".rating-tooltip")?.remove();
+  if (galleryRatingTooltipHideTimer) {
+    window.clearTimeout(galleryRatingTooltipHideTimer);
+  }
+  if (event.type !== "pointerout") {
+    hideGalleryRatingTooltip(rating);
+    return;
+  }
+  rating.classList.add("is-tooltip-bridging");
+  galleryRatingTooltipBridgeTarget = rating;
+  galleryRatingTooltipHideTimer = window.setTimeout(() => {
+    hideGalleryRatingTooltip(rating);
+    galleryRatingTooltipHideTimer = null;
+  }, 320);
 }
 
 function renderDistribution() {

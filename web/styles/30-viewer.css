@@ -7,7 +7,8 @@
   grid-template-columns: minmax(0, 1fr) minmax(280px, var(--viewer-inspector-width));
   grid-template-areas:
     "image inspector"
-    "filmstrip inspector";
+    "filmstrip inspector"
+    "details details";
   gap: var(--viewer-gap);
   align-items: start;
   min-width: 0;
@@ -159,6 +160,55 @@
 
 .inspector-scroll .signal-chips {
   margin-top: 0;
+}
+
+.viewer-details {
+  grid-area: details;
+  min-width: 0;
+  max-width: 100%;
+  max-height: clamp(360px, 50dvh, 640px);
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: var(--shadow-soft);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.viewer-details .score-rows {
+  margin-top: 0;
+}
+
+.viewer-details .score-detail-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  margin: -2px 0 10px;
+  padding: 2px 0 10px;
+  background: #fff;
+  box-shadow: 0 14px 22px rgba(255, 255, 255, 0.94);
+}
+
+.viewer-details .score-detail-toolbar {
+  position: static;
+  margin: 0 0 8px;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.viewer-details .score-detail-tabs {
+  position: static;
+  top: auto;
+  isolation: isolate;
+  margin: 0;
+  background: #f5f5f7;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .score-hero {
@@ -825,6 +875,50 @@
 
 .score-detail-panel {
   min-height: 80px;
+}
+
+.viewer-details .score-detail-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.viewer-details .score-detail-panel > .score-group:only-child,
+.viewer-details .score-detail-panel > .score-empty-note:only-child {
+  grid-column: 1 / -1;
+}
+
+.viewer-details .score-group {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(60, 60, 67, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.viewer-details .score-group:first-child {
+  border-top: 1px solid rgba(60, 60, 67, 0.1);
+  padding-top: 12px;
+}
+
+.score-llm-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.82fr) minmax(320px, 1.18fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.score-llm-layout > * {
+  min-width: 0;
+}
+
+.score-llm-layout > :only-child {
+  grid-column: 1 / -1;
+}
+
+.score-llm-insight .insight-empty,
+.score-llm-insight .insight-card {
+  margin-top: 0;
 }
 
 .score-group-title {

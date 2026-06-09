@@ -64,6 +64,7 @@
     grid-template-areas:
       "image"
       "filmstrip"
+      "details"
       "inspector";
   }
 
@@ -85,6 +86,14 @@
   .inspector-actions {
     margin-right: 0;
     margin-left: 0;
+  }
+
+  .viewer-details .score-detail-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .score-llm-layout {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -537,6 +546,11 @@
   .filmstrip {
     gap: 7px;
     min-height: 88px;
+  }
+
+  .viewer-details {
+    padding: 10px;
+    border-radius: 18px;
   }
 
   .thumb {

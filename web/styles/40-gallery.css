@@ -1134,9 +1134,10 @@ body.is-gallery-marquee-selecting * {
   right: -2px;
   bottom: calc(100% + 12px);
   width: min(320px, calc(100vw - 32px));
-  max-height: min(56vh, 420px);
+  max-height: min(72vh, 640px);
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 12px;
   border: 0;
   border-radius: var(--radius-card);
@@ -1165,7 +1166,8 @@ body.is-gallery-marquee-selecting * {
 
 .gallery-rating:hover .rating-tooltip,
 .gallery-rating:focus .rating-tooltip,
-.gallery-rating:focus-within .rating-tooltip {
+.gallery-rating:focus-within .rating-tooltip,
+.gallery-rating.is-tooltip-bridging .rating-tooltip {
   z-index: 170;
   opacity: 1;
   pointer-events: auto;
