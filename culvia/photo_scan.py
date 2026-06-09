@@ -17,6 +17,13 @@ SUPPORTED_EXTENSIONS = {
 }
 
 
+def _canonical_path(path: Path) -> Path:
+    try:
+        return path.expanduser().resolve()
+    except OSError:
+        return path.expanduser().absolute()
+
+
 def scan_image_paths(folders: Iterable[str | Path]) -> tuple[list[Path], list[str]]:
     paths: list[Path] = []
     warnings: list[str] = []
@@ -33,7 +40,7 @@ def scan_image_paths(folders: Iterable[str | Path]) -> tuple[list[Path], list[st
 
         if root.is_file():
             if root.suffix.lower() in SUPPORTED_EXTENSIONS:
-                paths.append(root)
+                paths.append(_canonical_path(root))
             else:
                 warnings.append(f"不是支持的图片格式：{root}")
             continue
@@ -41,11 +48,12 @@ def scan_image_paths(folders: Iterable[str | Path]) -> tuple[list[Path], list[st
         try:
             for child in root.rglob("*"):
                 if child.is_file() and child.suffix.lower() in SUPPORTED_EXTENSIONS:
-                    paths.append(child)
+                    paths.append(_canonical_path(child))
         except Exception as exc:
             warnings.append(f"扫描目录失败：{root} ({exc!r})")
 
-    unique_paths = sorted(set(paths), key=lambda item: str(item).casefold())
+    unique_by_key = {str(path).casefold(): path for path in paths}
+    unique_paths = sorted(unique_by_key.values(), key=lambda item: str(item).casefold())
     return unique_paths, warnings
 
 

@@ -31,6 +31,7 @@ from culvia.desktop_files import (
     DesktopActionError,
     DesktopActionUnsupported,
     choose_folder_path,
+    choose_folder_paths,
     reveal_path_in_file_manager,
 )
 from culvia.export_service import (
@@ -92,7 +93,7 @@ from culvia.payloads import (
     summarize_scores as _summarize_scores,
     technical_tags,
 )
-from culvia.photo_scan import SUPPORTED_EXTENSIONS
+from culvia.photo_scan import SUPPORTED_EXTENSIONS, build_file_id
 from culvia.recommendation import (
     FILTER_DEFAULTS,
     FILTER_THRESHOLD_COLUMNS,
@@ -114,6 +115,7 @@ from culvia.schema import (
     CSV_COLUMNS,
     DEFAULT_LLM_PROMPT_PRESET,
     DEFAULT_SELECTED_MODELS,
+    FIELD_GROUPS,
     LLM_OVERALL_AESTHETIC_WEIGHT,
     LLM_OVERALL_TECHNICAL_WEIGHT,
     LLM_PROMPT_PRESETS,
@@ -129,6 +131,7 @@ from culvia.schema import (
     MODEL_QUALITY_FIELDS,
     MODEL_QUALITY_LABELS,
     MODEL_REPO_CACHE_DIRS,
+    RECOMMENDATION_COLUMN,
     RUNTIME_CLIP_REFERENCE,
     RUNTIME_CORE_AESTHETIC,
     RUNTIME_LLM_REVIEW,
@@ -146,6 +149,13 @@ from culvia.scoring_runner import (
     run_scoring_job as run_scoring_job_with_dependencies,
 )
 from culvia.scoring_service import ScoringStartError, start_scoring_job_action
+from culvia.score_records import make_empty_score_record
+from culvia.source_preview import (
+    SourcePreviewDependencies,
+    SourcePreviewStartError,
+    run_source_preview_job as run_source_preview_job_with_dependencies,
+    start_source_preview_job_action,
+)
 from culvia.source_service import (
     SourceCacheDependencies,
     apply_source_cache_state,
@@ -228,6 +238,11 @@ UPLOAD_CACHE_DIR = RUNTIME_CONFIG.upload_cache_dir
 THUMBNAIL_CACHE_DIR = RUNTIME_CONFIG.thumbnail_cache_dir
 THUMBNAIL_MAX_SIZE = RUNTIME_CONFIG.thumbnail_max_size
 THUMBNAIL_LOCK = threading.Lock()
+KEYCHAIN_REFRESH_TIMEOUT_SECONDS = 1.5
+_LLM_KEY_REFRESH_LOCK = threading.Lock()
+_LLM_KEY_REFRESH_ATTEMPTED = False
+_LLM_KEY_REFRESH_VALUE = ""
+_LLM_KEY_REFRESH_ERROR: SecretStoreError | SecretStoreUnavailable | None = None
 
 COLOR_LABEL_OPTIONS = [
     {"value": "all", "label": "全部"},
@@ -261,6 +276,75 @@ PHOTO_PAYLOAD_FIELDS = PhotoPayloadFields(
     aesthetic_reference_fields=tuple(AESTHETIC_REFERENCE_FIELDS),
     llm_review_fields=tuple(LLM_REVIEW_FIELDS),
 )
+
+
+def reset_llm_api_key_refresh_cache() -> None:
+    global _LLM_KEY_REFRESH_ATTEMPTED, _LLM_KEY_REFRESH_VALUE, _LLM_KEY_REFRESH_ERROR
+    with _LLM_KEY_REFRESH_LOCK:
+        _LLM_KEY_REFRESH_ATTEMPTED = False
+        _LLM_KEY_REFRESH_VALUE = ""
+        _LLM_KEY_REFRESH_ERROR = None
+
+
+def remember_llm_api_key_for_refresh(api_key: str) -> None:
+    global _LLM_KEY_REFRESH_ATTEMPTED, _LLM_KEY_REFRESH_VALUE, _LLM_KEY_REFRESH_ERROR
+    with _LLM_KEY_REFRESH_LOCK:
+        _LLM_KEY_REFRESH_ATTEMPTED = True
+        _LLM_KEY_REFRESH_VALUE = str(api_key or "").strip()
+        _LLM_KEY_REFRESH_ERROR = None
+
+
+def load_llm_api_key_for_refresh() -> str:
+    global _LLM_KEY_REFRESH_ATTEMPTED, _LLM_KEY_REFRESH_VALUE, _LLM_KEY_REFRESH_ERROR
+    with _LLM_KEY_REFRESH_LOCK:
+        if _LLM_KEY_REFRESH_ATTEMPTED:
+            if _LLM_KEY_REFRESH_ERROR is not None:
+                raise _LLM_KEY_REFRESH_ERROR
+            return _LLM_KEY_REFRESH_VALUE
+
+    result: dict[str, object] = {}
+
+    def load_key() -> None:
+        try:
+            result["value"] = load_llm_api_key()
+        except (SecretStoreUnavailable, SecretStoreError) as exc:
+            result["error"] = exc
+        except Exception as exc:
+            result["error"] = SecretStoreError(str(exc).strip() or exc.__class__.__name__)
+
+    thread = threading.Thread(target=load_key, daemon=True)
+    thread.start()
+    thread.join(KEYCHAIN_REFRESH_TIMEOUT_SECONDS)
+
+    if thread.is_alive():
+        error = SecretStoreUnavailable("system keychain backend timed out")
+        with _LLM_KEY_REFRESH_LOCK:
+            _LLM_KEY_REFRESH_ATTEMPTED = True
+            _LLM_KEY_REFRESH_VALUE = ""
+            _LLM_KEY_REFRESH_ERROR = error
+        raise error
+
+    error = result.get("error")
+    if isinstance(error, (SecretStoreUnavailable, SecretStoreError)):
+        with _LLM_KEY_REFRESH_LOCK:
+            _LLM_KEY_REFRESH_ATTEMPTED = True
+            _LLM_KEY_REFRESH_VALUE = ""
+            _LLM_KEY_REFRESH_ERROR = error
+        raise error
+
+    value = str(result.get("value") or "").strip()
+    remember_llm_api_key_for_refresh(value)
+    return value
+
+
+def save_llm_api_key_for_config(api_key: str) -> None:
+    save_llm_api_key(api_key)
+    remember_llm_api_key_for_refresh(api_key)
+
+
+def delete_llm_api_key_for_config() -> None:
+    delete_llm_api_key()
+    remember_llm_api_key_for_refresh("")
 
 
 def active_thread_job_id() -> str:
@@ -433,9 +517,9 @@ def llm_config_service_dependencies() -> LLMConfigServiceDependencies:
         clear_session_config=clear_session_llm_config,
         set_secure_config=set_secure_llm_config,
         clear_secure_config=clear_secure_llm_config,
-        load_api_key=load_llm_api_key,
-        save_api_key=save_llm_api_key,
-        delete_api_key=delete_llm_api_key,
+        load_api_key=load_llm_api_key_for_refresh,
+        save_api_key=save_llm_api_key_for_config,
+        delete_api_key=delete_llm_api_key_for_config,
     )
 
 
@@ -470,16 +554,38 @@ def fetch_llm_models(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def image_url(path: str, max_size: int) -> str:
-    return _image_url(path, max_size)
+def image_url(path: str, max_size: int, *, file_id: str = "") -> str:
+    return _image_url(path, max_size, file_id=file_id)
 
 
-def thumbnail_url(path: str, max_size: int = THUMBNAIL_MAX_SIZE) -> str:
-    return _thumbnail_url(path, max_size)
+def thumbnail_url(path: str, max_size: int = THUMBNAIL_MAX_SIZE, *, file_id: str = "") -> str:
+    return _thumbnail_url(path, max_size, file_id=file_id)
 
 
 def photo_id(path: str) -> str:
     return _photo_id(path)
+
+
+def make_empty_preview_record(path: Path, file_id: str, error: str = "") -> dict[str, object]:
+    return make_empty_score_record(
+        path,
+        file_id,
+        recommendation_column=RECOMMENDATION_COLUMN,
+        field_groups=FIELD_GROUPS,
+        error=error,
+    )
+
+
+def source_preview_dependencies() -> SourcePreviewDependencies:
+    return SourcePreviewDependencies(
+        default_cache_path=DEFAULT_CACHE_PATH,
+        scan_image_paths=scan_image_paths,
+        sanitize_uploaded_paths=sanitize_uploaded_paths,
+        build_file_id=build_file_id,
+        load_cache_records=load_cache_records,
+        normalize_score_dataframe=normalize_score_dataframe,
+        make_empty_record=make_empty_preview_record,
+    )
 
 
 def dataframe_for_display(
@@ -725,8 +831,10 @@ async def api_filter(request: Request) -> JSONResponse:
 
 
 async def api_network(request: Request) -> JSONResponse:
-    payload = await request.json()
     state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
+    payload = await request.json()
     with state_store.lock:
         state_store.data["network"]["mode"] = normalize_network_mode(payload.get("mode"))
     return JSONResponse(state_payload(state_store))
@@ -735,7 +843,7 @@ async def api_network(request: Request) -> JSONResponse:
 async def api_llm_config(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
     if job_is_running(state_store):
-        return api_error_response("jobRunningLlmConfig", "评分任务运行中，暂时不能修改大模型配置。", status_code=409)
+        return api_error_response("jobRunningLlmConfig", "当前任务运行中，暂时不能修改大模型配置。", status_code=409)
     payload = await request.json()
     cache_path = str(payload.get("cachePath") or DEFAULT_CACHE_PATH)
     try:
@@ -772,27 +880,53 @@ async def api_llm_models(request: Request) -> JSONResponse:
 
 
 async def api_models(request: Request) -> JSONResponse:
+    state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
     payload = await request.json()
     selected = available_selected_models(
         normalize_selected_models(payload.get("selected")),
         llm_configured=bool(llm_review_status()["configured"]),
         llm_model_key=MODEL_LLM_REVIEW,
     )
-    state_store = request_state_store(request)
     with state_store.lock:
         state_store.data["models"]["selected"] = selected or DEFAULT_SELECTED_MODELS.copy()
     return JSONResponse(state_payload(state_store))
 
 
 async def api_cache(request: Request) -> JSONResponse:
+    state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
     payload = await request.json()
     try:
         result = load_source_cache_action(payload, source_cache_dependencies())
     except ValueError as exc:
         return api_error_response("cachePathInvalid", str(exc), status_code=400, params={"reason": str(exc)})
-    state_store = request_state_store(request)
     apply_source_cache_state(state_store, result)
     return JSONResponse(state_payload(state_store))
+
+
+async def api_source_preview(request: Request) -> JSONResponse:
+    state_store = request_state_store(request)
+    job_service = request_job_service(request)
+    payload = await request.json()
+    try:
+        result = start_source_preview_job_action(
+            payload,
+            state_store,
+            job_service,
+            default_cache_path=DEFAULT_CACHE_PATH,
+            run_source_preview_job=run_source_preview_job,
+            thread_factory=threading.Thread,
+        )
+    except ValueError as exc:
+        return api_error_response("sourcePreviewInvalid", str(exc), status_code=400, params={"reason": str(exc)})
+    except SourcePreviewStartError as exc:
+        return api_error_response(exc.error_code, exc.message, status_code=exc.status_code)
+    response_payload = state_payload(state_store)
+    response_payload["sourcePreviewJob"] = result.to_payload()
+    return JSONResponse(response_payload)
 
 
 def job_is_running(state_store: AppStateStore | None = None) -> bool:
@@ -801,10 +935,14 @@ def job_is_running(state_store: AppStateStore | None = None) -> bool:
         return bool(store.data["job"].get("running"))
 
 
+def job_running_operation_response() -> JSONResponse:
+    return api_error_response("jobRunningOperation", "当前任务运行中，暂时不能执行这个操作。", status_code=409)
+
+
 async def api_clear_history(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
     if job_is_running(state_store):
-        return api_error_response("jobRunningClearHistory", "评分任务运行中，暂时不能清空评分记录。", status_code=409)
+        return api_error_response("jobRunningClearHistory", "当前任务运行中，暂时不能清空评分记录。", status_code=409)
 
     payload = await request.json()
     with state_store.lock:
@@ -833,7 +971,7 @@ async def api_clear_history(request: Request) -> JSONResponse:
 async def api_clear_local_data(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
     if job_is_running(state_store):
-        return api_error_response("jobRunningClearLocalData", "评分任务运行中，暂时不能重置本机数据。", status_code=409)
+        return api_error_response("jobRunningClearLocalData", "当前任务运行中，暂时不能重置本机数据。", status_code=409)
 
     payload = await request.json()
     with state_store.lock:
@@ -902,7 +1040,7 @@ async def api_clear_local_data(request: Request) -> JSONResponse:
 async def api_clear_model(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
     if job_is_running(state_store):
-        return api_error_response("jobRunningClearModel", "评分任务运行中，暂时不能删除模型文件。", status_code=409)
+        return api_error_response("jobRunningClearModel", "当前任务运行中，暂时不能删除模型文件。", status_code=409)
 
     try:
         result = clear_model_caches(APP_MODEL_CACHE_DIR, MODEL_REPO_CACHE_DIRS, get_huggingface_cache_root())
@@ -921,6 +1059,8 @@ async def api_clear_model(request: Request) -> JSONResponse:
 
 async def api_upload(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
     runtime_config = request_runtime_config(request)
     form = await request.form()
     files = form.getlist("files")
@@ -1009,6 +1149,21 @@ def run_scoring_job(
     )
 
 
+def run_source_preview_job(
+    job_id: str,
+    payload: dict[str, Any],
+    state_store: AppStateStore | None = None,
+    job_service: ScoringJobService | None = None,
+) -> None:
+    run_source_preview_job_with_dependencies(
+        job_id,
+        payload,
+        state_store or APP_STATE,
+        job_service or APP_JOB_SERVICE,
+        source_preview_dependencies(),
+    )
+
+
 async def api_score(request: Request) -> JSONResponse:
     payload = await request.json()
     state_store = request_state_store(request)
@@ -1041,8 +1196,10 @@ async def api_job_resume(request: Request) -> JSONResponse:
 
 
 async def api_mark_photo(request: Request) -> JSONResponse:
-    payload = await request.json()
     state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
+    payload = await request.json()
     with state_store.lock:
         state = state_store.data
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
@@ -1076,8 +1233,10 @@ def scoring_start_error_response(error: ScoringStartError) -> JSONResponse:
 
 
 async def api_mark_color(request: Request) -> JSONResponse:
-    payload = await request.json()
     state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
+    payload = await request.json()
     with state_store.lock:
         state = state_store.data
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
@@ -1093,8 +1252,10 @@ async def api_mark_color(request: Request) -> JSONResponse:
 
 
 async def api_mark_status(request: Request) -> JSONResponse:
-    payload = await request.json()
     state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
+    payload = await request.json()
     with state_store.lock:
         state = state_store.data
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
@@ -1110,8 +1271,10 @@ async def api_mark_status(request: Request) -> JSONResponse:
 
 
 async def api_restore_marks(request: Request) -> JSONResponse:
-    payload = await request.json()
     state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
+    payload = await request.json()
     with state_store.lock:
         state = state_store.data
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
@@ -1126,8 +1289,10 @@ async def api_restore_marks(request: Request) -> JSONResponse:
 
 
 async def api_accept_marks(request: Request) -> JSONResponse:
-    payload = await request.json()
     state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
+    payload = await request.json()
     with state_store.lock:
         state = state_store.data
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
@@ -1154,8 +1319,10 @@ async def api_curation_history(request: Request) -> JSONResponse:
 
 
 async def api_curation_undo(request: Request) -> JSONResponse:
-    payload = await request.json()
     state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
+    payload = await request.json()
     with state_store.lock:
         state = state_store.data
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
@@ -1201,6 +1368,8 @@ async def api_thumbnail(request: Request) -> Response:
 
 async def api_export(request: Request) -> Response:
     state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
     with state_store.lock:
         state = state_store.data
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
@@ -1219,6 +1388,8 @@ async def api_export(request: Request) -> Response:
 
 async def api_export_selected_csv(request: Request) -> Response:
     state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
     with state_store.lock:
         state = state_store.data
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
@@ -1229,9 +1400,11 @@ async def api_export_selected_csv(request: Request) -> Response:
 
 
 async def api_export_preflight(request: Request) -> JSONResponse:
+    state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
     payload = await request.json()
     destination_text = str(payload.get("destination") or "").strip()
-    state_store = request_state_store(request)
     with state_store.lock:
         state = state_store.data
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
@@ -1244,9 +1417,11 @@ async def api_export_preflight(request: Request) -> JSONResponse:
 
 
 async def api_export_selected(request: Request) -> JSONResponse:
+    state_store = request_state_store(request)
+    if job_is_running(state_store):
+        return job_running_operation_response()
     payload = await request.json()
     destination_text = str(payload.get("destination") or "").strip()
-    state_store = request_state_store(request)
     with state_store.lock:
         state = state_store.data
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
@@ -1276,11 +1451,39 @@ async def choose_folder(prompt: str) -> JSONResponse:
     return JSONResponse({"folder": folder})
 
 
-async def api_pick_folder(_: Request) -> JSONResponse:
+async def choose_folders(prompt: str) -> JSONResponse:
+    try:
+        folders = choose_folder_paths(prompt)
+    except DesktopActionUnsupported as exc:
+        return api_error_response("desktopActionUnsupported", str(exc), status_code=501, params={"reason": str(exc)})
+    except DesktopActionCancelled as exc:
+        return api_error_response(
+            "desktopActionCancelled",
+            str(exc),
+            status_code=400,
+            params={"reason": str(exc)},
+            cancelled=True,
+        )
+    except DesktopActionError as exc:
+        return api_error_response("desktopActionFailed", str(exc), status_code=500, params={"reason": str(exc)})
+    return JSONResponse({"folders": folders, "folder": folders[0] if folders else ""})
+
+
+async def api_pick_folder(request: Request) -> JSONResponse:
+    if job_is_running(request_state_store(request)):
+        return job_running_operation_response()
     return await choose_folder("选择照片目录")
 
 
-async def api_pick_export_folder(_: Request) -> JSONResponse:
+async def api_pick_folders(request: Request) -> JSONResponse:
+    if job_is_running(request_state_store(request)):
+        return job_running_operation_response()
+    return await choose_folders("选择照片目录")
+
+
+async def api_pick_export_folder(request: Request) -> JSONResponse:
+    if job_is_running(request_state_store(request)):
+        return job_running_operation_response()
     return await choose_folder("选择导出目录")
 
 
@@ -1337,6 +1540,7 @@ def route_handlers() -> WebRouteHandlers:
         api_llm_models=api_llm_models,
         api_models=api_models,
         api_cache=api_cache,
+        api_source_preview=api_source_preview,
         api_clear_history=api_clear_history,
         api_clear_local_data=api_clear_local_data,
         api_clear_model=api_clear_model,
@@ -1358,6 +1562,7 @@ def route_handlers() -> WebRouteHandlers:
         api_export_preflight=api_export_preflight,
         api_export_selected=api_export_selected,
         api_pick_folder=api_pick_folder,
+        api_pick_folders=api_pick_folders,
         api_pick_export_folder=api_pick_export_folder,
         api_reveal=api_reveal,
     )

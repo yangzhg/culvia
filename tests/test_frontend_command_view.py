@@ -93,6 +93,17 @@ class FrontendCommandViewTests(unittest.TestCase):
               throw new Error("loading controls are wrong");
             }
 
+            const scanning = view.commandViewState({
+              sourceReady: false,
+              job: { kind: "source_preview", running: true, progress: 0.25 },
+            });
+            if (scanning.state !== "正在扫描" || scanning.title !== "正在扫描照片来源") {
+              throw new Error("source preview progress state is wrong");
+            }
+            if (!scanning.mainScore.disabled || scanning.pause.visible) {
+              throw new Error("source preview controls are wrong");
+            }
+
             const paused = view.commandViewState({
               sourceReady: true,
               job: {

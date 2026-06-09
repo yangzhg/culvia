@@ -116,6 +116,8 @@ class SourceServiceTests(unittest.TestCase):
                 default_selected_models=["core"],
             )
         )
+        with store.lock:
+            store.data["sourcePreview"] = {"mode": "folders", "folders": ["/old"], "total": 12}
 
         apply_source_cache_state(store, result)
 
@@ -124,6 +126,7 @@ class SourceServiceTests(unittest.TestCase):
             self.assertEqual(store.data["source"]["mode"], "folders")
             self.assertEqual(store.data["source"]["folders"], ["/photos"])
             self.assertEqual(store.data["source"]["cachePath"], "/tmp/current.sqlite")
+            self.assertNotIn("sourcePreview", store.data)
 
     def test_load_source_cache_action_rejects_non_sqlite_cache_path(self) -> None:
         with self.assertRaisesRegex(ValueError, "SQLite"):

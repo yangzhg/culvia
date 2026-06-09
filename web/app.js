@@ -78,6 +78,11 @@ let gallerySuppressNextCardClick = false;
 let uiTooltipAnchor = null;
 let uiTooltipRaf = 0;
 let curationHistory = [];
+let sourceInputsDirty = false;
+let sourcePreviewTimer = null;
+let sourcePreviewRequestId = 0;
+let sourcePreviewLoading = false;
+let sourcePreviewPending = false;
 let curationHistoryLoading = false;
 let curationHistoryError = "";
 let shortcutHelpOpen = false;
@@ -317,11 +322,72 @@ function trapActiveDialogFocus(event) {
   return false;
 }
 
+function uniqueFolderList(items) {
+  const source = Array.isArray(items) ? items : items == null ? [] : [items];
+  const seen = new Set();
+  return source
+    .map((item) => String(item || "").trim())
+    .filter((item) => {
+      if (!item || seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
+}
+
 function foldersFromInput() {
-  return $("#folderInput").value
-    .split("\n")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const input = $("#folderInput");
+  if (!input) return [];
+  return uniqueFolderList(input.value.split("\n"));
+}
+
+function folderListsEqual(left = [], right = []) {
+  const a = uniqueFolderList(left);
+  const b = uniqueFolderList(right);
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function matchingSourcePreview(folders = foldersFromInput()) {
+  const preview = appState?.sourcePreview;
+  if (!preview || preview.mode !== "folders" || preview.ready !== true) return null;
+  return folderListsEqual(preview.folders || [], folders) && Number.isFinite(Number(preview.total)) ? preview : null;
+}
+
+function isScoringJob(job = appState?.job) {
+  return Boolean(job?.running) && (job.kind || "scoring") === "scoring";
+}
+
+function isSourcePreviewJob(job = appState?.job) {
+  return Boolean(job?.running) && job.kind === "source_preview";
+}
+
+function isSourcePreviewActive() {
+  return sourcePreviewLoading || isSourcePreviewJob();
+}
+
+function sourceInputSnapshot() {
+  const cacheInput = $("#cacheInput");
+  return {
+    mode: sourceMode || appState?.source?.mode || "folders",
+    folders: foldersFromInput(),
+    cachePath: cacheInput ? cacheInput.value.trim() : appState?.source?.cachePath || "",
+  };
+}
+
+function applySourceInputSnapshot(snapshot) {
+  if (!snapshot || !appState) return;
+  sourceMode = snapshot.mode || "folders";
+  appState.source = {
+    ...(appState.source || {}),
+    mode: sourceMode,
+    folders: uniqueFolderList(snapshot.folders || []),
+    cachePath: snapshot.cachePath || "",
+  };
+}
+
+function markSourceInputsDirty() {
+  sourceInputsDirty = true;
+  applySourceInputSnapshot(sourceInputSnapshot());
+  refreshSourceDependentControls();
 }
 
 function pathName(path) {
@@ -347,13 +413,23 @@ function displayNetworkLabel(label) {
 }
 
 function updatePathSummaries() {
+  $("#folderSummary")?.removeAttribute("data-i18n");
   const folders = foldersFromInput();
+  const preview = matchingSourcePreview(folders);
+  const previewText = isSourcePreviewActive()
+    ? ` · ${t("source.previewScanningState")}`
+    : preview
+      ? ` · ${t("source.previewCount", { count: Number(preview.total) })}`
+      : "";
   if (!folders.length) {
     setText("#folderSummary", t("source.empty"));
   } else if (folders.length === 1) {
-    setText("#folderSummary", `${pathName(folders[0])} · ${parentPath(folders[0])}`);
+    setText("#folderSummary", `${pathName(folders[0])} · ${parentPath(folders[0])}${previewText}`);
   } else {
-    setText("#folderSummary", `${tr("source.folderCount", { count: folders.length }, `${folders.length} 个目录`)} · ${folders.slice(0, 2).map(pathName).join("、")}`);
+    setText(
+      "#folderSummary",
+      `${tr("source.folderCount", { count: folders.length }, `${folders.length} 个目录`)} · ${folders.slice(0, 2).map(pathName).join("、")}${previewText}`,
+    );
   }
 }
 
@@ -613,30 +689,46 @@ function toggleMarkAdvanceMode() {
   renderManualControls(selectedPhoto());
 }
 
-function setSourceMode(mode) {
+function setSourceMode(mode, { dirty = false } = {}) {
+  if (dirty && appState?.job?.running) return;
   sourceMode = mode;
   $$("[data-source]").forEach((button) => button.classList.toggle("is-active", button.dataset.source === mode));
   $$("[data-source-view]").forEach((view) => {
     view.classList.toggle("is-active", view.dataset.sourceView === mode);
   });
+  if (dirty) {
+    markSourceInputsDirty();
+    scheduleSourcePreview();
+  }
 }
 
 async function setNetworkMode(mode, sync = true) {
+  if (sync && appState?.job?.running) return;
   networkMode = mode === "system" ? "system" : "direct";
   $$("[data-network]").forEach((button) => button.classList.toggle("is-active", button.dataset.network === networkMode));
   if (sync) {
+    const sourceSnapshot = sourceInputSnapshot();
     appState = await postJson("/api/network", { mode: networkMode });
+    applySourceInputSnapshot(sourceSnapshot);
     render();
   }
 }
 
 async function updateSelectedModels() {
+  if (appState?.job?.running) {
+    renderModelOptions();
+    return;
+  }
+  const sourceSnapshot = sourceInputSnapshot();
   const selected = $$("#modelOptions [data-model-key]:checked").map((input) => input.dataset.modelKey);
   if (!selected.length) {
     await loadState();
+    applySourceInputSnapshot(sourceSnapshot);
+    render();
     return;
   }
   appState = await postJson("/api/models", { selected });
+  applySourceInputSnapshot(sourceSnapshot);
   render();
 }
 
@@ -1002,23 +1094,31 @@ function renderCommand(model, job, summary) {
   applyCommandDomPlan(commandView.commandDomPlan(viewState));
 }
 
+function refreshSourceDependentControls() {
+  if (!appState) return;
+  renderCommand(appState.model, appState.job, appState.summary);
+  renderProgress(appState.job);
+}
+
 function renderProgress(job) {
+  const running = Boolean(job?.running);
+  const scoring = isScoringJob(job);
   const modelBox = $("#modelProgress");
   modelBox?.classList.add("is-hidden");
 
   const jobBox = $("#jobProgress");
   jobBox?.classList.add("is-hidden");
 
-  $("#mainScoreBtn").disabled = Boolean(job?.running) || Boolean(commandNotice?.loading) || !hasSelectedSource();
-  $("#clearLocalDataBtn").disabled = Boolean(job?.running) || Boolean(commandNotice?.loading);
-  $("#clearHistoryBtn").disabled = Boolean(job?.running) || Boolean(commandNotice?.loading);
-  $("#clearModelBtn").disabled = Boolean(job?.running) || Boolean(commandNotice?.loading);
-  $("#pauseJobBtn").disabled = !Boolean(job?.running) || Boolean(commandNotice?.loading);
-  $("#editLlmConfigBtn").disabled = Boolean(job?.running) || Boolean(commandNotice?.loading);
-  $("#cancelLlmConfigBtn").disabled = Boolean(job?.running) || Boolean(commandNotice?.loading);
-  $("#saveLlmConfigBtn").disabled = Boolean(job?.running) || Boolean(commandNotice?.loading);
-  $("#clearLlmKeyBtn").disabled = Boolean(job?.running) || Boolean(commandNotice?.loading) || !appState?.llm?.configured;
-  $("#refreshLlmModelsBtn").disabled = Boolean(job?.running) || llmModelsLoading;
+  $("#mainScoreBtn").disabled = running || Boolean(commandNotice?.loading) || !hasSelectedSource();
+  $("#clearLocalDataBtn").disabled = running || Boolean(commandNotice?.loading);
+  $("#clearHistoryBtn").disabled = running || Boolean(commandNotice?.loading);
+  $("#clearModelBtn").disabled = running || Boolean(commandNotice?.loading);
+  $("#pauseJobBtn").disabled = !scoring || Boolean(commandNotice?.loading);
+  $("#editLlmConfigBtn").disabled = running || Boolean(commandNotice?.loading);
+  $("#cancelLlmConfigBtn").disabled = running || Boolean(commandNotice?.loading);
+  $("#saveLlmConfigBtn").disabled = running || Boolean(commandNotice?.loading);
+  $("#clearLlmKeyBtn").disabled = running || Boolean(commandNotice?.loading) || !appState?.llm?.configured;
+  $("#refreshLlmModelsBtn").disabled = running || llmModelsLoading;
 }
 
 function renderStats(summary) {
@@ -1269,6 +1369,7 @@ function syncActiveThumbnail(filmstrip, behavior = "auto") {
 
 function renderManualControls(photo) {
   const manual = photo?.manual || {};
+  const busy = Boolean(appState?.job?.running);
   const rating = Number(manual.rating || 0);
   const status = manual.status || "";
   const colorLabel = manual.colorLabel || "";
@@ -1283,6 +1384,7 @@ function renderManualControls(photo) {
           type="button"
           data-manual-rating="${value}"
           aria-label="${escapeHtml(t("manual.ratingStars", { count: value }))}"
+          ${busy ? "disabled" : ""}
         >★</button>
       `,
     )
@@ -1304,6 +1406,7 @@ function renderManualControls(photo) {
           data-color-label="${escapeHtml(meta.value)}"
           aria-label="${escapeHtml(title)}"
           data-ui-tooltip="${escapeHtml(title)}"
+          ${busy ? "disabled" : ""}
         >
           ${meta.value ? "" : "×"}
         </button>
@@ -1324,6 +1427,7 @@ function renderManualControls(photo) {
     const button = $(selector);
     setButtonLabel(button, icon, label);
     button.classList.toggle("is-active", status === value);
+    button.disabled = busy;
     button.classList.remove("is-picked", "is-rejected", "is-pending", "is-unreviewed");
     button.classList.add(manualStatusClass(value));
   });
@@ -1335,11 +1439,12 @@ function renderManualControls(photo) {
   if (advanceToggle) {
     advanceToggle.classList.toggle("is-active", markAdvanceEnabled);
     advanceToggle.setAttribute("aria-pressed", markAdvanceEnabled ? "true" : "false");
+    advanceToggle.disabled = busy;
   }
   const modelScore = numericValue(photo?.recommendation);
   const llmScore = numericValue(photo?.llmReviewScores?.llm_review_overall);
-  $("#acceptModelBtn").disabled = modelScore == null;
-  $("#acceptLlmBtn").disabled = llmScore == null;
+  $("#acceptModelBtn").disabled = busy || modelScore == null;
+  $("#acceptLlmBtn").disabled = busy || llmScore == null;
 }
 
 function filmstripWindow(photos, index, maxItems = 84) {
@@ -1524,6 +1629,8 @@ function renderGalleryBulkToolbar(photos) {
   setText("#galleryBulkCount", t("common.photoCount", { count: photos.length }));
   setText("#gallerySelectedCount", t("common.photoCount", { count: selectedCount }));
   renderBatchScopePill("#galleryBatchScopeText", "#galleryBatchScopeLabel", target);
+  renderGallerySourceStatus();
+  renderGalleryThumbnailProgress();
   renderGallerySelectionSummary(photos, selectedIds);
   const selectVisibleButton = $("#gallerySelectVisibleBtn");
   if (selectVisibleButton) selectVisibleButton.disabled = !photos.length || allVisibleSelected || Boolean(appState?.job?.running);
@@ -1533,6 +1640,81 @@ function renderGalleryBulkToolbar(photos) {
     const button = $(selector);
     if (button) button.disabled = disabled;
   });
+}
+
+function renderGallerySourceStatus() {
+  const root = $("#gallerySourceStatus");
+  if (!root) return;
+  if (sourceMode !== "folders") {
+    root.className = "gallery-source-status is-hidden";
+    root.textContent = "";
+    return;
+  }
+  if (isSourcePreviewActive()) {
+    root.className = "gallery-source-status is-scanning";
+    root.textContent = t("gallery.sourceScanning");
+    return;
+  }
+  const preview = matchingSourcePreview();
+  if (!preview) {
+    root.className = "gallery-source-status is-hidden";
+    root.textContent = "";
+    return;
+  }
+  const total = Number(preview.total || 0);
+  root.className = `gallery-source-status ${total > 0 ? "is-ready" : "is-empty"}`;
+  root.textContent = total > 0 ? t("gallery.sourceCount", { count: total }) : t("gallery.sourceEmpty");
+}
+
+function galleryThumbnailStats() {
+  const images = $$("#galleryGrid [data-gallery-thumb]");
+  let loaded = 0;
+  let failed = 0;
+  images.forEach((image) => {
+    const card = image.closest(".photo-card");
+    if (card?.classList.contains("is-thumb-error")) {
+      failed += 1;
+      return;
+    }
+    if (card?.classList.contains("is-thumb-loaded") || (image.complete && image.naturalWidth > 0)) {
+      loaded += 1;
+    }
+  });
+  return {
+    failed,
+    loaded,
+    pending: Math.max(images.length - loaded - failed, 0),
+    total: images.length,
+  };
+}
+
+function renderGalleryThumbnailProgress() {
+  const root = $("#galleryThumbProgress");
+  if (!root) return;
+  const stats = galleryThumbnailStats();
+  if (!stats.total || (!stats.pending && !stats.failed)) {
+    root.classList.add("is-hidden");
+    return;
+  }
+  const done = Math.min(stats.total, stats.loaded + stats.failed);
+  const percent = stats.total ? Math.max(3, Math.min(100, (done / stats.total) * 100)) : 0;
+  root.classList.remove("is-hidden");
+  setText("#galleryThumbProgressLabel", stats.failed ? t("gallery.thumbProgressFailed", { count: stats.failed }) : t("gallery.thumbProgressLabel"));
+  setText("#galleryThumbProgressCount", t("gallery.thumbProgressCount", { done, total: stats.total }));
+  const bar = $("#galleryThumbProgressBar");
+  if (bar) bar.style.width = `${percent}%`;
+}
+
+function syncGalleryThumbnailStates() {
+  $$("#galleryGrid [data-gallery-thumb]").forEach((image) => {
+    if (!image.complete) return;
+    updateGalleryThumbState(image, !(image.naturalWidth > 0));
+  });
+  renderGalleryThumbnailProgress();
+}
+
+function scheduleGalleryThumbnailSync() {
+  window.requestAnimationFrame(syncGalleryThumbnailStates);
 }
 
 function selectGalleryRange(fileId) {
@@ -1799,6 +1981,7 @@ function galleryTooltipMarkup(photo) {
 
 function galleryCardMarkup(photo, index, selected, signature) {
   return galleryView.cardMarkup(photo, index, selected, signature, {
+    disabled: Boolean(appState?.job?.running),
     galleryColorBadgeMarkup,
     galleryQuickActionLabel,
     gallerySelectLabel,
@@ -1814,7 +1997,10 @@ function createGalleryCard(markup) {
 }
 
 function updateGalleryCardSelectionState(card, photo, index, selected) {
-  galleryView.updateSelectionState(card, photo, index, selected, { gallerySelectLabel });
+  galleryView.updateSelectionState(card, photo, index, selected, {
+    disabled: Boolean(appState?.job?.running),
+    gallerySelectLabel,
+  });
 }
 
 function renderGallerySelectionState(photos = appState?.photos || []) {
@@ -1833,11 +2019,21 @@ function renderGallery() {
   const photos = appState?.photos || [];
   const grid = $("#galleryGrid");
   renderGalleryBulkToolbar(photos);
+  if (isSourcePreviewActive()) {
+    grid.replaceChildren(createGalleryCard(galleryView.loadingStateMarkup({
+      state: t("source.previewScanningState"),
+      text: t("source.previewScanningDetail"),
+      title: t("source.previewScanningTitle"),
+    })));
+    renderGalleryThumbnailProgress();
+    return;
+  }
   if (!photos.length) {
     grid.replaceChildren(createGalleryCard(galleryView.emptyStateMarkup({
       text: t("gallery.emptyText"),
       title: t("gallery.emptyTitle"),
     })));
+    renderGalleryThumbnailProgress();
     return;
   }
   const orderedCards = Array.from(grid.querySelectorAll(".photo-card[data-file-id]"));
@@ -1853,6 +2049,7 @@ function renderGallery() {
       }
       updateGalleryCardSelectionState(card, photo, index, selected);
     });
+    scheduleGalleryThumbnailSync();
     return;
   }
   const existingCards = new Map(
@@ -1871,11 +2068,45 @@ function renderGallery() {
     fragment.appendChild(card);
   });
   grid.replaceChildren(fragment);
+  scheduleGalleryThumbnailSync();
+}
+
+function updateGalleryThumbState(image, failed) {
+  const card = image?.closest?.(".photo-card");
+  if (!card) return;
+  card.classList.toggle("is-thumb-error", failed);
+  card.classList.toggle("is-thumb-loaded", !failed);
+}
+
+function handleGalleryImageLoad(event) {
+  const image = event.target?.closest?.("[data-gallery-thumb]");
+  if (!image) return;
+  delete image.dataset.galleryRetry;
+  updateGalleryThumbState(image, false);
+  renderGalleryThumbnailProgress();
+}
+
+function handleGalleryImageError(event) {
+  const image = event.target?.closest?.("[data-gallery-thumb]");
+  if (!image) return;
+  if (!image.dataset.galleryRetry) {
+    image.dataset.galleryRetry = "1";
+    window.setTimeout(() => {
+      if (!image.isConnected) return;
+      const retryUrl = new URL(image.currentSrc || image.src, window.location.href);
+      retryUrl.searchParams.set("retry", String(Date.now()));
+      image.src = retryUrl.pathname + retryUrl.search;
+    }, 700);
+    return;
+  }
+  updateGalleryThumbState(image, true);
+  renderGalleryThumbnailProgress();
 }
 
 function handleGalleryGridClick(event) {
   const statusButton = event.target?.closest?.("[data-gallery-status]");
   if (statusButton) {
+    if (appState?.job?.running) return;
     event.stopPropagation();
     const fileId = statusButton.dataset.fileId || "";
     const photo = (appState?.photos || []).find((item) => item?.fileId === fileId);
@@ -1890,6 +2121,7 @@ function handleGalleryGridClick(event) {
   }
   const selectButton = event.target?.closest?.("[data-gallery-select]");
   if (selectButton) {
+    if (appState?.job?.running) return;
     event.stopPropagation();
     toggleGallerySelection(selectButton.dataset.gallerySelect || "", { range: event.shiftKey });
     return;
@@ -2265,6 +2497,7 @@ function isExportDestinationBlocked() {
 }
 
 function updateExportActionControls(all, batchActions) {
+  const busy = Boolean(appState?.job?.running);
   const exportAction = CulviaExportActions.primaryActionView({
     blocked: isExportDestinationBlocked(),
     destination: exportDestination,
@@ -2275,12 +2508,14 @@ function updateExportActionControls(all, batchActions) {
     statusText: exportStatusText,
   });
   setButtonLabel($("#exportSelectedBtn"), exportAction.icon, exportAction.label);
-  $("#exportSelectedBtn").disabled = exportAction.disabled;
+  $("#exportSelectedBtn").disabled = busy || exportAction.disabled;
   setText("#exportSelectedHint", exportAction.hint);
   setButtonLabel($("#acceptFilteredModelBtn"), batchActions.model.icon, batchActions.model.label);
   setButtonLabel($("#acceptFilteredLlmBtn"), batchActions.llm.icon, batchActions.llm.label);
-  $("#acceptFilteredModelBtn").disabled = batchActions.model.disabled;
-  $("#acceptFilteredLlmBtn").disabled = batchActions.llm.disabled;
+  $("#acceptFilteredModelBtn").disabled = busy || batchActions.model.disabled;
+  $("#acceptFilteredLlmBtn").disabled = busy || batchActions.llm.disabled;
+  const destinationButton = $("#pickExportFolderBtn");
+  if (destinationButton) destinationButton.disabled = busy;
 }
 
 function renderExportList() {
@@ -2330,19 +2565,31 @@ function renderExportList() {
 function renderControls() {
   if (!appState) return;
   const capabilities = appState.capabilities || {};
+  const busy = Boolean(appState.job?.running);
   $("#devicePill").innerHTML = `${iconMarkup("cpu")}${escapeHtml(appState.app.device)}`;
   const nativeFolderButton = $("#pickNativeFolderBtn");
   const nativeFolderSupported = capabilities.nativeFolderPicker !== false;
   const nativeFolderLabel = nativeFolderSupported ? t("source.pickFolder") : t("source.pathOnly");
-  nativeFolderButton.disabled = !nativeFolderSupported;
+  nativeFolderButton.disabled = !nativeFolderSupported || busy;
   nativeFolderButton.dataset.uiTooltip = nativeFolderLabel;
   nativeFolderButton.removeAttribute("title");
   nativeFolderButton.setAttribute("aria-label", nativeFolderLabel);
   nativeFolderButton.classList.toggle("is-unavailable", !nativeFolderSupported);
-  if (document.activeElement !== $("#folderInput")) {
+  const folderInput = $("#folderInput");
+  if (folderInput) folderInput.disabled = busy;
+  const cacheInput = $("#cacheInput");
+  if (cacheInput) cacheInput.disabled = busy;
+  ["#pickFilesBtn", "#pickFolderBtn", "#fileInput", "#folderPicker"].forEach((selector) => {
+    const control = $(selector);
+    if (control) control.disabled = busy;
+  });
+  $$("[data-source]").forEach((button) => {
+    button.disabled = busy;
+  });
+  if (!sourceInputsDirty && document.activeElement !== $("#folderInput")) {
     $("#folderInput").value = (appState.source.folders || []).join("\n");
   }
-  if (document.activeElement !== $("#cacheInput")) {
+  if (!sourceInputsDirty && document.activeElement !== $("#cacheInput")) {
     $("#cacheInput").value = appState.source.cachePath || "";
   }
   updatePathSummaries();
@@ -2474,7 +2721,7 @@ function renderControls() {
     });
   });
   $("#limitInput").value = appState.filters.limit ?? 80;
-  setSourceMode(appState.source.mode || sourceMode);
+  setSourceMode(sourceInputsDirty ? sourceMode : appState.source.mode || sourceMode);
   setNetworkMode(appState.network?.mode || "direct", false);
   renderModelOptions();
   renderFilterPresets();
@@ -2653,6 +2900,7 @@ function refreshCurationHistoryIfOpen() {
 }
 
 async function loadState() {
+  const sourceSnapshot = sourceInputsDirty ? sourceInputSnapshot() : null;
   appState = await getJson("/api/state");
   if (!filterRestoreAttempted && !appState.job?.running) {
     filterRestoreAttempted = true;
@@ -2665,19 +2913,29 @@ async function loadState() {
       }
     }
   }
+  if (sourceSnapshot) applySourceInputSnapshot(sourceSnapshot);
   persistFilterPayload(appState.filters);
   if (selectedIndex >= (appState.photos || []).length) selectedIndex = 0;
   render();
-  if (appState.job?.running && !pollTimer) {
-    pollTimer = window.setInterval(loadState, 800);
+  if (sourcePreviewPending && sourceMode === "folders" && !appState.job?.running) {
+    scheduleSourcePreview(80);
   }
-  if (!appState.job?.running && pollTimer) {
+  syncPollTimer();
+}
+
+function syncPollTimer() {
+  if (appState?.job?.running && !pollTimer) {
+    pollTimer = window.setInterval(loadState, 800);
+    return;
+  }
+  if (!appState?.job?.running && pollTimer) {
     window.clearInterval(pollTimer);
     pollTimer = null;
   }
 }
 
 async function uploadFiles(fileList) {
+  if (appState?.job?.running) return;
   const files = Array.from(fileList || []);
   if (!files.length) return;
   const form = new FormData();
@@ -2686,6 +2944,71 @@ async function uploadFiles(fileList) {
   const result = await apiClient.uploadForm("/api/upload", form);
   $("#uploadHint").textContent = t("source.uploadedCount", { count: Number(result.count || 0) });
   await loadState();
+}
+
+function sourcePreviewPayload() {
+  return {
+    mode: sourceMode,
+    folders: foldersFromInput(),
+    cachePath: $("#cacheInput").value.trim(),
+    uploadedPaths: appState?.source?.uploadedPaths || [],
+  };
+}
+
+function scheduleSourcePreview(delay = 240) {
+  window.clearTimeout(sourcePreviewTimer);
+  const requestId = ++sourcePreviewRequestId;
+  if (!appState) {
+    sourcePreviewPending = true;
+    sourcePreviewLoading = false;
+    return;
+  }
+  if (appState.job?.running || sourceMode !== "folders") {
+    sourcePreviewLoading = false;
+    return;
+  }
+  sourcePreviewPending = false;
+  const payload = sourcePreviewPayload();
+  const hasFolders = Boolean((payload.folders || []).length);
+  sourcePreviewTimer = window.setTimeout(() => {
+    void loadSourcePreview(payload, requestId, { showLoading: hasFolders });
+  }, hasFolders ? delay : 0);
+}
+
+async function loadSourcePreview(payload = sourcePreviewPayload(), requestId = ++sourcePreviewRequestId, options = {}) {
+  if (!appState || appState.job?.running || payload.mode !== "folders") return;
+  const sourceSnapshot = sourceInputSnapshot();
+  const showLoading = options.showLoading !== false && Boolean((payload.folders || []).length);
+  sourcePreviewLoading = showLoading;
+  if (showLoading) {
+    render();
+  }
+  try {
+    const response = await postJson("/api/source/preview", payload);
+    if (requestId !== sourcePreviewRequestId) return;
+    appState = response;
+    applySourceInputSnapshot(sourceSnapshot);
+    selectedIndex = 0;
+    sourcePreviewLoading = false;
+    syncPollTimer();
+  } catch (error) {
+    if (requestId !== sourcePreviewRequestId) return;
+    showCommandNotice(
+      {
+        tone: "danger",
+        state: t("source.previewFailedState"),
+        title: t("source.previewFailedTitle"),
+        detail: errorMessage(error),
+      },
+      4200,
+    );
+  } finally {
+    if (requestId === sourcePreviewRequestId) {
+      sourcePreviewLoading = false;
+      render();
+      syncPollTimer();
+    }
+  }
 }
 
 function selectedScoringModels() {
@@ -2736,14 +3059,18 @@ function closeLlmConfirm({ restoreFocus = true } = {}) {
 }
 
 async function submitScoringPayload(payload) {
+  sourcePreviewRequestId += 1;
+  sourcePreviewLoading = false;
+  window.clearTimeout(sourcePreviewTimer);
   commandNotice = null;
   window.clearTimeout(commandNoticeTimer);
   await postJson("/api/score", payload);
+  sourceInputsDirty = false;
   await loadState();
 }
 
 async function startScoring() {
-  if (!appState) return;
+  if (!appState || appState.job?.running) return;
   const payload = buildScoringPayload();
   if (scoringNeedsLlmConfirmation(payload)) {
     openLlmConfirm(payload);
@@ -2753,7 +3080,7 @@ async function startScoring() {
 }
 
 async function confirmLlmScoring() {
-  if (!pendingScoringPayload) return;
+  if (!pendingScoringPayload || appState?.job?.running) return;
   const payload = pendingScoringPayload;
   llmReviewConfirmedForSession = true;
   closeLlmConfirm({ restoreFocus: false });
@@ -2761,7 +3088,7 @@ async function confirmLlmScoring() {
 }
 
 async function startLocalOnlyScoring() {
-  if (!pendingScoringPayload) return;
+  if (!pendingScoringPayload || appState?.job?.running) return;
   const localPayload = {
     ...pendingScoringPayload,
     selectedModels: (pendingScoringPayload.selectedModels || []).filter((modelKey) => modelKey !== "llm_review"),
@@ -2840,7 +3167,7 @@ async function toggleJobPause() {
 }
 
 async function clearHistoryCache() {
-  if (!appState) return;
+  if (!appState || appState.job?.running) return;
   const cachePath = $("#cacheInput").value.trim();
   const ok = await requestDangerConfirm({
     confirmIcon: "trash",
@@ -2875,7 +3202,7 @@ async function clearHistoryCache() {
 }
 
 async function clearLocalData() {
-  if (!appState) return;
+  if (!appState || appState.job?.running) return;
   const cachePath = $("#cacheInput").value.trim();
   const ok = await requestDangerConfirm({
     confirmIcon: "trash",
@@ -2896,6 +3223,7 @@ async function clearLocalData() {
     llmSelectedModel = appState?.llm?.model || "";
     llmConfigEditing = false;
     llmModelMenuOpen = false;
+    sourceInputsDirty = false;
     showCommandNotice({
       tone: "ready",
       state: t("maintenance.clearLocalDataState"),
@@ -2917,7 +3245,7 @@ async function clearLocalData() {
 }
 
 async function clearModelCache() {
-  if (!appState) return;
+  if (!appState || appState.job?.running) return;
   const ok = await requestDangerConfirm({
     confirmIcon: "archive",
     confirmLabel: t("maintenance.removeModels"),
@@ -2948,7 +3276,7 @@ async function clearModelCache() {
 }
 
 async function loadLlmModels({ payloadOverrides = {}, openMenu = false, announce = true } = {}) {
-  if (!appState || llmModelsLoading) return;
+  if (!appState || appState.job?.running || llmModelsLoading) return;
   llmModelsLoading = true;
   llmModelListMessage = "";
   renderLlmConfig();
@@ -2994,12 +3322,14 @@ async function loadLlmModels({ payloadOverrides = {}, openMenu = false, announce
 }
 
 function openLlmConfigEditor() {
+  if (appState?.job?.running) return;
   llmConfigEditing = true;
   llmSelectedModel = appState?.llm?.model || llmSelectedModel;
   renderLlmConfig();
 }
 
 function cancelLlmConfigEdit() {
+  if (appState?.job?.running) return;
   llmConfigEditing = false;
   llmModelMenuOpen = false;
   llmModelSearchQuery = "";
@@ -3040,7 +3370,7 @@ function resetLlmModelCatalogForConnectionChange() {
 }
 
 async function saveLlmConfig() {
-  if (!appState) return;
+  if (!appState || appState.job?.running) return;
   const payload = llmConfigFormPayload();
   try {
     appState = await postJson("/api/llm-config", payload);
@@ -3071,7 +3401,7 @@ async function saveLlmConfig() {
 }
 
 async function clearLlmKey() {
-  if (!appState?.llm?.configured) return;
+  if (appState?.job?.running || !appState?.llm?.configured) return;
   const ok = await requestDangerConfirm({
     confirmIcon: "brain",
     confirmLabel: t("llm.clearKeyAction"),
@@ -3365,6 +3695,7 @@ function switchView(view) {
 }
 
 async function openManualStatusView(status, view = "gallery") {
+  if (appState?.job?.running) return;
   $("#manualStatusFilter").value = status;
   try {
     await applyFilterUpdate();
@@ -3375,6 +3706,7 @@ async function openManualStatusView(status, view = "gallery") {
 }
 
 async function performPhotoMarkUpdate(fileId, changes, options = {}) {
+  if (appState?.job?.running) return;
   const photo = (appState?.photos || []).find((item) => item.fileId === fileId);
   if (!photo?.fileId) return;
   const previousFileId = photo.fileId;
@@ -3418,6 +3750,7 @@ function statusToggleChanges(changes = {}, currentStatus = "") {
 }
 
 function updateManualMark(changes, options = {}) {
+  if (appState?.job?.running) return markUpdateQueue;
   markUpdateQueue = markUpdateQueue.catch(() => undefined).then(() => {
     const photo = selectedPhoto();
     if (!photo?.fileId) return undefined;
@@ -3427,6 +3760,7 @@ function updateManualMark(changes, options = {}) {
 }
 
 async function acceptPhotoResult(basis, scope = "current", target = {}) {
+  if (appState?.job?.running) return;
   const photo = selectedPhoto();
   if (scope === "current" && !photo?.fileId) return;
   const previousFileId = photo?.fileId || "";
@@ -3462,6 +3796,7 @@ async function acceptPhotoResult(basis, scope = "current", target = {}) {
 }
 
 async function applyBatchColor(colorLabel, target = galleryBatchTarget(appState?.photos || [])) {
+  if (appState?.job?.running) return;
   if (!target.count) return;
   const previousFileId = selectedPhoto()?.fileId || "";
   try {
@@ -3495,6 +3830,7 @@ async function applyBatchColor(colorLabel, target = galleryBatchTarget(appState?
 }
 
 async function pickExportFolder() {
+  if (appState?.job?.running) return;
   try {
     const result = await postJson("/api/pick-export-folder", {});
     if (result.folder) {
@@ -3510,6 +3846,7 @@ async function pickExportFolder() {
 }
 
 async function refreshExportPreflight(options = {}) {
+  if (appState?.job?.running) return;
   if (!exportDestination) {
     applyExportPreflightState(CulviaExportPreflightState.emptyState());
     renderExportList();
@@ -3541,6 +3878,7 @@ function applyBatchStatusConfirmState() {
 }
 
 async function openBatchStatusConfirm(status) {
+  if (appState?.job?.running) return;
   try {
     await flushFilterUpdate();
   } catch (_error) {
@@ -3579,6 +3917,7 @@ function closeBatchStatusConfirm({ restoreFocus = true } = {}) {
 }
 
 async function confirmBatchStatus() {
+  if (appState?.job?.running) return;
   const status = pendingBatchStatus;
   const target = pendingBatchTarget;
   closeBatchStatusConfirm({ restoreFocus: false });
@@ -3586,6 +3925,7 @@ async function confirmBatchStatus() {
 }
 
 async function restoreBatchMarks(actionOrMarks) {
+  if (appState?.job?.running) return;
   const restoreAction = Array.isArray(actionOrMarks) ? { marks: actionOrMarks } : actionOrMarks || {};
   const marks = restoreAction.marks || [];
   const historyId = restoreAction.historyId || "";
@@ -3629,6 +3969,7 @@ async function restoreBatchMarks(actionOrMarks) {
 }
 
 async function undoLatestCurationAction() {
+  if (appState?.job?.running) return;
   const previousFileId = selectedPhoto()?.fileId || "";
   showCommandNotice(
     {
@@ -3744,6 +4085,7 @@ function handleViewerShortcut(event) {
 }
 
 async function applyBatchStatus(status, target = galleryBatchTarget(appState?.photos || [])) {
+  if (appState?.job?.running) return;
   const visiblePhotos = appState?.photos || [];
   if (!target.count) return;
   const previousFileId = selectedPhoto()?.fileId || "";
@@ -3781,6 +4123,7 @@ async function applyBatchStatus(status, target = galleryBatchTarget(appState?.ph
 }
 
 async function exportSelectedPhotos() {
+  if (appState?.job?.running) return;
   if (!exportDestination) return;
   try {
     $("#exportSelectedBtn").disabled = true;
@@ -3879,7 +4222,9 @@ function bindEvents() {
   $("#fileInput").setAttribute("accept", supportedTypes.join(","));
   $("#folderPicker").setAttribute("accept", supportedTypes.join(","));
 
-  $$("[data-source]").forEach((button) => button.addEventListener("click", () => setSourceMode(button.dataset.source)));
+  $$("[data-source]").forEach((button) =>
+    button.addEventListener("click", () => setSourceMode(button.dataset.source, { dirty: true })),
+  );
   $$("[data-network]").forEach((button) => button.addEventListener("click", () => setNetworkMode(button.dataset.network)));
   $$(".view-tab").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
   $("#sidebarToggleBtn").addEventListener("click", toggleSidebarMode);
@@ -3890,20 +4235,25 @@ function bindEvents() {
   $("#closeShortcutHelpBtn").addEventListener("click", closeShortcutHelp);
   $("#shortcutHelpScrim").addEventListener("click", closeShortcutHelp);
 
-  $("#pickFilesBtn").addEventListener("click", () => $("#fileInput").click());
-  $("#pickFolderBtn").addEventListener("click", () => $("#folderPicker").click());
+  $("#pickFilesBtn").addEventListener("click", () => {
+    if (!appState?.job?.running) $("#fileInput").click();
+  });
+  $("#pickFolderBtn").addEventListener("click", () => {
+    if (!appState?.job?.running) $("#folderPicker").click();
+  });
   $("#fileInput").addEventListener("change", (event) => uploadFiles(event.target.files));
   $("#folderPicker").addEventListener("change", (event) => uploadFiles(event.target.files));
 
   $("#pickNativeFolderBtn").addEventListener("click", async () => {
+    if (appState?.job?.running) return;
     try {
-      const result = await postJson("/api/pick-folder", {});
-      if (result.folder) {
-        const current = foldersFromInput();
-        if (!current.includes(result.folder)) current.push(result.folder);
-        $("#folderInput").value = current.join("\n");
-        updatePathSummaries();
-      }
+      const result = await postJson("/api/pick-folders", {});
+      const picked = uniqueFolderList(result.folders || [result.folder]);
+      if (!picked.length) return;
+      $("#folderInput").value = uniqueFolderList([...foldersFromInput(), ...picked]).join("\n");
+      markSourceInputsDirty();
+      updatePathSummaries();
+      scheduleSourcePreview(80);
     } catch (_error) {
       // User cancellation should stay quiet.
     }
@@ -3922,7 +4272,9 @@ function bindEvents() {
       dropzone.classList.remove("is-dragging");
     });
   });
-  dropzone.addEventListener("drop", (event) => uploadFiles(event.dataTransfer.files));
+  dropzone.addEventListener("drop", (event) => {
+    if (!appState?.job?.running) uploadFiles(event.dataTransfer.files);
+  });
 
   $("#mainScoreBtn").addEventListener("click", startScoring);
   $("#commandNoticeActionBtn").addEventListener("click", () => {
@@ -3982,7 +4334,21 @@ function bindEvents() {
       scheduleFilterUpdate();
     });
   });
-  $("#folderInput").addEventListener("input", updatePathSummaries);
+  const handleFolderSourceChange = () => {
+    if (appState?.job?.running) return;
+    if (sourceMode !== "folders") setSourceMode("folders");
+    markSourceInputsDirty();
+    updatePathSummaries();
+    scheduleSourcePreview();
+  };
+  $("#folderInput").addEventListener("input", handleFolderSourceChange);
+  $("#folderInput").addEventListener("change", handleFolderSourceChange);
+  $("#folderInput").addEventListener("paste", () => window.setTimeout(handleFolderSourceChange, 0));
+  $("#cacheInput").addEventListener("change", () => {
+    if (appState?.job?.running) return;
+    markSourceInputsDirty();
+    scheduleSourcePreview(120);
+  });
   [
     ["#aestheticWeight", "#aestheticWeightText"],
     ["#technicalWeight", "#technicalWeightText"],
@@ -4020,6 +4386,8 @@ function bindEvents() {
   $("#gallerySelectVisibleBtn").addEventListener("click", selectVisibleGalleryPhotos);
   $("#galleryClearSelectionBtn").addEventListener("click", clearGallerySelection);
   $("#galleryGrid").addEventListener("click", handleGalleryGridClick);
+  $("#galleryGrid").addEventListener("load", handleGalleryImageLoad, true);
+  $("#galleryGrid").addEventListener("error", handleGalleryImageError, true);
   $("#galleryGrid").addEventListener("pointerover", handleGalleryTooltipIntent);
   $("#galleryGrid").addEventListener("pointerout", clearGalleryTooltipPlacement);
   $("#galleryGrid").addEventListener("focusin", handleGalleryTooltipIntent);

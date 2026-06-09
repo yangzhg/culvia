@@ -24,7 +24,7 @@ def normalize_source_mode(value: object) -> str:
 
 def normalize_source_folders(value: object) -> list[str]:
     if isinstance(value, (str, bytes)) or value is None:
-        items: Iterable[object] = [value] if value else []
+        items: Iterable[object] = str(value).splitlines() if value else []
     else:
         try:
             items = list(value)  # type: ignore[arg-type]

@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/static/styles/10-settings.css" />
     <link rel="stylesheet" href="/static/styles/20-workbench.css" />
     <link rel="stylesheet" href="/static/styles/30-viewer.css" />
-    <link rel="stylesheet" href="/static/styles/40-gallery.css" />
+    <link rel="stylesheet" href="/static/styles/40-gallery.css?v=20260609-source-preview" />
     <link rel="stylesheet" href="/static/styles/50-distribution.css" />
     <link rel="stylesheet" href="/static/styles/60-export.css" />
     <link rel="stylesheet" href="/static/styles/90-responsive.css" />
@@ -341,6 +341,14 @@
               <div id="galleryBatchScopeText" class="batch-scope-pill is-filtered" aria-live="polite">
                 <span class="icon" data-icon="crosshair"></span>
                 <span id="galleryBatchScopeLabel" data-i18n="gallery.scopeDefault"></span>
+              </div>
+              <div id="gallerySourceStatus" class="gallery-source-status is-hidden" aria-live="polite"></div>
+              <div id="galleryThumbProgress" class="gallery-thumb-progress is-hidden" aria-live="polite">
+                <div class="gallery-thumb-progress-copy">
+                  <span id="galleryThumbProgressLabel"></span>
+                  <strong id="galleryThumbProgressCount"></strong>
+                </div>
+                <div class="gallery-thumb-progress-track"><span id="galleryThumbProgressBar"></span></div>
               </div>
             </div>
             <div class="gallery-bulk-actions">
@@ -682,8 +690,8 @@
       </section>
     </div>
 
-    <script src="/static/locales/zh-CN.js" defer></script>
-    <script src="/static/locales/en.js" defer></script>
+    <script src="/static/locales/zh-CN.js?v=20260609-task-rules" defer></script>
+    <script src="/static/locales/en.js?v=20260609-task-rules" defer></script>
     <script src="/static/i18n_messages.js" defer></script>
     <script src="/static/i18n.js" defer></script>
     <script src="/static/filter_state.js" defer></script>
@@ -694,7 +702,7 @@
     <script src="/static/viewer_keyboard.js" defer></script>
     <script src="/static/manual_status.js" defer></script>
     <script src="/static/llm_config_view.js" defer></script>
-    <script src="/static/command_view.js" defer></script>
+    <script src="/static/command_view.js?v=20260609-task-rules" defer></script>
     <script src="/static/export_preflight.js" defer></script>
     <script src="/static/export_preflight_state.js" defer></script>
     <script src="/static/export_result_data.js" defer></script>
@@ -708,9 +716,9 @@
     <script src="/static/app_config.js" defer></script>
     <script src="/static/icons.js" defer></script>
     <script src="/static/ui_helpers.js" defer></script>
-    <script src="/static/gallery_view.js" defer></script>
+    <script src="/static/gallery_view.js?v=20260609-source-preview" defer></script>
     <script src="/static/distribution_view.js" defer></script>
     <script src="/static/viewer_inspector.js" defer></script>
-    <script src="/static/app.js" defer></script>
+    <script src="/static/app.js?v=20260609-task-rules" defer></script>
   </body>
 </html>

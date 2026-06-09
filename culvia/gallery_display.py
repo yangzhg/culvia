@@ -72,7 +72,8 @@ def dataframe_for_display(
 
     errors = working[working["error"].fillna("").ne("")].copy()
     successful = working[working["error"].fillna("").eq("")].copy()
-    successful = successful.dropna(subset=["recommendation_0_10"])
+    scored = successful.dropna(subset=["recommendation_0_10"]).copy()
+    unscored = successful[successful["recommendation_0_10"].isna()].copy()
 
     model_agreement = str(filters.get("modelAgreement") or "all")
     sort_field = str(filters.get("sortField") or "recommendation_0_10")
@@ -81,7 +82,7 @@ def dataframe_for_display(
     limit = int(filters.get("limit", 80) or 80)
     marks = mark_by_file_id or {}
 
-    filtered = apply_threshold_filters(successful, filters, FILTER_THRESHOLD_COLUMNS)
+    filtered = apply_threshold_filters(scored, filters, FILTER_THRESHOLD_COLUMNS)
     filtered = apply_model_agreement(filtered, model_agreement)
     filtered = apply_manual_status_filter(
         filtered,
@@ -95,6 +96,24 @@ def dataframe_for_display(
         str(filters.get("colorLabel") or "all"),
         valid_modes=color_label_filter_values,
     )
+    if (
+        not unscored.empty
+        and model_agreement == "all"
+        and all(float(filters.get(filter_key, 0.0) or 0.0) <= 0 for filter_key in FILTER_THRESHOLD_COLUMNS)
+    ):
+        unscored = apply_manual_status_filter(
+            unscored,
+            marks,
+            str(filters.get("manualStatus") or "all"),
+            valid_modes=manual_status_filter_values,
+        )
+        unscored = apply_color_label_filter(
+            unscored,
+            marks,
+            str(filters.get("colorLabel") or "all"),
+            valid_modes=color_label_filter_values,
+        )
+        filtered = pd.concat([filtered, unscored], ignore_index=True)
     filtered = filtered.sort_values(sort_field, ascending=False, na_position="last")
     filtered = filtered.head(max(limit, 1))
     return working, filtered, errors

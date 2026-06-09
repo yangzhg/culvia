@@ -293,6 +293,62 @@ class ServerSmokeTests(unittest.TestCase):
             with store.lock:
                 self.assertEqual(store.data["source"]["cachePath"], cache_path)
 
+    def test_source_preview_route_scans_folders_and_serves_unscored_gallery_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "photos"
+            nested = root / "nested"
+            nested.mkdir(parents=True)
+            first = make_test_image(root / "a.jpg")
+            second = make_test_image(nested / "b.jpg")
+            cache_path = str(Path(tmp) / "scores.sqlite")
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=pd.DataFrame(columns=scoring.CSV_COLUMNS),
+                    default_photo_dirs=[],
+                    default_cache_path=cache_path,
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+                )
+            )
+            with culvia_app.STATE_LOCK:
+                original_global_scores = culvia_app.STATE["scores_df"].copy()
+                original_global_source = deepcopy(culvia_app.STATE["source"])
+            client = TestClient(culvia_app.create_app(store))
+
+            class ImmediateThread:
+                def __init__(self, *args, **kwargs) -> None:
+                    self.kwargs = kwargs
+
+                def start(self) -> None:
+                    self.kwargs["target"](*self.kwargs["args"])
+
+            with patch("culvia_app.threading.Thread", ImmediateThread):
+                response = client.post(
+                    "/api/source/preview",
+                    json={"mode": "folders", "folders": [str(root), str(nested)], "cachePath": cache_path},
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["sourcePreview"]["total"], 2)
+            self.assertEqual(payload["source"]["folders"], [str(root), str(nested)])
+            self.assertEqual(payload["summary"]["scored"], 0)
+            self.assertEqual(payload["summary"]["showing"], 2)
+            self.assertEqual(
+                sorted(photo["path"] for photo in payload["photos"]),
+                sorted([str(first.resolve()), str(second.resolve())]),
+            )
+            self.assertTrue(all(photo["recommendation"] is None for photo in payload["photos"]))
+            with store.lock:
+                loaded = scoring.normalize_score_dataframe(store.data["scores_df"])
+                self.assertEqual(len(loaded), 2)
+                self.assertEqual(store.data["source"]["cachePath"], cache_path)
+                self.assertFalse(store.data["job"]["running"])
+                self.assertEqual(store.data["job"]["kind"], "source_preview")
+            with culvia_app.STATE_LOCK:
+                self.assertTrue(culvia_app.STATE["scores_df"].equals(original_global_scores))
+                self.assertEqual(culvia_app.STATE["source"], original_global_source)
+
     def test_injected_state_store_serves_maintenance_routes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache_path = str(Path(tmp) / "history.sqlite")
@@ -574,6 +630,47 @@ class ServerSmokeTests(unittest.TestCase):
                 self.assertFalse(store.data["job"]["paused"])
             with culvia_app.STATE_LOCK:
                 self.assertEqual(culvia_app.STATE["job"], original_global_job)
+
+    def test_running_source_preview_blocks_conflicting_write_routes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = str(Path(tmp) / "scores.sqlite")
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=pd.DataFrame(
+                        [
+                            {
+                                "file_id": "image-1",
+                                "path": str(Path(tmp) / "a.jpg"),
+                                "folder": tmp,
+                                "filename": "a.jpg",
+                                "error": "",
+                            }
+                        ]
+                    ),
+                    default_photo_dirs=[],
+                    default_cache_path=cache_path,
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+                )
+            )
+            web_app = culvia_app.create_app(store)
+            job_id = web_app.state.job_service.reserve(kind="source_preview", phase="source_scanning")
+            self.assertTrue(job_id)
+            client = TestClient(web_app)
+
+            models_response = client.post("/api/models", json={"selected": [scoring.MODEL_BASIC_TECHNICAL]})
+            mark_response = client.post("/api/mark", json={"fileId": "image-1", "status": "pick"})
+            export_response = client.post("/api/export/preflight", json={"destination": tmp})
+            pause_response = client.post("/api/job/pause", json={})
+
+            self.assertEqual(models_response.status_code, 409)
+            self.assertEqual(mark_response.status_code, 409)
+            self.assertEqual(export_response.status_code, 409)
+            self.assertEqual(models_response.json()["errorCode"], "jobRunningOperation")
+            self.assertEqual(mark_response.json()["errorCode"], "jobRunningOperation")
+            self.assertEqual(export_response.json()["errorCode"], "jobRunningOperation")
+            self.assertEqual(pause_response.status_code, 409)
+            self.assertEqual(pause_response.json()["errorCode"], "noRunningJob")
 
     def test_injected_state_store_serves_export_routes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1104,11 +1201,22 @@ class ServerSmokeTests(unittest.TestCase):
             ) as run,
         ):
             response = self._client.post("/api/pick-folder", json={})
+            multi_response = self._client.post("/api/pick-folders", json={})
 
         self.assertEqual(response.status_code, 501)
         self.assertIn("目录路径", response.json()["error"])
         self.assertEqual(response.json()["errorCode"], "desktopActionUnsupported")
+        self.assertEqual(multi_response.status_code, 501)
+        self.assertEqual(multi_response.json()["errorCode"], "desktopActionUnsupported")
         run.assert_not_called()
+
+    def test_native_multi_folder_picker_returns_folder_list(self) -> None:
+        with patch("culvia_app.choose_folder_paths", return_value=["/photos/a", "/photos/b"]):
+            response = self._client.post("/api/pick-folders", json={})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["folders"], ["/photos/a", "/photos/b"])
+        self.assertEqual(response.json()["folder"], "/photos/a")
 
     def test_native_folder_picker_cancel_returns_stable_error_code(self) -> None:
         with patch(
@@ -1246,7 +1354,7 @@ class ServerSmokeTests(unittest.TestCase):
         self.assertEqual(mocked_get.call_args.kwargs["headers"]["Authorization"], f"Bearer {sentinel}")
 
     def test_llm_model_list_error_uses_stable_code_without_request(self) -> None:
-        with patch("culvia_app.requests.get") as mocked_get:
+        with patch("culvia_app.requests.get") as mocked_get, patch("culvia_app.llm_review_api_key", return_value=""):
             response = self._client.post("/api/llm-models", json={"apiKey": "", "baseUrl": "https://example.test/v1"})
 
         self.assertEqual(response.status_code, 400)

@@ -251,6 +251,7 @@
     "owner": "culvia.desktop_files",
     "apiRoutes": [
       "/api/pick-folder",
+      "/api/pick-folders",
       "/api/pick-export-folder",
       "/api/reveal"
     ],
@@ -261,6 +262,7 @@
     "platforms": {
       "macOS": {
         "folderPicker": "osascript choose folder",
+        "multiFolderPicker": "osascript choose folder with multiple selections allowed",
         "reveal": "open -R"
       },
       "Windows": {

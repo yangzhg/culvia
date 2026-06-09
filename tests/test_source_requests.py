@@ -21,6 +21,7 @@ class SourceRequestTests(unittest.TestCase):
     def test_normalize_source_folders_trims_deduplicates_and_accepts_single_value(self) -> None:
         self.assertEqual(normalize_source_folders([" /a ", "", "/a", Path("/b")]), ["/a", "/b"])
         self.assertEqual(normalize_source_folders(" /single "), ["/single"])
+        self.assertEqual(normalize_source_folders(" /a \n\n /b \n /a "), ["/a", "/b"])
 
     def test_normalize_uploaded_path_values_preserves_raw_values_for_sanitizer(self) -> None:
         path = Path("/tmp/a.jpg")

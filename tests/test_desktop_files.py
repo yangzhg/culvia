@@ -9,6 +9,7 @@ from culvia.desktop_files import (
     DesktopActionCancelled,
     DesktopActionUnsupported,
     choose_folder_path,
+    choose_folder_paths,
     reveal_path_in_file_manager,
 )
 
@@ -38,6 +39,25 @@ class DesktopFilesTests(unittest.TestCase):
         command = runner.call_args.args[0]
         self.assertEqual(command[0], "osascript")
         self.assertIn('\\"照片\\"', command[2])
+
+    def test_choose_folder_paths_returns_multiple_normalized_macos_paths(self) -> None:
+        runner = Mock(
+            return_value=subprocess.CompletedProcess(
+                ["osascript"], 0, stdout="/Users/me/Pictures/\n/Users/me/Archive/\n", stderr=""
+            )
+        )
+
+        folders = choose_folder_paths(
+            "Pick photos",
+            platform="darwin",
+            which=lambda command: f"/usr/bin/{command}",
+            runner=runner,
+        )
+
+        self.assertEqual(folders, ["/Users/me/Pictures", "/Users/me/Archive"])
+        command = runner.call_args.args[0]
+        self.assertEqual(command[0], "osascript")
+        self.assertIn("multiple selections allowed", command[2])
 
     def test_choose_folder_uses_windows_folder_browser_dialog(self) -> None:
         runner = Mock(return_value=subprocess.CompletedProcess(["powershell"], 0, stdout="C:\\Photos\r\n", stderr=""))
@@ -71,6 +91,29 @@ class DesktopFilesTests(unittest.TestCase):
         self.assertEqual(folder, "/home/me/Pictures")
         runner.assert_called_once_with(
             ["zenity", "--file-selection", "--directory", "--title", "Pick photos"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    def test_choose_folder_paths_uses_linux_zenity_multiple_dialog(self) -> None:
+        runner = Mock(
+            return_value=subprocess.CompletedProcess(
+                ["zenity"], 0, stdout="/home/me/Pictures\n/home/me/Archive\n", stderr=""
+            )
+        )
+
+        folders = choose_folder_paths(
+            "Pick photos",
+            platform="linux",
+            which=lambda command: "/usr/bin/zenity" if command == "zenity" else None,
+            runner=runner,
+        )
+
+        self.assertEqual(folders, ["/home/me/Pictures", "/home/me/Archive"])
+        runner.assert_called_once_with(
+            ["zenity", "--file-selection", "--directory", "--multiple", "--separator=\n", "--title", "Pick photos"],
             check=False,
             capture_output=True,
             text=True,

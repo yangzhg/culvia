@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from starlette.routing import BaseRoute, Mount, Route
+from starlette.responses import Response
 from starlette.staticfiles import StaticFiles
 
 RouteEndpoint = Callable[..., Any]
@@ -30,6 +31,7 @@ class WebRouteHandlers:
     api_llm_models: RouteEndpoint
     api_models: RouteEndpoint
     api_cache: RouteEndpoint
+    api_source_preview: RouteEndpoint
     api_clear_history: RouteEndpoint
     api_clear_local_data: RouteEndpoint
     api_clear_model: RouteEndpoint
@@ -51,6 +53,7 @@ class WebRouteHandlers:
     api_export_preflight: RouteEndpoint
     api_export_selected: RouteEndpoint
     api_pick_folder: RouteEndpoint
+    api_pick_folders: RouteEndpoint
     api_pick_export_folder: RouteEndpoint
     api_reveal: RouteEndpoint
 
@@ -67,6 +70,7 @@ APP_ROUTE_SPECS: tuple[RouteSpec, ...] = (
     RouteSpec("/api/llm-models", "api_llm_models", ("POST",)),
     RouteSpec("/api/models", "api_models", ("POST",)),
     RouteSpec("/api/cache", "api_cache", ("POST",)),
+    RouteSpec("/api/source/preview", "api_source_preview", ("POST",)),
     RouteSpec("/api/cache/clear", "api_clear_history", ("POST",)),
     RouteSpec("/api/data/clear", "api_clear_local_data", ("POST",)),
     RouteSpec("/api/model/clear", "api_clear_model", ("POST",)),
@@ -88,11 +92,20 @@ APP_ROUTE_SPECS: tuple[RouteSpec, ...] = (
     RouteSpec("/api/export/preflight", "api_export_preflight", ("POST",)),
     RouteSpec("/api/export/selected-files", "api_export_selected", ("POST",)),
     RouteSpec("/api/pick-folder", "api_pick_folder", ("POST",)),
+    RouteSpec("/api/pick-folders", "api_pick_folders", ("POST",)),
     RouteSpec("/api/pick-export-folder", "api_pick_export_folder", ("POST",)),
     RouteSpec("/api/reveal", "api_reveal", ("POST",)),
 )
 
 STATIC_ROUTE_PATH = "/static"
+STATIC_CACHE_CONTROL = "no-cache"
+
+
+class CulviaStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: dict[str, Any]) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers.setdefault("Cache-Control", STATIC_CACHE_CONTROL)
+        return response
 
 
 def build_routes(handlers: WebRouteHandlers, *, web_dir: str | Path) -> list[BaseRoute]:
@@ -103,5 +116,5 @@ def build_routes(handlers: WebRouteHandlers, *, web_dir: str | Path) -> list[Bas
             routes.append(Route(spec.path, endpoint, methods=list(spec.methods)))
         else:
             routes.append(Route(spec.path, endpoint))
-    routes.append(Mount(STATIC_ROUTE_PATH, StaticFiles(directory=web_dir), name="static"))
+    routes.append(Mount(STATIC_ROUTE_PATH, CulviaStaticFiles(directory=web_dir), name="static"))
     return routes

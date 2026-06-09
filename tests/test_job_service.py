@@ -31,10 +31,24 @@ class ScoringJobServiceTests(unittest.TestCase):
         with service.state_store.lock:
             job = service.state_store.data["job"]
             self.assertTrue(job["running"])
+            self.assertEqual(job["kind"], "scoring")
             self.assertEqual(job["phase"], "queued")
             self.assertEqual(job["jobId"], job_id)
         self.assertEqual(service.control["jobId"], job_id)
         self.assertFalse(service.control["pauseRequested"])
+
+    def test_reserve_can_label_source_preview_jobs(self) -> None:
+        service = make_service()
+
+        job_id = service.reserve(kind="source_preview", phase="source_scanning", title="扫描照片", detail="读取目录")
+
+        self.assertTrue(job_id)
+        with service.state_store.lock:
+            job = service.state_store.data["job"]
+            self.assertEqual(job["kind"], "source_preview")
+            self.assertEqual(job["phase"], "source_scanning")
+            self.assertEqual(job["title"], "扫描照片")
+            self.assertEqual(job["detail"], "读取目录")
 
     def test_thread_bound_updates_cannot_overwrite_a_new_job(self) -> None:
         service = make_service()
@@ -75,6 +89,19 @@ class ScoringJobServiceTests(unittest.TestCase):
             job = service.state_store.data["job"]
             self.assertFalse(job["paused"])
             self.assertEqual(job["phase"], "scoring")
+
+    def test_source_preview_jobs_cannot_be_paused(self) -> None:
+        service = make_service()
+        job_id = service.reserve(kind="source_preview", phase="source_scanning")
+        self.assertTrue(job_id)
+
+        self.assertFalse(service.request_pause())
+        self.assertFalse(service.request_resume())
+        self.assertFalse(service.control["pauseRequested"])
+        with service.state_store.lock:
+            job = service.state_store.data["job"]
+            self.assertEqual(job["phase"], "source_scanning")
+            self.assertFalse(job["paused"])
 
     def test_reset_control_ignores_stale_job_ids(self) -> None:
         service = make_service()

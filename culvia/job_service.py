@@ -44,7 +44,14 @@ class ScoringJobService:
             self.state_store.data["job"].update(changes)
             self.state_store.data["job"]["updatedAt"] = time.time()
 
-    def reserve(self) -> str | None:
+    def reserve(
+        self,
+        *,
+        kind: str = "scoring",
+        phase: str = "queued",
+        title: str = "准备开始评分",
+        detail: str = "正在启动后台任务",
+    ) -> str | None:
         job_id = uuid.uuid4().hex
         with self.state_store.lock:
             job = self.state_store.data["job"]
@@ -53,10 +60,11 @@ class ScoringJobService:
             job.update(
                 {
                     "jobId": job_id,
+                    "kind": kind,
                     "running": True,
-                    "phase": "queued",
-                    "title": "准备开始评分",
-                    "detail": "正在启动后台任务",
+                    "phase": phase,
+                    "title": title,
+                    "detail": detail,
                     "progress": 0.0,
                     "done": 0,
                     "total": 0,
@@ -90,7 +98,7 @@ class ScoringJobService:
     def request_pause(self) -> bool:
         with self.state_store.lock:
             job = self.state_store.data["job"]
-            if not job.get("running"):
+            if not job.get("running") or job.get("kind") != "scoring":
                 return False
             job_id = str(job.get("jobId") or "")
         if not job_id:
@@ -105,7 +113,7 @@ class ScoringJobService:
     def request_resume(self) -> bool:
         with self.state_store.lock:
             job = self.state_store.data["job"]
-            if not job.get("running"):
+            if not job.get("running") or job.get("kind") != "scoring":
                 return False
             job_id = str(job.get("jobId") or "")
         if not job_id:

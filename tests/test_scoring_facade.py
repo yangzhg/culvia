@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import sqlite3
 import os
+import sqlite3
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -330,6 +331,8 @@ class CacheSchemaTests(unittest.TestCase):
     def test_refresh_persisted_llm_config_loads_keychain_api_key(self) -> None:
         original_layers = scoring.llm_config_layers()
         self.addCleanup(restore_llm_config_layers, original_layers)
+        culvia_app.reset_llm_api_key_refresh_cache()
+        self.addCleanup(culvia_app.reset_llm_api_key_refresh_cache)
         with tempfile.TemporaryDirectory() as tmp:
             cache_path = Path(tmp) / "scores.sqlite"
             scoring.save_llm_config_to_sqlite({"model": "mock-vlm"}, cache_path)
@@ -343,6 +346,31 @@ class CacheSchemaTests(unittest.TestCase):
             self.assertEqual(scoring.llm_review_api_key(), "keychain-key")
             self.assertEqual(scoring.llm_config_source("api_key"), "系统钥匙串")
             self.assertEqual(scoring.llm_review_model_name(), "mock-vlm")
+
+    def test_refresh_persisted_llm_config_times_out_blocked_keychain(self) -> None:
+        original_layers = scoring.llm_config_layers()
+        self.addCleanup(restore_llm_config_layers, original_layers)
+        self.addCleanup(culvia_app.reset_llm_api_key_refresh_cache)
+        culvia_app.reset_llm_api_key_refresh_cache()
+        original_timeout = culvia_app.KEYCHAIN_REFRESH_TIMEOUT_SECONDS
+        culvia_app.KEYCHAIN_REFRESH_TIMEOUT_SECONDS = 0.01
+        self.addCleanup(setattr, culvia_app, "KEYCHAIN_REFRESH_TIMEOUT_SECONDS", original_timeout)
+
+        def blocked_keychain() -> str:
+            time.sleep(1)
+            return "late-key"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "scores.sqlite"
+            scoring.clear_session_llm_config()
+            scoring.clear_secure_llm_config()
+            scoring.set_persisted_llm_config({})
+            start = time.monotonic()
+            with patch("culvia_app.load_llm_api_key", side_effect=blocked_keychain):
+                culvia_app.refresh_persisted_llm_config(cache_path)
+
+        self.assertLess(time.monotonic() - start, 0.5)
+        self.assertEqual(scoring.llm_config_layers()["keychain"], {})
 
     def test_apply_llm_config_clear_key_deletes_keychain_secret(self) -> None:
         original_layers = scoring.llm_config_layers()

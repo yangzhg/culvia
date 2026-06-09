@@ -57,9 +57,10 @@ window.CulviaCommandView = (() => {
     summary = {},
   } = {}) {
     const running = Boolean(job?.running);
+    const sourcePreviewRunning = running && job?.kind === "source_preview";
     const modelProgress = job?.modelProgress;
     const paused = isPaused(job);
-    const loadingModel = job?.phase === "loading_model";
+    const loadingModel = !sourcePreviewRunning && job?.phase === "loading_model";
     const resolvedNetworkText = networkText || t("network.directConnection");
     let dotTone = model?.tone || "";
     let state = model?.label || t("command.state");
@@ -73,9 +74,27 @@ window.CulviaCommandView = (() => {
 
     if (running) {
       dotTone = "partial";
-      state = paused ? t("command.pausedState") : modelProgress ? t("command.preparingModel") : loadingModel ? t("command.loadingModel") : t("command.scoring");
-      title = paused ? t("command.pausedTitle") : modelProgress ? t("command.preparingTitle") : loadingModel ? t("command.loadingTitle") : t("command.scoringTitle");
-      detail = modelProgress
+      state = sourcePreviewRunning
+        ? t("command.scanningSource")
+        : paused
+          ? t("command.pausedState")
+          : modelProgress
+            ? t("command.preparingModel")
+            : loadingModel
+              ? t("command.loadingModel")
+              : t("command.scoring");
+      title = sourcePreviewRunning
+        ? job.title || t("command.scanningSourceTitle")
+        : paused
+          ? t("command.pausedTitle")
+          : modelProgress
+            ? t("command.preparingTitle")
+            : loadingModel
+              ? t("command.loadingTitle")
+              : t("command.scoringTitle");
+      detail = sourcePreviewRunning
+        ? job.detail || t("command.scanningSourceDetail")
+        : modelProgress
         ? t("command.modelThenScore")
         : loadingModel
           ? job.detail || t("command.modelReadyLocal")
@@ -129,7 +148,7 @@ window.CulviaCommandView = (() => {
         disabled: noticeLoading,
         icon: paused ? "play" : "pause",
         label: paused ? t("command.continue") : t("command.pause"),
-        visible: running,
+        visible: running && !sourcePreviewRunning,
       },
       progress: progressView(progress),
       running,

@@ -10,6 +10,7 @@ from typing import Any, Mapping, Sequence
 def empty_job(now: float | None = None) -> dict[str, Any]:
     return {
         "jobId": "",
+        "kind": "",
         "running": False,
         "phase": "idle",
         "title": "准备就绪",
@@ -45,6 +46,14 @@ def create_initial_state(
             "folders": list(default_photo_dirs),
             "cachePath": default_cache_path,
             "uploadedPaths": [],
+        },
+        "sourcePreview": {
+            "mode": "folders",
+            "folders": list(default_photo_dirs),
+            "cachePath": default_cache_path,
+            "total": 0,
+            "ready": False,
+            "warnings": [],
         },
         "filters": copy.deepcopy(dict(filter_defaults)),
         "network": {

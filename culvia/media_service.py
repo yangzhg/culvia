@@ -154,12 +154,18 @@ def save_uploaded_bytes(
     return target
 
 
-def image_url(path: str, max_size: int) -> str:
-    return f"/api/image?{urlencode({'path': path, 'max': str(max_size)})}"
+def image_url(path: str, max_size: int, *, file_id: str = "") -> str:
+    params = {"path": path, "max": str(max_size)}
+    if file_id:
+        params["file_id"] = file_id
+    return f"/api/image?{urlencode(params)}"
 
 
-def thumbnail_url(path: str, max_size: int) -> str:
-    return f"/api/thumbnail?{urlencode({'path': path, 'max': str(max_size)})}"
+def thumbnail_url(path: str, max_size: int, *, file_id: str = "") -> str:
+    params = {"path": path, "max": str(max_size)}
+    if file_id:
+        params["file_id"] = file_id
+    return f"/api/thumbnail?{urlencode(params)}"
 
 
 def resized_jpeg_bytes(path: Path, max_size: int) -> bytes:

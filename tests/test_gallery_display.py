@@ -136,6 +136,105 @@ class GalleryDisplayTests(unittest.TestCase):
         self.assertEqual(errors["file_id"].tolist(), ["d"])
         self.assertEqual(filtered["file_id"].tolist(), ["a"])
 
+    def test_dataframe_for_display_includes_unscored_preview_rows_by_default(self) -> None:
+        source = pd.DataFrame(
+            [
+                {
+                    "file_id": "scored",
+                    "error": "",
+                    "recommendation_0_10": 8.0,
+                    "overall_0_10": 8.0,
+                    "technical_overall_0_10": 8.0,
+                },
+                {
+                    "file_id": "preview",
+                    "error": "",
+                    "recommendation_0_10": pd.NA,
+                    "overall_0_10": pd.NA,
+                    "technical_overall_0_10": pd.NA,
+                },
+            ]
+        )
+
+        _working, filtered, _errors = dataframe_for_display(
+            source,
+            {"sortField": "recommendation_0_10", "limit": 80},
+            {},
+            enrich_scores=enrich_scores,
+            apply_model_agreement=apply_model_agreement,
+            sort_fields={"recommendation_0_10", "overall_0_10"},
+            manual_status_filter_values=MANUAL_MODES,
+            color_label_filter_values=COLOR_MODES,
+        )
+
+        self.assertEqual(filtered["file_id"].tolist(), ["scored", "preview"])
+
+    def test_dataframe_for_display_includes_unscored_preview_rows_with_non_default_sort(self) -> None:
+        source = pd.DataFrame(
+            [
+                {
+                    "file_id": "scored",
+                    "error": "",
+                    "recommendation_0_10": 8.0,
+                    "overall_0_10": 8.0,
+                    "llm_review_overall_0_10": 8.8,
+                },
+                {
+                    "file_id": "preview",
+                    "error": "",
+                    "recommendation_0_10": pd.NA,
+                    "overall_0_10": pd.NA,
+                    "llm_review_overall_0_10": pd.NA,
+                },
+            ]
+        )
+
+        _working, filtered, _errors = dataframe_for_display(
+            source,
+            {"sortField": "llm_review_overall_0_10", "limit": 80},
+            {},
+            enrich_scores=enrich_scores,
+            apply_model_agreement=apply_model_agreement,
+            sort_fields={"recommendation_0_10", "overall_0_10", "llm_review_overall_0_10"},
+            manual_status_filter_values=MANUAL_MODES,
+            color_label_filter_values=COLOR_MODES,
+        )
+
+        self.assertEqual(filtered["file_id"].tolist(), ["scored", "preview"])
+
+    def test_dataframe_for_display_hides_unscored_preview_rows_when_thresholds_are_active(self) -> None:
+        source = pd.DataFrame(
+            [
+                {
+                    "file_id": "scored",
+                    "error": "",
+                    "recommendation_0_10": 8.0,
+                    "overall_0_10": 8.0,
+                    "technical_overall_0_10": 8.0,
+                },
+                {
+                    "file_id": "preview",
+                    "error": "",
+                    "recommendation_0_10": pd.NA,
+                    "overall_0_10": pd.NA,
+                    "technical_overall_0_10": pd.NA,
+                },
+            ]
+        )
+
+        _working, filtered, _errors = dataframe_for_display(
+            source,
+            {"sortField": "recommendation_0_10", "minTechnical": 1.0, "limit": 80},
+            {},
+            enrich_scores=enrich_scores,
+            apply_model_agreement=apply_model_agreement,
+            sort_fields={"recommendation_0_10", "overall_0_10"},
+            manual_status_filter_values=MANUAL_MODES,
+            color_label_filter_values=COLOR_MODES,
+        )
+
+        self.assertEqual(filtered["file_id"].tolist(), ["scored"])
+
     def test_selected_preview_uses_pick_status_score_order_and_limit(self) -> None:
         working = pd.DataFrame(
             [

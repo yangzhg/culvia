@@ -71,6 +71,7 @@ class ScoringServiceTests(unittest.TestCase):
         self.assertEqual(calls, [])
         with store.lock:
             self.assertTrue(store.data["job"]["running"])
+            self.assertEqual(store.data["job"]["kind"], "scoring")
             self.assertEqual(store.data["job"]["phase"], "queued")
             self.assertEqual(store.data["job"]["jobId"], result.job_id)
 

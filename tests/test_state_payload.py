@@ -23,6 +23,13 @@ class StatePayloadBuilderTests(unittest.TestCase):
             {
                 "scores_df": source_df,
                 "source": {"mode": "folders", "folders": ["/photos"], "cachePath": "/tmp/culvia_scores.sqlite"},
+                "sourcePreview": {
+                    "mode": "folders",
+                    "folders": ["/photos"],
+                    "cachePath": "/tmp/culvia_scores.sqlite",
+                    "total": 2,
+                    "ready": True,
+                },
                 "filters": {"limit": 80},
                 "network": {"mode": "direct"},
                 "models": {"selected": ["core"]},
@@ -115,6 +122,8 @@ class StatePayloadBuilderTests(unittest.TestCase):
         self.assertEqual(payload["network"], {"mode": "direct"})
         self.assertEqual(payload["llm"], {"configured": True})
         self.assertEqual(payload["model"], {"network": "direct", "selected": ["normalized", "core"]})
+        self.assertEqual(payload["sourcePreview"]["total"], 2)
+        self.assertTrue(payload["sourcePreview"]["ready"])
         self.assertEqual(payload["summary"], {"sourceRows": 2, "showing": 1, "errors": 1, "limit": 80})
         self.assertEqual(payload["photos"], [{"fileId": "b", "insight": "newer", "marked": False}])
         self.assertEqual(payload["selectedPhotos"], [{"fileId": "a", "insight": None, "marked": True}])
@@ -124,6 +133,8 @@ class StatePayloadBuilderTests(unittest.TestCase):
 
         payload["source"]["folders"].append("/mutated")
         self.assertEqual(store.data["source"]["folders"], ["/photos"])
+        payload["sourcePreview"]["folders"].append("/mutated")
+        self.assertEqual(store.data["sourcePreview"]["folders"], ["/photos"])
 
 
 if __name__ == "__main__":

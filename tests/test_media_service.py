@@ -8,6 +8,7 @@ import pandas as pd
 from PIL import Image
 
 from culvia.media_service import (
+    image_url,
     is_inside_path,
     path_is_inside,
     resolve_media_path,
@@ -15,6 +16,7 @@ from culvia.media_service import (
     sanitize_uploaded_paths,
     save_uploaded_bytes,
     thumbnail_cache_path,
+    thumbnail_url,
 )
 
 
@@ -144,6 +146,16 @@ class MediaServiceTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(first.suffix, ".jpg")
+
+    def test_media_urls_include_file_id_when_available(self) -> None:
+        self.assertEqual(
+            image_url("/photos/a.jpg", 1200, file_id="photo-1"),
+            "/api/image?path=%2Fphotos%2Fa.jpg&max=1200&file_id=photo-1",
+        )
+        self.assertEqual(
+            thumbnail_url("/photos/a.jpg", 420, file_id="photo-1"),
+            "/api/thumbnail?path=%2Fphotos%2Fa.jpg&max=420&file_id=photo-1",
+        )
 
 
 if __name__ == "__main__":

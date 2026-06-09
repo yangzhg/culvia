@@ -60,6 +60,7 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         source_df = deps.normalize_score_dataframe(state["scores_df"]).copy()
         filters = dict(state["filters"])
         source = _json_clone(state["source"])
+        source_preview = _json_clone(state.get("sourcePreview") or {})
         network = dict(state["network"])
         models = _json_clone(state["models"])
         job = _json_clone(state["job"])
@@ -97,6 +98,7 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         },
         "capabilities": deps.local_capabilities(),
         "source": source,
+        "sourcePreview": source_preview,
         "filters": filters,
         "sortOptions": [{"value": key, "label": deps.sort_field_labels[key]} for key in deps.sort_fields],
         "modelAgreementOptions": list(deps.model_agreement_options),

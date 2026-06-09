@@ -123,16 +123,16 @@ class PayloadTests(unittest.TestCase):
         payload = serialize_photo(
             row,
             fields,
-            image_url=lambda path, size: f"/image?path={path}&size={size}",
-            thumbnail_url=lambda path: f"/thumb?path={path}",
+            image_url=lambda path, size, *, file_id="": f"/image?path={path}&size={size}&file_id={file_id}",
+            thumbnail_url=lambda path, *, file_id="": f"/thumb?path={path}&file_id={file_id}",
             insight_by_file_id={"photo-1": insight},
             mark_by_file_id={"photo-1": mark},
         )
 
         self.assertEqual(payload["fileId"], "photo-1")
-        self.assertEqual(payload["image"], "/image?path=/photos/a.jpg&size=1800")
-        self.assertEqual(payload["preview"], "/image?path=/photos/a.jpg&size=2400")
-        self.assertEqual(payload["thumb"], "/thumb?path=/photos/a.jpg")
+        self.assertEqual(payload["image"], "/image?path=/photos/a.jpg&size=1800&file_id=photo-1")
+        self.assertEqual(payload["preview"], "/image?path=/photos/a.jpg&size=2400&file_id=photo-1")
+        self.assertEqual(payload["thumb"], "/thumb?path=/photos/a.jpg&file_id=photo-1")
         self.assertEqual(payload["recommendationText"], "7.8")
         self.assertEqual(payload["recommendationStars"], "★★★★☆")
         self.assertEqual(payload["scoreTexts"]["overall"], "8.4")

@@ -5,16 +5,25 @@ from dataclasses import fields
 from pathlib import Path
 
 import pandas as pd
+from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Mount, Route
+from starlette.testclient import TestClient
 
 import culvia_app
 from culvia.app_state import AppStateStore, create_initial_state
 from culvia.job_service import ScoringJobService
 from culvia.runtime_config import RuntimeConfig
 from culvia.web_app import create_web_app
-from culvia.web_routes import APP_ROUTE_SPECS, STATIC_ROUTE_PATH, WebRouteHandlers, build_routes
+from culvia.web_routes import (
+    APP_ROUTE_SPECS,
+    STATIC_CACHE_CONTROL,
+    STATIC_ROUTE_PATH,
+    CulviaStaticFiles,
+    WebRouteHandlers,
+    build_routes,
+)
 
 
 async def dummy_endpoint(_: Request) -> Response:
@@ -41,6 +50,7 @@ class WebRouteTests(unittest.TestCase):
                 ("/api/llm-models", "api_llm_models", ("POST",)),
                 ("/api/models", "api_models", ("POST",)),
                 ("/api/cache", "api_cache", ("POST",)),
+                ("/api/source/preview", "api_source_preview", ("POST",)),
                 ("/api/cache/clear", "api_clear_history", ("POST",)),
                 ("/api/data/clear", "api_clear_local_data", ("POST",)),
                 ("/api/model/clear", "api_clear_model", ("POST",)),
@@ -62,6 +72,7 @@ class WebRouteTests(unittest.TestCase):
                 ("/api/export/preflight", "api_export_preflight", ("POST",)),
                 ("/api/export/selected-files", "api_export_selected", ("POST",)),
                 ("/api/pick-folder", "api_pick_folder", ("POST",)),
+                ("/api/pick-folders", "api_pick_folders", ("POST",)),
                 ("/api/pick-export-folder", "api_pick_export_folder", ("POST",)),
                 ("/api/reveal", "api_reveal", ("POST",)),
             ],
@@ -76,6 +87,15 @@ class WebRouteTests(unittest.TestCase):
         self.assertTrue(all(isinstance(route, Route) for route in routes[:-1]))
         self.assertIsInstance(routes[-1], Mount)
         self.assertEqual(routes[-1].name, "static")
+        self.assertIsInstance(routes[-1].app, CulviaStaticFiles)
+
+    def test_static_files_are_revalidated_by_browsers(self) -> None:
+        app = Starlette(routes=build_routes(dummy_handlers(), web_dir=Path("web")))
+
+        response = TestClient(app).get("/static/app.js")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], STATIC_CACHE_CONTROL)
 
     def test_build_routes_applies_post_methods_only_to_post_specs(self) -> None:
         routes = build_routes(dummy_handlers(), web_dir=Path("web"))

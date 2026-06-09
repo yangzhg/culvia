@@ -39,6 +39,36 @@ window.CulviaGalleryView = (() => {
     `;
   }
 
+  function loadingStateMarkup(options = {}) {
+    const title = escapeHtml(options.title || "");
+    const text = escapeHtml(options.text || "");
+    const state = escapeHtml(options.state || "");
+    const skeletons = Array.from({ length: 8 })
+      .map(
+        () => `
+          <div class="gallery-scan-skeleton">
+            <span></span>
+            <strong></strong>
+          </div>
+        `,
+      )
+      .join("");
+    return `
+      <div class="gallery-scan-state" role="status" aria-live="polite">
+        <div class="gallery-scan-orbit" aria-hidden="true">
+          <span></span>
+          <span></span>
+        </div>
+        <div class="gallery-scan-copy">
+          <span>${state}</span>
+          <h2>${title}</h2>
+          <p>${text}</p>
+        </div>
+        <div class="gallery-scan-grid" aria-hidden="true">${skeletons}</div>
+      </div>
+    `;
+  }
+
   function tooltipMarkup(photo, options = {}) {
     const manual = photo.manual || {};
     const manualStatusText = options.manualStatusLabel?.(manual.status || "") || "";
@@ -95,6 +125,7 @@ window.CulviaGalleryView = (() => {
 
   function cardMarkup(photo, index, selected, signature, options = {}) {
     const manual = photo.manual || {};
+    const disabled = Boolean(options.disabled);
     const photoLevel = options.localizedScoreLevel?.(photo.level) || "";
     const selectLabel = options.gallerySelectLabel?.(photo, selected) || "";
     const pickLabel = options.galleryQuickActionLabel?.(photo, "pick") || "";
@@ -104,7 +135,14 @@ window.CulviaGalleryView = (() => {
     const fetchPriority = index < 6 ? "high" : "auto";
     return `
       <article class="photo-card ${manualStatus.statusClass(manual.status)} ${selected ? "is-selected" : ""}" data-index="${index}" data-file-id="${escapeHtml(photo.fileId)}" data-gallery-signature="${escapeHtml(signature)}">
-        <img src="${photo.thumb}" alt="${escapeHtml(options.t?.("gallery.thumbnailAlt") || "")}" loading="${loadingMode}" decoding="async" fetchpriority="${fetchPriority}" />
+        <img src="${escapeHtml(photo.thumb)}" alt="${escapeHtml(options.t?.("gallery.thumbnailAlt") || "")}" loading="${loadingMode}" decoding="async" fetchpriority="${fetchPriority}" data-gallery-thumb />
+        <div class="gallery-thumb-loading" aria-hidden="true">
+          <span></span>
+        </div>
+        <div class="gallery-thumb-fallback" aria-hidden="true">
+          ${iconMarkup("image", "gallery-thumb-fallback-icon")}
+          <span>${escapeHtml(options.t?.("gallery.thumbnailUnavailable") || "")}</span>
+        </div>
         <button
           class="gallery-select-toggle ${selected ? "is-selected" : ""}"
           type="button"
@@ -112,6 +150,7 @@ window.CulviaGalleryView = (() => {
           aria-pressed="${selected ? "true" : "false"}"
           aria-label="${escapeHtml(selectLabel)}"
           data-ui-tooltip="${escapeHtml(selectLabel)}"
+          ${disabled ? "disabled" : ""}
         >${iconMarkup(selected ? "checkSquare" : "square", "gallery-select-icon")}</button>
         ${options.galleryColorBadgeMarkup?.(manual) || ""}
         <div class="gallery-quick-actions" aria-label="${escapeHtml(options.t?.("gallery.quickAria") || "")}">
@@ -122,6 +161,7 @@ window.CulviaGalleryView = (() => {
             data-file-id="${escapeHtml(photo.fileId)}"
             aria-label="${escapeHtml(pickLabel)}"
             data-ui-tooltip="${escapeHtml(pickLabel)}"
+            ${disabled ? "disabled" : ""}
           >${iconMarkup("check", "gallery-quick-icon")}</button>
           <button
             class="gallery-quick-action ${manual.status === "hold" ? "is-active is-pending" : ""}"
@@ -130,6 +170,7 @@ window.CulviaGalleryView = (() => {
             data-file-id="${escapeHtml(photo.fileId)}"
             aria-label="${escapeHtml(pendingLabel)}"
             data-ui-tooltip="${escapeHtml(pendingLabel)}"
+            ${disabled ? "disabled" : ""}
           >${iconMarkup("clockCompact", "gallery-quick-icon")}</button>
           <button
             class="gallery-quick-action ${manual.status === "reject" ? "is-active is-rejected" : ""}"
@@ -138,6 +179,7 @@ window.CulviaGalleryView = (() => {
             data-file-id="${escapeHtml(photo.fileId)}"
             aria-label="${escapeHtml(rejectLabel)}"
             data-ui-tooltip="${escapeHtml(rejectLabel)}"
+            ${disabled ? "disabled" : ""}
           >${iconMarkup("x", "gallery-quick-icon")}</button>
         </div>
         <footer class="photo-card-overlay">
@@ -156,6 +198,7 @@ window.CulviaGalleryView = (() => {
   }
 
   function updateSelectionState(card, photo, index, selected, options = {}) {
+    const disabled = Boolean(options.disabled);
     card.dataset.index = String(index);
     card.classList.toggle("is-selected", selected);
     const button = card.querySelector("[data-gallery-select]");
@@ -163,6 +206,7 @@ window.CulviaGalleryView = (() => {
     const previousSelected = button.classList.contains("is-selected");
     const selectLabel = options.gallerySelectLabel?.(photo, selected) || "";
     button.classList.toggle("is-selected", selected);
+    button.disabled = disabled;
     button.dataset.gallerySelect = photo.fileId || "";
     button.setAttribute("aria-pressed", selected ? "true" : "false");
     button.setAttribute("aria-label", selectLabel);
@@ -170,12 +214,16 @@ window.CulviaGalleryView = (() => {
     if (previousSelected !== selected) {
       button.innerHTML = iconMarkup(selected ? "checkSquare" : "square", "gallery-select-icon");
     }
+    card.querySelectorAll("[data-gallery-status]").forEach((statusButton) => {
+      statusButton.disabled = disabled;
+    });
   }
 
   return {
     cardMarkup,
     cardSignature,
     emptyStateMarkup,
+    loadingStateMarkup,
     tooltipMarkup,
     updateSelectionState,
   };

@@ -27,7 +27,21 @@ class PhotoScanTests(unittest.TestCase):
 
             paths, warnings = scan_image_paths([root, first])
 
-        self.assertEqual(paths, sorted({first, second}, key=lambda item: str(item).casefold()))
+        expected = sorted({first.resolve(), second.resolve()}, key=lambda item: str(item).casefold())
+        self.assertEqual(paths, expected)
+        self.assertEqual(warnings, [])
+
+    def test_scan_image_paths_deduplicates_nested_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nested = root / "nested"
+            nested.mkdir()
+            image = nested / "photo.jpg"
+            image.write_bytes(b"jpg")
+
+            paths, warnings = scan_image_paths([root, nested, image])
+
+        self.assertEqual(paths, [image.resolve()])
         self.assertEqual(warnings, [])
 
     def test_scan_image_paths_reports_missing_and_unsupported_single_files(self) -> None:

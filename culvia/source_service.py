@@ -65,3 +65,4 @@ def apply_source_cache_state(state_store: AppStateStore, result: SourceCacheResu
                 "cachePath": source_request.cache_path,
             }
         )
+        state_store.data.pop("sourcePreview", None)
