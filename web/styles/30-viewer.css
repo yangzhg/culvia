@@ -1396,6 +1396,17 @@
   position: absolute;
   left: 7px;
   top: 7px;
+  max-width: calc(100% - 14px);
+  box-sizing: border-box;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.thumb .manual-badge > span:not(.badge-icon) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thumb-window-edge {

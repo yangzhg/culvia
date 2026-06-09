@@ -7,12 +7,12 @@
     <style>
       :root {
         color-scheme: dark;
-        --paper: #f6efe3;
-        --cyan: #60d8d1;
-        --blue: #4ea8ff;
+        --paper: #f3f6f7;
+        --cyan: #65d8c9;
+        --blue: #4da7ff;
         --gold: #ffb23e;
         --ink: #12151a;
-        --muted: rgba(246, 239, 227, 0.66);
+        --muted: rgba(243, 246, 247, 0.64);
       }
       html,
       body {
@@ -32,29 +32,11 @@
         width: 100%;
         height: 100%;
         overflow: hidden;
-        border: 1px solid rgba(255, 255, 255, 0.14);
-        border-radius: 28px;
-        background: #111317;
-        box-shadow: inset 0 0 0 1px rgba(246, 239, 227, 0.04);
-      }
-      #stage::before {
-        content: "";
-        position: absolute;
-        inset: 22px;
-        border: 1px solid rgba(246, 239, 227, 0.08);
-        border-radius: 22px;
-        pointer-events: none;
-      }
-      #stage::after {
-        content: "";
-        position: absolute;
-        top: 23px;
-        left: 48px;
-        right: 48px;
-        height: 2px;
-        border-radius: 999px;
-        background: linear-gradient(90deg, var(--cyan), var(--blue) 62%, var(--gold));
-        opacity: 0.88;
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 24px;
+        background:
+          radial-gradient(circle at 26% 36%, rgba(77, 167, 255, 0.12), transparent 48%),
+          linear-gradient(150deg, #111317 0%, #1d2127 58%, #2b3036 100%);
       }
       #content {
         position: relative;
@@ -85,10 +67,10 @@
         display: inline-flex;
         width: max-content;
         padding: 6px 10px;
-        border: 1px solid rgba(246, 239, 227, 0.22);
+        border: 1px solid rgba(243, 246, 247, 0.22);
         border-radius: 999px;
-        color: rgba(246, 239, 227, 0.72);
-        background: rgba(246, 239, 227, 0.06);
+        color: rgba(243, 246, 247, 0.72);
+        background: rgba(243, 246, 247, 0.06);
         font-size: 11px;
         font-weight: 760;
         letter-spacing: 0.12em;
@@ -125,19 +107,19 @@
         gap: 18px;
       }
       #status {
-        color: rgba(246, 239, 227, 0.92);
+        color: rgba(243, 246, 247, 0.92);
         font-size: 14px;
         font-weight: 720;
       }
       #hint {
-        color: rgba(246, 239, 227, 0.56);
+        color: rgba(243, 246, 247, 0.56);
         font-size: 12px;
         font-weight: 620;
       }
       #track {
         height: 4px;
         border-radius: 999px;
-        background: rgba(246, 239, 227, 0.14);
+        background: rgba(243, 246, 247, 0.14);
         overflow: hidden;
       }
       #bar {
@@ -145,7 +127,7 @@
         width: 0%;
         height: 100%;
         border-radius: inherit;
-        background: linear-gradient(90deg, var(--paper), var(--cyan) 54%, var(--blue));
+        background: linear-gradient(90deg, var(--cyan), var(--blue));
         transition: width 280ms ease;
       }
       #phases {
@@ -157,7 +139,7 @@
         display: flex;
         align-items: center;
         gap: 7px;
-        color: rgba(246, 239, 227, 0.38);
+        color: rgba(243, 246, 247, 0.38);
         font-size: 11px;
         font-weight: 690;
       }
@@ -171,7 +153,7 @@
       }
       .phase.is-active,
       .phase.is-done {
-        color: rgba(246, 239, 227, 0.86);
+        color: rgba(243, 246, 247, 0.86);
       }
       .phase.is-active .dot {
         color: var(--cyan);
@@ -183,7 +165,9 @@
       }
       #stage[data-state="error"] {
         border-color: rgba(255, 178, 62, 0.34);
-        background: #171313;
+        background:
+          radial-gradient(circle at 26% 36%, rgba(255, 178, 62, 0.14), transparent 48%),
+          linear-gradient(150deg, #17110f 0%, #241917 58%, #111010 100%);
       }
       #stage[data-state="error"] #bar {
         background: linear-gradient(90deg, #ff8d6b, var(--gold));
@@ -248,7 +232,7 @@
           const phases = Array.from(document.querySelectorAll(".phase"));
           if (stageEl) stageEl.dataset.state = isError ? "error" : "loading";
           if (statusEl) statusEl.textContent = status;
-          if (hintEl) hintEl.textContent = isError ? hint : `${safeStep}/${safeTotal}`;
+          if (hintEl) hintEl.textContent = hint;
           if (barEl) barEl.style.width = `${percent}%`;
           phases.forEach((phase) => {
             const phaseStep = Number(phase.dataset.phase) || 0;
