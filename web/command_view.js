@@ -55,11 +55,15 @@ window.CulviaCommandView = (() => {
     networkText = "",
     sourceReady = false,
     summary = {},
+    llmConfigured = false,
   } = {}) {
     const running = Boolean(job?.running);
     const sourcePreviewRunning = running && job?.kind === "source_preview";
+    const llmReviewRunning = running && job?.kind === "llm_review";
+    const scoringRunning = running && !sourcePreviewRunning && !llmReviewRunning;
     const modelProgress = job?.modelProgress;
     const paused = isPaused(job);
+    const cancelling = job?.phase === "cancelling";
     const loadingModel = !sourcePreviewRunning && job?.phase === "loading_model";
     const resolvedNetworkText = networkText || t("network.directConnection");
     let dotTone = model?.tone || "";
@@ -74,33 +78,35 @@ window.CulviaCommandView = (() => {
 
     if (running) {
       dotTone = "partial";
-      state = sourcePreviewRunning
-        ? t("command.scanningSource")
-        : paused
-          ? t("command.pausedState")
-          : modelProgress
-            ? t("command.preparingModel")
-            : loadingModel
-              ? t("command.loadingModel")
-              : t("command.scoring");
-      title = sourcePreviewRunning
-        ? job.title || t("command.scanningSourceTitle")
-        : paused
-          ? t("command.pausedTitle")
-          : modelProgress
-            ? t("command.preparingTitle")
-            : loadingModel
-              ? t("command.loadingTitle")
-              : t("command.scoringTitle");
-      detail = sourcePreviewRunning
-        ? job.detail || t("command.scanningSourceDetail")
-        : modelProgress
-        ? t("command.modelThenScore")
-        : loadingModel
-          ? job.detail || t("command.modelReadyLocal")
-          : paused
-            ? job.detail || t("command.resumeDetail")
-            : job.detail || t("command.waitPlease");
+      if (sourcePreviewRunning) {
+        state = t("command.scanningSource");
+        title = job.title || t("command.scanningSourceTitle");
+        detail = job.detail || t("command.scanningSourceDetail");
+      } else if (cancelling) {
+        state = t("command.cancellingState");
+        title = t("command.cancellingTitle");
+        detail = job.detail || t("command.cancellingDetail");
+      } else if (llmReviewRunning) {
+        state = t("command.llmReview");
+        title = job.title || t("command.llmReviewTitle");
+        detail = job.detail || t("command.llmReviewDetail");
+      } else if (paused) {
+        state = t("command.pausedState");
+        title = t("command.pausedTitle");
+        detail = job.detail || t("command.resumeDetail");
+      } else if (modelProgress) {
+        state = t("command.preparingModel");
+        title = t("command.preparingTitle");
+        detail = t("command.modelThenScore");
+      } else if (loadingModel) {
+        state = t("command.loadingModel");
+        title = t("command.loadingTitle");
+        detail = job.detail || t("command.modelReadyLocal");
+      } else {
+        state = t("command.scoring");
+        title = t("command.scoringTitle");
+        detail = job.detail || t("command.waitPlease");
+      }
       progress = {
         detail: modelProgress?.detail || job.detail || "",
         label: modelProgress?.label || job.title || t("command.processing"),
@@ -138,6 +144,12 @@ window.CulviaCommandView = (() => {
         icon: running || noticeLoading ? "loader" : "play",
         label: running ? t("command.processingButton") : model?.downloaded ? t("command.start") : t("command.prepareAndScore"),
       },
+      llmReview: {
+        disabled: running || noticeLoading || !sourceReady || !llmConfigured,
+        icon: running || noticeLoading ? "loader" : "brain",
+        label: t("command.startLlmReview"),
+        visible: true,
+      },
       noticeAction: {
         disabled: !noticeAction,
         icon: noticeAction?.icon || "undo",
@@ -145,9 +157,15 @@ window.CulviaCommandView = (() => {
         visible: Boolean(noticeAction),
       },
       pause: {
-        disabled: noticeLoading,
+        disabled: noticeLoading || cancelling,
         icon: paused ? "play" : "pause",
         label: paused ? t("command.continue") : t("command.pause"),
+        visible: scoringRunning,
+      },
+      cancel: {
+        disabled: noticeLoading || cancelling,
+        icon: "x",
+        label: cancelling ? t("command.cancellingButton") : t("command.cancel"),
         visible: running && !sourcePreviewRunning,
       },
       progress: progressView(progress),
@@ -173,12 +191,26 @@ window.CulviaCommandView = (() => {
           label: viewState.noticeAction.label,
           selector: "#commandNoticeActionBtn",
         },
+        llmReview: {
+          disabled: viewState.llmReview.disabled,
+          hidden: !viewState.llmReview.visible,
+          icon: viewState.llmReview.icon,
+          label: viewState.llmReview.label,
+          selector: "#llmReviewBtn",
+        },
         pause: {
           disabled: viewState.pause.disabled,
           hidden: !viewState.pause.visible,
           icon: viewState.pause.icon,
           label: viewState.pause.label,
           selector: "#pauseJobBtn",
+        },
+        cancel: {
+          disabled: viewState.cancel.disabled,
+          hidden: !viewState.cancel.visible,
+          icon: viewState.cancel.icon,
+          label: viewState.cancel.label,
+          selector: "#cancelJobBtn",
         },
       },
       center: {

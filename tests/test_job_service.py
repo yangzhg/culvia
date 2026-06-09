@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from culvia.app_state import AppStateStore, create_initial_state, empty_job
-from culvia.job_service import ScoringJobService
+from culvia.job_service import JobCancelled, ScoringJobService
 
 
 def make_service() -> ScoringJobService:
@@ -102,6 +102,50 @@ class ScoringJobServiceTests(unittest.TestCase):
             job = service.state_store.data["job"]
             self.assertEqual(job["phase"], "source_scanning")
             self.assertFalse(job["paused"])
+
+    def test_cancel_is_bound_to_scoring_jobs(self) -> None:
+        service = make_service()
+        self.assertFalse(service.request_cancel())
+
+        job_id = service.reserve()
+        self.assertTrue(job_id)
+
+        self.assertTrue(service.request_cancel())
+        self.assertFalse(service.control["pauseRequested"])
+        self.assertTrue(service.control["cancelRequested"])
+        with service.state_store.lock:
+            job = service.state_store.data["job"]
+            self.assertEqual(job["phase"], "cancelling")
+            self.assertFalse(job["paused"])
+
+        service.bind_thread_job(str(job_id))
+        try:
+            with self.assertRaises(JobCancelled):
+                service.raise_if_cancelled()
+        finally:
+            service.clear_thread_job()
+
+    def test_llm_review_jobs_can_be_cancelled_but_not_paused(self) -> None:
+        service = make_service()
+        job_id = service.reserve(kind="llm_review", phase="llm_review")
+        self.assertTrue(job_id)
+
+        self.assertFalse(service.request_pause())
+        self.assertTrue(service.request_cancel())
+        self.assertFalse(service.control["pauseRequested"])
+        self.assertTrue(service.control["cancelRequested"])
+        with service.state_store.lock:
+            job = service.state_store.data["job"]
+            self.assertEqual(job["phase"], "cancelling")
+            self.assertFalse(job["paused"])
+
+    def test_source_preview_jobs_cannot_be_cancelled(self) -> None:
+        service = make_service()
+        job_id = service.reserve(kind="source_preview", phase="source_scanning")
+        self.assertTrue(job_id)
+
+        self.assertFalse(service.request_cancel())
+        self.assertFalse(service.control["cancelRequested"])
 
     def test_reset_control_ignores_stale_job_ids(self) -> None:
         service = make_service()

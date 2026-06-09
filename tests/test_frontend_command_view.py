@@ -53,9 +53,11 @@ class FrontendCommandViewTests(unittest.TestCase):
             if (!waiting.mainScore.disabled || waiting.mainScore.label !== "准备模型并评分") {
               throw new Error("waiting main score state is wrong");
             }
+            if (!waiting.llmReview.disabled) throw new Error("waiting LLM review should be disabled");
 
             const ready = view.commandViewState({
               sourceReady: true,
+              llmConfigured: true,
               model: { downloaded: true, label: "就绪", tone: "ready" },
             });
             if (ready.title !== "可以开始评分" || ready.mainScore.disabled) {
@@ -63,6 +65,9 @@ class FrontendCommandViewTests(unittest.TestCase):
             }
             if (ready.mainScore.icon !== "play" || ready.mainScore.label !== "开始评分") {
               throw new Error("ready button state is wrong");
+            }
+            if (ready.llmReview.disabled || ready.llmReview.label !== "大模型评审") {
+              throw new Error("ready LLM review button state is wrong");
             }
 
             const summary = view.commandViewState({
@@ -102,6 +107,23 @@ class FrontendCommandViewTests(unittest.TestCase):
             }
             if (!scanning.mainScore.disabled || scanning.pause.visible) {
               throw new Error("source preview controls are wrong");
+            }
+
+            const llmReview = view.commandViewState({
+              sourceReady: true,
+              job: {
+                kind: "llm_review",
+                currentFile: "portrait.jpg",
+                progress: 0.5,
+                running: true,
+                title: "正在进行大模型评审",
+              },
+            });
+            if (llmReview.state !== "大模型评审中" || llmReview.title !== "正在进行大模型评审") {
+              throw new Error("LLM review running state is wrong");
+            }
+            if (llmReview.pause.visible || !llmReview.cancel.visible || !llmReview.currentPhoto.visible) {
+              throw new Error("LLM review controls are wrong");
             }
 
             const paused = view.commandViewState({

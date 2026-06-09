@@ -27,6 +27,7 @@ class SourcePreviewDependencies:
     sanitize_uploaded_paths: Callable[[object], list[Path]]
     build_file_id: Callable[[Path], str]
     load_cache_records: Callable[[str | Path], pd.DataFrame]
+    save_source_config: Callable[[Mapping[str, object], str | Path], Mapping[str, object]]
     normalize_score_dataframe: Callable[[pd.DataFrame], pd.DataFrame]
     make_empty_record: Callable[[Path, str, str], dict[str, object]]
 
@@ -194,6 +195,7 @@ def run_source_preview_job(
         )
         result = source_preview_action(payload, dependencies)
         apply_source_preview_state(state_store, result)
+        persist_source_preview_config(result, dependencies)
         total = len(result.paths)
         job_service.update(
             running=False,
@@ -233,8 +235,13 @@ def run_source_preview_job(
 
 
 def apply_source_preview_state(state_store: Any, result: SourcePreviewResult) -> None:
+    # Kept as a pure state mutation helper for tests and callers that do not persist config.
     with state_store.lock:
         state = state_store.data
         state["scores_df"] = result.scores_df
         state["source"].update(result.source_payload())
         state["sourcePreview"] = result.to_payload()
+
+
+def persist_source_preview_config(result: SourcePreviewResult, dependencies: SourcePreviewDependencies) -> None:
+    dependencies.save_source_config(result.source_payload(), result.request.cache_path)

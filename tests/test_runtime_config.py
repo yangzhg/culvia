@@ -97,6 +97,49 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(store.data["filters"]["limit"], 42)
         self.assertEqual(store.data["models"]["selected"], ["core"])
 
+    def test_create_runtime_state_store_restores_persisted_source_config(self) -> None:
+        config = RuntimeConfig(
+            web_dir=Path("web"),
+            upload_cache_dir=Path("uploads"),
+            thumbnail_cache_dir=Path("thumbs"),
+            default_cache_path="/tmp/runtime.sqlite",
+            default_photo_dirs=("/photos/default",),
+        )
+
+        store = create_runtime_state_store(
+            config,
+            load_scores=lambda _cache_path: pd.DataFrame({"file_id": ["a"]}),
+            load_source_config=lambda _cache_path: {
+                "mode": "folders",
+                "folders": ["/photos/restored"],
+                "cachePath": "/tmp/runtime.sqlite",
+            },
+            filter_defaults={},
+            default_selected_models=["core"],
+        )
+
+        self.assertEqual(store.data["source"]["folders"], ["/photos/restored"])
+        self.assertEqual(store.data["sourcePreview"]["folders"], ["/photos/restored"])
+
+    def test_create_runtime_state_store_respects_persisted_empty_source(self) -> None:
+        config = RuntimeConfig(
+            web_dir=Path("web"),
+            upload_cache_dir=Path("uploads"),
+            thumbnail_cache_dir=Path("thumbs"),
+            default_cache_path="/tmp/runtime.sqlite",
+            default_photo_dirs=("/photos/default",),
+        )
+
+        store = create_runtime_state_store(
+            config,
+            load_scores=lambda _cache_path: pd.DataFrame(),
+            load_source_config=lambda _cache_path: {"mode": "folders", "folders": []},
+            filter_defaults={},
+            default_selected_models=[],
+        )
+
+        self.assertEqual(store.data["source"]["folders"], [])
+
     def test_create_app_runtime_config_controls_static_upload_and_thumbnail_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

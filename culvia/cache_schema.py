@@ -21,6 +21,11 @@ LLM_CONFIG_STORAGE_KEYS = {
     "prompt_preset": "llm_prompt_preset",
     "custom_prompt": "llm_custom_prompt",
 }
+SOURCE_CONFIG_STORAGE_KEYS = {
+    "mode": "source_mode",
+    "folders_json": "source_folders_json",
+    "cache_path": "source_cache_path",
+}
 INSIGHT_COLUMNS = {
     "file_id": "TEXT NOT NULL",
     "analyzer_key": "TEXT NOT NULL",

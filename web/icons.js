@@ -151,6 +151,10 @@
   play: [
     '<path d="M5 5a2 2 0 0 1 3.1-1.67l10.6 7a2 2 0 0 1 0 3.34l-10.6 7A2 2 0 0 1 5 19Z"></path>',
   ],
+  plus: [
+    '<path d="M12 5v14"></path>',
+    '<path d="M5 12h14"></path>',
+  ],
   refreshCw: [
     '<path d="M21 12a9 9 0 0 0-15.31-6.36L3 8"></path>',
     '<path d="M3 3v5h5"></path>',

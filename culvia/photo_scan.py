@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
+from culvia.path_semantics import path_identity_key, stable_path
+
 
 SUPPORTED_EXTENSIONS = {
     ".jpg",
@@ -18,10 +20,7 @@ SUPPORTED_EXTENSIONS = {
 
 
 def _canonical_path(path: Path) -> Path:
-    try:
-        return path.expanduser().resolve()
-    except OSError:
-        return path.expanduser().absolute()
+    return stable_path(path)
 
 
 def scan_image_paths(folders: Iterable[str | Path]) -> tuple[list[Path], list[str]]:
@@ -52,7 +51,9 @@ def scan_image_paths(folders: Iterable[str | Path]) -> tuple[list[Path], list[st
         except Exception as exc:
             warnings.append(f"扫描目录失败：{root} ({exc!r})")
 
-    unique_by_key = {str(path).casefold(): path for path in paths}
+    unique_by_key: dict[str, Path] = {}
+    for path in paths:
+        unique_by_key.setdefault(path_identity_key(path), path)
     unique_paths = sorted(unique_by_key.values(), key=lambda item: str(item).casefold())
     return unique_paths, warnings
 

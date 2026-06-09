@@ -780,6 +780,58 @@ textarea:focus {
   margin-top: 14px;
 }
 
+.source-folder-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.source-folder-empty {
+  padding: 10px 11px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.52);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.source-folder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px 34px;
+  gap: 6px;
+  align-items: center;
+}
+
+.source-folder-input {
+  height: 34px;
+  min-width: 0;
+  padding: 0 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+}
+
+.source-folder-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.source-folder-add .text-input {
+  height: 34px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+}
+
+.source-clear-button {
+  width: 100%;
+  margin-top: 8px;
+}
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -832,6 +884,12 @@ textarea:focus {
 
 .button.ghost .icon {
   margin-right: 5px;
+}
+
+.button.danger {
+  color: var(--danger);
+  border-color: rgba(var(--danger-rgb), 0.28);
+  background: rgba(var(--danger-rgb), 0.07);
 }
 
 .button:disabled {

@@ -334,10 +334,23 @@ function uniqueFolderList(items) {
     });
 }
 
-function foldersFromInput() {
+function syncFolderInputFromList(folders) {
   const input = $("#folderInput");
-  if (!input) return [];
-  return uniqueFolderList(input.value.split("\n"));
+  if (input) input.value = uniqueFolderList(folders).join("\n");
+}
+
+function folderEditorHasFocus() {
+  return Boolean(document.activeElement?.closest?.(".manual-path-edit"));
+}
+
+function foldersFromInput() {
+  const list = $("#folderList");
+  if (list) {
+    const values = Array.from(list.querySelectorAll("[data-folder-path]")).map((input) => input.value);
+    return uniqueFolderList(values);
+  }
+  const input = $("#folderInput");
+  return input ? uniqueFolderList(input.value.split("\n")) : [];
 }
 
 function folderListsEqual(left = [], right = []) {
@@ -354,6 +367,14 @@ function matchingSourcePreview(folders = foldersFromInput()) {
 
 function isScoringJob(job = appState?.job) {
   return Boolean(job?.running) && (job.kind || "scoring") === "scoring";
+}
+
+function isLlmReviewJob(job = appState?.job) {
+  return Boolean(job?.running) && job.kind === "llm_review";
+}
+
+function isCancellableJob(job = appState?.job) {
+  return isScoringJob(job) || isLlmReviewJob(job);
 }
 
 function isSourcePreviewJob(job = appState?.job) {
@@ -382,12 +403,72 @@ function applySourceInputSnapshot(snapshot) {
     folders: uniqueFolderList(snapshot.folders || []),
     cachePath: snapshot.cachePath || "",
   };
+  syncFolderInputFromList(appState.source.folders || []);
 }
 
 function markSourceInputsDirty() {
   sourceInputsDirty = true;
+  syncFolderInputFromList(foldersFromInput());
   applySourceInputSnapshot(sourceInputSnapshot());
   refreshSourceDependentControls();
+}
+
+function folderValuesFromText(text) {
+  return uniqueFolderList(String(text || "").split(/\r?\n/));
+}
+
+function setFolderList(folders, { dirty = true, previewDelay = 240 } = {}) {
+  const nextFolders = uniqueFolderList(folders);
+  syncFolderInputFromList(nextFolders);
+  renderSourceFolderList(nextFolders, Boolean(appState?.job?.running));
+  if (sourceMode !== "folders") setSourceMode("folders");
+  if (dirty) {
+    markSourceInputsDirty();
+    updatePathSummaries();
+    scheduleSourcePreview(previewDelay);
+  }
+}
+
+function addFolderEntries(values, { previewDelay = 120 } = {}) {
+  const additions = uniqueFolderList(values);
+  if (!additions.length || appState?.job?.running) return;
+  setFolderList([...foldersFromInput(), ...additions], { previewDelay });
+  const addInput = $("#folderAddInput");
+  if (addInput) addInput.value = "";
+}
+
+function renderSourceFolderList(folders = foldersFromInput(), busy = Boolean(appState?.job?.running)) {
+  const list = $("#folderList");
+  if (!list) return;
+  const normalized = uniqueFolderList(folders);
+  if (!normalized.length) {
+    list.innerHTML = `<div class="source-folder-empty">${escapeHtml(t("source.noFolders"))}</div>`;
+    return;
+  }
+  list.innerHTML = normalized
+    .map(
+      (folder, index) => `
+        <div class="source-folder-row" data-folder-row>
+          <input
+            class="text-input source-folder-input"
+            type="text"
+            value="${escapeHtml(folder)}"
+            data-folder-path
+            data-folder-index="${index}"
+            aria-label="${escapeHtml(t("source.folderPath"))}"
+            data-ui-tooltip="${escapeHtml(folder)}"
+            ${busy ? "disabled" : ""}
+          />
+          <button class="icon-button" type="button" data-copy-source-folder="${escapeHtml(folder)}" data-ui-tooltip="${escapeHtml(t("source.copyFolder"))}" aria-label="${escapeHtml(t("source.copyFolder"))}" ${busy ? "disabled" : ""}>
+            ${iconMarkup("copy")}
+          </button>
+          <button class="icon-button" type="button" data-remove-source-folder="${index}" data-ui-tooltip="${escapeHtml(t("source.removeFolder"))}" aria-label="${escapeHtml(t("source.removeFolder"))}" ${busy ? "disabled" : ""}>
+            ${iconMarkup("trash")}
+          </button>
+        </div>
+      `,
+    )
+    .join("");
 }
 
 function pathName(path) {
@@ -1076,6 +1157,7 @@ function applyCommandDomPlan(plan) {
   applyCommandButtonPlan(plan.buttons.mainScore);
   applyCommandButtonPlan(plan.buttons.noticeAction);
   applyCommandButtonPlan(plan.buttons.pause);
+  applyCommandButtonPlan(plan.buttons.cancel);
   return true;
 }
 
@@ -1090,6 +1172,7 @@ function renderCommand(model, job, summary) {
     networkText: displayNetworkLabel(model?.proxyLabel),
     sourceReady,
     summary,
+    llmConfigured: Boolean(appState?.llm?.configured),
   });
   applyCommandDomPlan(commandView.commandDomPlan(viewState));
 }
@@ -1110,10 +1193,14 @@ function renderProgress(job) {
   jobBox?.classList.add("is-hidden");
 
   $("#mainScoreBtn").disabled = running || Boolean(commandNotice?.loading) || !hasSelectedSource();
+  $("#llmReviewBtn").disabled =
+    running || Boolean(commandNotice?.loading) || !hasSelectedSource() || !appState?.llm?.configured;
   $("#clearLocalDataBtn").disabled = running || Boolean(commandNotice?.loading);
   $("#clearHistoryBtn").disabled = running || Boolean(commandNotice?.loading);
   $("#clearModelBtn").disabled = running || Boolean(commandNotice?.loading);
   $("#pauseJobBtn").disabled = !scoring || Boolean(commandNotice?.loading);
+  $("#cancelJobBtn").disabled =
+    !isCancellableJob(job) || appState.job?.phase === "cancelling" || Boolean(commandNotice?.loading);
   $("#editLlmConfigBtn").disabled = running || Boolean(commandNotice?.loading);
   $("#cancelLlmConfigBtn").disabled = running || Boolean(commandNotice?.loading);
   $("#saveLlmConfigBtn").disabled = running || Boolean(commandNotice?.loading);
@@ -2577,6 +2664,10 @@ function renderControls() {
   nativeFolderButton.classList.toggle("is-unavailable", !nativeFolderSupported);
   const folderInput = $("#folderInput");
   if (folderInput) folderInput.disabled = busy;
+  const folderAddInput = $("#folderAddInput");
+  if (folderAddInput) folderAddInput.disabled = busy;
+  $("#folderAddBtn").disabled = busy;
+  $("#clearFoldersBtn").disabled = busy || !foldersFromInput().length;
   const cacheInput = $("#cacheInput");
   if (cacheInput) cacheInput.disabled = busy;
   ["#pickFilesBtn", "#pickFolderBtn", "#fileInput", "#folderPicker"].forEach((selector) => {
@@ -2586,8 +2677,11 @@ function renderControls() {
   $$("[data-source]").forEach((button) => {
     button.disabled = busy;
   });
-  if (!sourceInputsDirty && document.activeElement !== $("#folderInput")) {
-    $("#folderInput").value = (appState.source.folders || []).join("\n");
+  if (!sourceInputsDirty && !folderEditorHasFocus()) {
+    syncFolderInputFromList(appState.source.folders || []);
+    renderSourceFolderList(appState.source.folders || [], busy);
+  } else {
+    renderSourceFolderList(foldersFromInput(), busy);
   }
   if (!sourceInputsDirty && document.activeElement !== $("#cacheInput")) {
     $("#cacheInput").value = appState.source.cachePath || "";
@@ -2934,12 +3028,75 @@ function syncPollTimer() {
   }
 }
 
+function uploadFileName(file) {
+  return file?.webkitRelativePath || file?.relativePath || file?.name || "upload";
+}
+
+function annotateDroppedFile(file, relativePath) {
+  if (!relativePath || file.webkitRelativePath) return file;
+  try {
+    Object.defineProperty(file, "relativePath", { value: relativePath, configurable: true });
+  } catch (_error) {
+    // A plain file name is still safe if the browser does not allow annotation.
+  }
+  return file;
+}
+
+function readEntryFile(entry, relativePath = "") {
+  return new Promise((resolve) => {
+    entry.file(
+      (file) => resolve([annotateDroppedFile(file, relativePath || entry.fullPath?.replace(/^\/+/, "") || file.name)]),
+      () => resolve([]),
+    );
+  });
+}
+
+async function readDirectoryEntry(entry, prefix = "") {
+  const reader = entry.createReader();
+  const files = [];
+  const readBatch = () =>
+    new Promise((resolve) => {
+      reader.readEntries(resolve, () => resolve([]));
+    });
+  while (true) {
+    const entries = await readBatch();
+    if (!entries.length) break;
+    for (const child of entries) {
+      const childPath = `${prefix}${entry.name}/${child.name}`;
+      if (child.isFile) {
+        files.push(...(await readEntryFile(child, childPath)));
+      } else if (child.isDirectory) {
+        files.push(...(await readDirectoryEntry(child, `${prefix}${entry.name}/`)));
+      }
+    }
+  }
+  return files;
+}
+
+async function filesFromDataTransfer(dataTransfer) {
+  const items = Array.from(dataTransfer?.items || []);
+  if (!items.length) return Array.from(dataTransfer?.files || []);
+  const files = [];
+  for (const item of items) {
+    const entry = item.webkitGetAsEntry?.();
+    if (entry?.isFile) {
+      files.push(...(await readEntryFile(entry)));
+    } else if (entry?.isDirectory) {
+      files.push(...(await readDirectoryEntry(entry)));
+    } else {
+      const file = item.getAsFile?.();
+      if (file) files.push(file);
+    }
+  }
+  return files.length ? files : Array.from(dataTransfer?.files || []);
+}
+
 async function uploadFiles(fileList) {
   if (appState?.job?.running) return;
   const files = Array.from(fileList || []);
   if (!files.length) return;
   const form = new FormData();
-  files.forEach((file) => form.append("files", file, file.webkitRelativePath || file.name));
+  files.forEach((file) => form.append("files", file, uploadFileName(file)));
   $("#uploadHint").textContent = t("source.uploading");
   const result = await apiClient.uploadForm("/api/upload", form);
   $("#uploadHint").textContent = t("source.uploadedCount", { count: Number(result.count || 0) });
@@ -3069,6 +3226,19 @@ async function submitScoringPayload(payload) {
   await loadState();
 }
 
+async function startLlmReview() {
+  if (!appState || appState.job?.running || !appState?.llm?.configured) return;
+  const payload = buildScoringPayload(["llm_review"]);
+  sourcePreviewRequestId += 1;
+  sourcePreviewLoading = false;
+  window.clearTimeout(sourcePreviewTimer);
+  commandNotice = null;
+  window.clearTimeout(commandNoticeTimer);
+  await postJson("/api/llm-review", payload);
+  sourceInputsDirty = false;
+  await loadState();
+}
+
 async function startScoring() {
   if (!appState || appState.job?.running) return;
   const payload = buildScoringPayload();
@@ -3159,6 +3329,24 @@ async function toggleJobPause() {
         tone: "danger",
         state: paused ? t("command.resumeFailedState") : t("command.pauseFailedState"),
         title: paused ? t("command.resumeFailedTitle") : t("command.pauseFailedTitle"),
+        detail: errorMessage(error),
+      },
+      3600,
+    );
+  }
+}
+
+async function cancelJob() {
+  if (!isCancellableJob(appState?.job) || appState.job.phase === "cancelling") return;
+  try {
+    appState = await postJson("/api/job/cancel", {});
+    render();
+  } catch (error) {
+    showCommandNotice(
+      {
+        tone: "danger",
+        state: t("command.cancelFailedState"),
+        title: t("command.cancelFailedTitle"),
         detail: errorMessage(error),
       },
       3600,
@@ -4250,10 +4438,7 @@ function bindEvents() {
       const result = await postJson("/api/pick-folders", {});
       const picked = uniqueFolderList(result.folders || [result.folder]);
       if (!picked.length) return;
-      $("#folderInput").value = uniqueFolderList([...foldersFromInput(), ...picked]).join("\n");
-      markSourceInputsDirty();
-      updatePathSummaries();
-      scheduleSourcePreview(80);
+      addFolderEntries(picked, { previewDelay: 80 });
     } catch (_error) {
       // User cancellation should stay quiet.
     }
@@ -4273,10 +4458,13 @@ function bindEvents() {
     });
   });
   dropzone.addEventListener("drop", (event) => {
-    if (!appState?.job?.running) uploadFiles(event.dataTransfer.files);
+    if (!appState?.job?.running) {
+      void filesFromDataTransfer(event.dataTransfer).then((files) => uploadFiles(files));
+    }
   });
 
   $("#mainScoreBtn").addEventListener("click", startScoring);
+  $("#llmReviewBtn").addEventListener("click", startLlmReview);
   $("#commandNoticeActionBtn").addEventListener("click", () => {
     if (commandNotice?.action?.type === "restoreMarks") {
       restoreBatchMarks(commandNotice.action);
@@ -4290,6 +4478,7 @@ function bindEvents() {
   $("#cancelDangerConfirmBtn").addEventListener("click", () => closeDangerConfirm());
   $("#dangerConfirmScrim").addEventListener("click", () => closeDangerConfirm());
   $("#pauseJobBtn").addEventListener("click", toggleJobPause);
+  $("#cancelJobBtn").addEventListener("click", cancelJob);
   $("#clearLocalDataBtn").addEventListener("click", clearLocalData);
   $("#clearHistoryBtn").addEventListener("click", clearHistoryCache);
   $("#clearModelBtn").addEventListener("click", clearModelCache);
@@ -4341,9 +4530,41 @@ function bindEvents() {
     updatePathSummaries();
     scheduleSourcePreview();
   };
-  $("#folderInput").addEventListener("input", handleFolderSourceChange);
-  $("#folderInput").addEventListener("change", handleFolderSourceChange);
-  $("#folderInput").addEventListener("paste", () => window.setTimeout(handleFolderSourceChange, 0));
+  $("#folderList").addEventListener("input", (event) => {
+    if (!event.target?.matches?.("[data-folder-path]")) return;
+    event.target.dataset.uiTooltip = event.target.value;
+    handleFolderSourceChange();
+  });
+  $("#folderList").addEventListener("change", (event) => {
+    if (!event.target?.matches?.("[data-folder-path]")) return;
+    setFolderList(foldersFromInput(), { previewDelay: 120 });
+  });
+  $("#folderList").addEventListener("click", (event) => {
+    const removeButton = event.target?.closest?.("[data-remove-source-folder]");
+    if (removeButton) {
+      const index = Number(removeButton.dataset.removeSourceFolder);
+      setFolderList(foldersFromInput().filter((_folder, folderIndex) => folderIndex !== index), { previewDelay: 80 });
+      return;
+    }
+    const copyButton = event.target?.closest?.("[data-copy-source-folder]");
+    if (copyButton) {
+      void copyFileFolderPath(copyButton.dataset.copySourceFolder || "");
+    }
+  });
+  $("#folderAddBtn").addEventListener("click", () => addFolderEntries(folderValuesFromText($("#folderAddInput").value)));
+  $("#folderAddInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addFolderEntries(folderValuesFromText(event.target.value));
+    }
+  });
+  $("#folderAddInput").addEventListener("paste", (event) => {
+    const text = event.clipboardData?.getData("text") || "";
+    if (!text.includes("\n")) return;
+    event.preventDefault();
+    addFolderEntries(folderValuesFromText(text));
+  });
+  $("#clearFoldersBtn").addEventListener("click", () => setFolderList([], { previewDelay: 0 }));
   $("#cacheInput").addEventListener("change", () => {
     if (appState?.job?.running) return;
     markSourceInputsDirty();

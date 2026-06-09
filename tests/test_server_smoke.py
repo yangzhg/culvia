@@ -267,7 +267,7 @@ class ServerSmokeTests(unittest.TestCase):
                 models_response.json()["models"]["selected"],
                 [scoring.MODEL_BASIC_TECHNICAL, scoring.MODEL_CLIP_AESTHETIC],
             )
-            self.assertEqual(cache_response.json()["source"]["folders"], [str(root)])
+            self.assertEqual(cache_response.json()["source"]["folders"], [str(root.absolute())])
             self.assertEqual([photo["fileId"] for photo in cache_response.json()["photos"]], ["image-1"])
             with store.lock:
                 loaded = scoring.normalize_score_dataframe(store.data["scores_df"])
@@ -339,12 +339,12 @@ class ServerSmokeTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             payload = response.json()
             self.assertEqual(payload["sourcePreview"]["total"], 2)
-            self.assertEqual(payload["source"]["folders"], [str(root), str(nested)])
+            self.assertEqual(payload["source"]["folders"], [str(root.absolute())])
             self.assertEqual(payload["summary"]["scored"], 0)
             self.assertEqual(payload["summary"]["showing"], 2)
             self.assertEqual(
                 sorted(photo["path"] for photo in payload["photos"]),
-                sorted([str(first.resolve()), str(second.resolve())]),
+                sorted([str(first.absolute()), str(second.absolute())]),
             )
             self.assertTrue(all(photo["recommendation"] is None for photo in payload["photos"]))
             with store.lock:

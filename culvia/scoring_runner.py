@@ -7,7 +7,7 @@ from typing import Any, Callable, Sequence
 import pandas as pd
 
 from culvia.app_state import AppStateStore
-from culvia.job_service import ScoringJobService
+from culvia.job_service import JobCancelled, ScoringJobService
 from culvia.scoring_progress import scoring_progress
 from culvia.source_requests import source_request_from_payload
 
@@ -25,6 +25,7 @@ class ScoringRunnerDependencies:
     normalize_network_mode: Callable[[object], str]
     normalize_selected_models: Callable[[object], list[str]]
     refresh_persisted_llm_config: Callable[[str], None]
+    save_source_config: Callable[[dict[str, Any], str], Any]
     llm_review_configured: Callable[[], bool]
     scan_image_paths: Callable[[Sequence[str]], tuple[list[Path], list[str]]]
     score_image_paths: ScoreImagePaths
@@ -73,6 +74,7 @@ def run_scoring_job(
         selected_models = [model_key for model_key in selected_models if model_key != dependencies.llm_review_model_key]
 
     _write_source_state(state_store, mode, folders, cache_path, uploaded_paths, network_mode, selected_models)
+    dependencies.save_source_config(_source_payload(mode, folders, cache_path, uploaded_paths), cache_path)
 
     job_service.update(
         running=True,
@@ -126,6 +128,7 @@ def run_scoring_job(
             return
 
         def update_score_progress(done: int, total: int, path: Path, state: str) -> None:
+            job_service.raise_if_cancelled()
             progress = scoring_progress(done, total, state, selected_models)
             job_service.update(
                 phase="scoring",
@@ -141,6 +144,7 @@ def run_scoring_job(
                 completedEvaluations=progress.completed_evaluations,
             )
             job_service.wait_if_paused(path)
+            job_service.raise_if_cancelled()
 
         scored_df, device = dependencies.score_image_paths(
             paths,
@@ -168,6 +172,22 @@ def run_scoring_job(
             title="评分完成",
             detail=f"{len(scored_df)} 张照片 · {dependencies.device_label(device)}",
             progress=1.0,
+            modelProgress=None,
+            currentFile="",
+            currentPath="",
+            currentThumb="",
+            activeEvaluation="",
+            completedEvaluations=[],
+            paused=False,
+        )
+        job_service.reset_control(job_id)
+    except JobCancelled:
+        job_service.update(
+            running=False,
+            phase="cancelled",
+            title="评分已取消",
+            detail="当前任务已中止，可以调整来源或模型后重新开始",
+            progress=0.0,
             modelProgress=None,
             currentFile="",
             currentPath="",

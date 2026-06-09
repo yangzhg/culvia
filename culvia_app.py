@@ -57,6 +57,10 @@ from culvia.llm_model_catalog import (
     llm_models_url as _llm_models_url,
     parse_llm_model_list as _parse_llm_model_list,
 )
+from culvia.llm_review_runner import (
+    LlmReviewRunnerDependencies,
+    run_llm_review_job as run_llm_review_job_with_dependencies,
+)
 from culvia.llm_config_requests import llm_config_from_payload as _llm_config_from_payload
 from culvia.llm_config_service import (
     LLMConfigServiceDependencies,
@@ -148,7 +152,7 @@ from culvia.scoring_runner import (
     ScoringRunnerDependencies,
     run_scoring_job as run_scoring_job_with_dependencies,
 )
-from culvia.scoring_service import ScoringStartError, start_scoring_job_action
+from culvia.scoring_service import ScoringStartError, start_llm_review_job_action, start_scoring_job_action
 from culvia.score_records import make_empty_score_record
 from culvia.source_preview import (
     SourcePreviewDependencies,
@@ -210,16 +214,22 @@ from culvia.scoring import (
     llm_review_status,
     llm_review_timeout,
     load_llm_config_from_sqlite,
+    load_source_config_from_sqlite,
     load_analysis_insights,
     load_cache_records,
     mask_llm_api_key,
     normalize_score_dataframe,
     save_llm_config_to_sqlite,
+    save_analysis_insights,
+    save_cache_records,
+    save_source_config_to_sqlite,
     scan_image_paths,
+    score_llm_review_image,
     score_image_paths,
     set_persisted_llm_config,
     set_secure_llm_config,
     set_session_llm_config,
+    apply_llm_review_scores,
 )
 from culvia.secret_store import (
     SecretStoreError,
@@ -262,6 +272,7 @@ MANUAL_STATUS_FILTER_VALUES = {option["value"] for option in MANUAL_STATUS_OPTIO
 APP_STATE = create_runtime_state_store(
     RUNTIME_CONFIG,
     load_scores=load_cache_records,
+    load_source_config=load_source_config_from_sqlite,
     filter_defaults=FILTER_DEFAULTS,
     default_selected_models=DEFAULT_SELECTED_MODELS,
 )
@@ -590,6 +601,7 @@ def source_preview_dependencies() -> SourcePreviewDependencies:
         sanitize_uploaded_paths=sanitize_uploaded_paths,
         build_file_id=build_file_id,
         load_cache_records=load_cache_records,
+        save_source_config=save_source_config_to_sqlite,
         normalize_score_dataframe=normalize_score_dataframe,
         make_empty_record=make_empty_preview_record,
     )
@@ -911,6 +923,14 @@ async def api_cache(request: Request) -> JSONResponse:
     except ValueError as exc:
         return api_error_response("cachePathInvalid", str(exc), status_code=400, params={"reason": str(exc)})
     apply_source_cache_state(state_store, result)
+    save_source_config_to_sqlite(
+        {
+            "mode": result.request.mode,
+            "folders": result.request.folders,
+            "cachePath": result.request.cache_path,
+        },
+        result.request.cache_path,
+    )
     return JSONResponse(state_payload(state_store))
 
 
@@ -1131,6 +1151,7 @@ def scoring_runner_dependencies() -> ScoringRunnerDependencies:
         normalize_network_mode=normalize_network_mode,
         normalize_selected_models=normalize_selected_models,
         refresh_persisted_llm_config=refresh_persisted_llm_config,
+        save_source_config=save_source_config_to_sqlite,
         llm_review_configured=llm_review_configured,
         scan_image_paths=scan_image_paths,
         score_image_paths=score_image_paths,
@@ -1138,6 +1159,25 @@ def scoring_runner_dependencies() -> ScoringRunnerDependencies:
         clip_reference_loader=cached_clip_reference_loader,
         thumbnail_url=thumbnail_url,
         device_label=device_label,
+    )
+
+
+def llm_review_runner_dependencies() -> LlmReviewRunnerDependencies:
+    return LlmReviewRunnerDependencies(
+        default_cache_path=DEFAULT_CACHE_PATH,
+        llm_review_configured=llm_review_configured,
+        llm_review_status=llm_review_status,
+        sanitize_uploaded_paths=sanitize_uploaded_paths,
+        scan_image_paths=scan_image_paths,
+        build_file_id=build_file_id,
+        normalize_score_dataframe=normalize_score_dataframe,
+        score_llm_review_image=score_llm_review_image,
+        apply_llm_review_scores=apply_llm_review_scores,
+        load_cache_records=load_cache_records,
+        save_cache_records=save_cache_records,
+        load_analysis_insights=load_analysis_insights,
+        save_analysis_insights=save_analysis_insights,
+        thumbnail_url=thumbnail_url,
     )
 
 
@@ -1153,6 +1193,21 @@ def run_scoring_job(
         state_store or APP_STATE,
         job_service or APP_JOB_SERVICE,
         scoring_runner_dependencies(),
+    )
+
+
+def run_llm_review_job(
+    job_id: str,
+    payload: dict[str, Any],
+    state_store: AppStateStore | None = None,
+    job_service: ScoringJobService | None = None,
+) -> None:
+    run_llm_review_job_with_dependencies(
+        job_id,
+        payload,
+        state_store or APP_STATE,
+        job_service or APP_JOB_SERVICE,
+        llm_review_runner_dependencies(),
     )
 
 
@@ -1188,6 +1243,23 @@ async def api_score(request: Request) -> JSONResponse:
     return JSONResponse(result.to_payload())
 
 
+async def api_llm_review(request: Request) -> JSONResponse:
+    payload = await request.json()
+    state_store = request_state_store(request)
+    job_service = request_job_service(request)
+    try:
+        result = start_llm_review_job_action(
+            payload,
+            state_store,
+            job_service,
+            run_llm_review_job=run_llm_review_job,
+            thread_factory=threading.Thread,
+        )
+    except ScoringStartError as error:
+        return scoring_start_error_response(error)
+    return JSONResponse(result.to_payload())
+
+
 async def api_job_pause(request: Request) -> JSONResponse:
     job_service = request_job_service(request)
     if not job_service.request_pause():
@@ -1198,6 +1270,13 @@ async def api_job_pause(request: Request) -> JSONResponse:
 async def api_job_resume(request: Request) -> JSONResponse:
     job_service = request_job_service(request)
     if not job_service.request_resume():
+        return api_error_response("noRunningJob", "当前没有正在运行的评分任务。", status_code=409)
+    return JSONResponse(state_payload(job_service.state_store))
+
+
+async def api_job_cancel(request: Request) -> JSONResponse:
+    job_service = request_job_service(request)
+    if not job_service.request_cancel():
         return api_error_response("noRunningJob", "当前没有正在运行的评分任务。", status_code=409)
     return JSONResponse(state_payload(job_service.state_store))
 
@@ -1553,8 +1632,10 @@ def route_handlers() -> WebRouteHandlers:
         api_clear_model=api_clear_model,
         api_upload=api_upload,
         api_score=api_score,
+        api_llm_review=api_llm_review,
         api_job_pause=api_job_pause,
         api_job_resume=api_job_resume,
+        api_job_cancel=api_job_cancel,
         api_mark_photo=api_mark_photo,
         api_mark_color=api_mark_color,
         api_mark_status=api_mark_status,

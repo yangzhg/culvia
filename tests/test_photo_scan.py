@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,7 +28,7 @@ class PhotoScanTests(unittest.TestCase):
 
             paths, warnings = scan_image_paths([root, first])
 
-        expected = sorted({first.resolve(), second.resolve()}, key=lambda item: str(item).casefold())
+        expected = sorted({first.absolute(), second.absolute()}, key=lambda item: str(item).casefold())
         self.assertEqual(paths, expected)
         self.assertEqual(warnings, [])
 
@@ -41,8 +42,22 @@ class PhotoScanTests(unittest.TestCase):
 
             paths, warnings = scan_image_paths([root, nested, image])
 
-        self.assertEqual(paths, [image.resolve()])
+        self.assertEqual(paths, [image.absolute()])
         self.assertEqual(warnings, [])
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS exposes /var as a /private/var alias")
+    def test_scan_image_paths_preserves_first_alias_when_deduplicating_real_paths(self) -> None:
+        path = Path("/var/tmp/culvia-photo-scan-alias-test.jpg")
+        private_path = Path("/private/var/tmp/culvia-photo-scan-alias-test.jpg")
+        try:
+            path.write_bytes(b"jpg")
+
+            paths, warnings = scan_image_paths([path, private_path])
+
+            self.assertEqual(paths, [path])
+            self.assertEqual(warnings, [])
+        finally:
+            path.unlink(missing_ok=True)
 
     def test_scan_image_paths_reports_missing_and_unsupported_single_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -37,6 +37,9 @@ def make_dependencies(
     def refresh(cache_path: str) -> None:
         call_log.setdefault("refreshed", []).append(cache_path)
 
+    def save_source_config(config: dict[str, Any], cache_path: str) -> None:
+        call_log.setdefault("source_configs", []).append((config, cache_path))
+
     def normalize_network_mode(value: object) -> str:
         return str(value) if value in {"direct", "system"} else "direct"
 
@@ -65,6 +68,7 @@ def make_dependencies(
         normalize_network_mode=normalize_network_mode,
         normalize_selected_models=normalize_selected_models,
         refresh_persisted_llm_config=refresh,
+        save_source_config=save_source_config,
         llm_review_configured=lambda: llm_configured,
         scan_image_paths=scan_image_paths or (lambda folders: ([], [])),
         score_image_paths=score_image_paths or _unused_score_image_paths,
@@ -118,6 +122,7 @@ class ScoringRunnerTests(unittest.TestCase):
             self.assertEqual(store.data["job"]["warnings"], ["目录为空"])
         self.assertEqual(calls["folders"], ["/photos"])
         self.assertEqual(calls["refreshed"], [cache_path])
+        self.assertEqual(calls["source_configs"][0][1], cache_path)
         self.assertEqual(service.active_thread_job_id(), "")
 
     def test_successful_upload_source_scores_without_cache_and_reports_progress(self) -> None:
@@ -177,6 +182,7 @@ class ScoringRunnerTests(unittest.TestCase):
         self.assertEqual(calls["paths"], [image_path])
         self.assertFalse(calls["use_cache"])
         self.assertEqual(calls["cache_path"], cache_path)
+        self.assertEqual(calls["source_configs"][0][0]["mode"], "uploads")
         self.assertEqual(calls["model_loads"][0][0:2], ("cpu", "system"))
         self.assertEqual(calls["clip_loads"][0][0:2], ("cpu", "system"))
         self.assertEqual(service.control["jobId"], "")
@@ -210,6 +216,36 @@ class ScoringRunnerTests(unittest.TestCase):
             self.assertIn("RuntimeError", store.data["job"]["error"])
         self.assertEqual(service.control["jobId"], "")
         self.assertEqual(service.active_thread_job_id(), "")
+
+    def test_cancelled_scoring_finishes_as_cancelled_not_error(self) -> None:
+        cache_path = "/tmp/cancel.sqlite"
+        store = make_store(cache_path)
+        service = ScoringJobService(store)
+        job_id = service.reserve()
+        self.assertTrue(job_id)
+        photo_path = Path("/photos/cancel.jpg")
+
+        def scan_image_paths(_folders: Sequence[str]) -> tuple[list[Path], list[str]]:
+            return [photo_path], []
+
+        def score_image_paths(_paths: list[Path], **kwargs: Any) -> tuple[pd.DataFrame, str]:
+            service.request_cancel()
+            kwargs["progress_callback"](0, 1, photo_path, "started")
+            raise AssertionError("cancel should raise before scoring continues")
+
+        run_scoring_job(
+            job_id,
+            {"mode": "folders", "folders": ["/photos"], "cachePath": cache_path},
+            store,
+            service,
+            make_dependencies(scan_image_paths=scan_image_paths, score_image_paths=score_image_paths),
+        )
+
+        with store.lock:
+            self.assertFalse(store.data["job"]["running"])
+            self.assertEqual(store.data["job"]["phase"], "cancelled")
+            self.assertEqual(store.data["job"]["title"], "评分已取消")
+        self.assertEqual(service.control["jobId"], "")
 
     def test_unsupported_cache_path_suffix_is_reported_as_job_error(self) -> None:
         store = make_store("/tmp/current.sqlite")

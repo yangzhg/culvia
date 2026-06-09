@@ -7,7 +7,7 @@
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/styles/00-foundation.css" />
     <link rel="stylesheet" href="/static/styles/10-settings.css" />
-    <link rel="stylesheet" href="/static/styles/20-workbench.css" />
+    <link rel="stylesheet" href="/static/styles/20-workbench.css?v=20260609-source-list" />
     <link rel="stylesheet" href="/static/styles/30-viewer.css" />
     <link rel="stylesheet" href="/static/styles/40-gallery.css?v=20260609-source-preview" />
     <link rel="stylesheet" href="/static/styles/50-distribution.css" />
@@ -51,7 +51,17 @@
             </div>
             <details class="manual-path-edit">
               <summary data-i18n="source.pathInput"></summary>
-              <textarea id="folderInput" spellcheck="false"></textarea>
+              <input id="folderInput" type="hidden" />
+              <div id="folderList" class="source-folder-list"></div>
+              <div class="source-folder-add">
+                <input id="folderAddInput" class="text-input" type="text" spellcheck="false" data-i18n-placeholder="source.addFolderPlaceholder" />
+                <button id="folderAddBtn" class="icon-button" type="button" data-i18n-aria-label="source.addFolder" data-i18n-tooltip="source.addFolder">
+                  <span class="icon" data-icon="plus"></span>
+                </button>
+              </div>
+              <button id="clearFoldersBtn" class="button ghost source-clear-button" type="button">
+                <span class="icon" data-icon="trash"></span><span data-i18n="source.clearFolders"></span>
+              </button>
             </details>
           </div>
 
@@ -225,8 +235,10 @@
           </div>
           <div class="command-actions">
             <button id="mainScoreBtn" class="button primary command-button" type="button" disabled><span class="icon" data-icon="play"></span><span data-i18n="command.start"></span></button>
+            <button id="llmReviewBtn" class="button ghost command-button" type="button" disabled><span class="icon" data-icon="brain"></span><span data-i18n="command.startLlmReview"></span></button>
             <button id="commandNoticeActionBtn" class="button ghost command-notice-action is-hidden" type="button"><span class="icon" data-icon="undo"></span><span data-i18n="command.undo"></span></button>
             <button id="pauseJobBtn" class="button ghost is-hidden" type="button"><span class="icon" data-icon="pause"></span><span data-i18n="command.pause"></span></button>
+            <button id="cancelJobBtn" class="button ghost danger is-hidden" type="button"><span class="icon" data-icon="x"></span><span data-i18n="command.cancel"></span></button>
           </div>
         </section>
 
@@ -719,6 +731,6 @@
     <script src="/static/gallery_view.js?v=20260609-source-preview" defer></script>
     <script src="/static/distribution_view.js" defer></script>
     <script src="/static/viewer_inspector.js" defer></script>
-    <script src="/static/app.js?v=20260609-task-rules" defer></script>
+    <script src="/static/app.js?v=20260609-source-list" defer></script>
   </body>
 </html>

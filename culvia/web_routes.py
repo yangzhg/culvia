@@ -37,8 +37,10 @@ class WebRouteHandlers:
     api_clear_model: RouteEndpoint
     api_upload: RouteEndpoint
     api_score: RouteEndpoint
+    api_llm_review: RouteEndpoint
     api_job_pause: RouteEndpoint
     api_job_resume: RouteEndpoint
+    api_job_cancel: RouteEndpoint
     api_mark_photo: RouteEndpoint
     api_mark_color: RouteEndpoint
     api_mark_status: RouteEndpoint
@@ -76,8 +78,10 @@ APP_ROUTE_SPECS: tuple[RouteSpec, ...] = (
     RouteSpec("/api/model/clear", "api_clear_model", ("POST",)),
     RouteSpec("/api/upload", "api_upload", ("POST",)),
     RouteSpec("/api/score", "api_score", ("POST",)),
+    RouteSpec("/api/llm-review", "api_llm_review", ("POST",)),
     RouteSpec("/api/job/pause", "api_job_pause", ("POST",)),
     RouteSpec("/api/job/resume", "api_job_resume", ("POST",)),
+    RouteSpec("/api/job/cancel", "api_job_cancel", ("POST",)),
     RouteSpec("/api/mark", "api_mark_photo", ("POST",)),
     RouteSpec("/api/mark/color", "api_mark_color", ("POST",)),
     RouteSpec("/api/mark/status", "api_mark_status", ("POST",)),

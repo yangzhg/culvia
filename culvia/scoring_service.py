@@ -57,3 +57,29 @@ def start_scoring_job_action(
     )
     thread.start()
     return ScoringStartResult(job_id)
+
+
+def start_llm_review_job_action(
+    payload: dict[str, Any],
+    state_store: AppStateStore,
+    job_service: ScoringJobService,
+    *,
+    run_llm_review_job: RunScoringJob,
+    thread_factory: ThreadFactory,
+) -> ScoringStartResult:
+    job_id = job_service.reserve(
+        kind="llm_review",
+        phase="queued",
+        title="准备开始大模型评审",
+        detail="正在启动后台任务",
+    )
+    if not job_id:
+        raise ScoringStartError("scoringAlreadyRunning", "评分正在进行中", status_code=409)
+
+    thread = thread_factory(
+        target=run_llm_review_job,
+        args=(job_id, payload, state_store, job_service),
+        daemon=True,
+    )
+    thread.start()
+    return ScoringStartResult(job_id)

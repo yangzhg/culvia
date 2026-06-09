@@ -9,6 +9,10 @@ from typing import Any
 from culvia.app_state import AppStateStore
 
 
+class JobCancelled(Exception):
+    """Raised inside a scoring worker after the user requests cancellation."""
+
+
 class ScoringJobService:
     def __init__(
         self,
@@ -20,7 +24,7 @@ class ScoringJobService:
         self.state_store = state_store
         self.condition = condition or threading.Condition()
         self.context = context or threading.local()
-        self.control: dict[str, Any] = {"pauseRequested": False, "jobId": ""}
+        self.control: dict[str, Any] = {"pauseRequested": False, "cancelRequested": False, "jobId": ""}
 
     def active_thread_job_id(self) -> str:
         return str(getattr(self.context, "job_id", "") or "")
@@ -83,6 +87,7 @@ class ScoringJobService:
         with self.condition:
             self.control["jobId"] = job_id
             self.control["pauseRequested"] = False
+            self.control["cancelRequested"] = False
             self.condition.notify_all()
         return job_id
 
@@ -92,6 +97,7 @@ class ScoringJobService:
             if job_id is not None and active_job_id and active_job_id != job_id:
                 return
             self.control["pauseRequested"] = False
+            self.control["cancelRequested"] = False
             self.control["jobId"] = ""
             self.condition.notify_all()
 
@@ -126,10 +132,36 @@ class ScoringJobService:
         self.update(paused=False, phase="scoring", title="继续评分", detail="正在恢复任务")
         return True
 
+    def request_cancel(self) -> bool:
+        with self.state_store.lock:
+            job = self.state_store.data["job"]
+            if not job.get("running") or job.get("kind") not in {"scoring", "llm_review"}:
+                return False
+            job_id = str(job.get("jobId") or "")
+        if not job_id:
+            return False
+        with self.condition:
+            if str(self.control.get("jobId") or "") != job_id:
+                return False
+            self.control["pauseRequested"] = False
+            self.control["cancelRequested"] = True
+            self.condition.notify_all()
+        self.update(paused=False, phase="cancelling", title="正在取消", detail="当前阶段结束后会中止")
+        return True
+
+    def raise_if_cancelled(self) -> None:
+        job_id = self.active_thread_job_id()
+        with self.condition:
+            active_job_id = str(self.control.get("jobId") or "")
+            if self.control.get("cancelRequested") and (not job_id or active_job_id == job_id):
+                raise JobCancelled()
+
     def wait_if_paused(self, path: Path | None = None) -> None:
         job_id = self.active_thread_job_id()
         with self.condition:
             while self.control["pauseRequested"] and (not job_id or str(self.control.get("jobId") or "") == job_id):
+                if self.control.get("cancelRequested"):
+                    raise JobCancelled()
                 detail = f"已暂停 · {path.name}" if path is not None else "已暂停"
                 self.update(paused=True, phase="paused", title="已暂停", detail=detail)
                 self.condition.wait(timeout=0.5)

@@ -47,6 +47,7 @@ class SourcePreviewTests(unittest.TestCase):
             sanitize_uploaded_paths=lambda paths: [Path(str(path)) for path in paths],
             build_file_id=build_file_id,
             load_cache_records=lambda _cache_path: cached if cached is not None else pd.DataFrame(columns=CSV_COLUMNS),
+            save_source_config=lambda _config, _cache_path: {},
             normalize_score_dataframe=lambda frame: frame.reindex(columns=CSV_COLUMNS),
             make_empty_record=lambda path, file_id, error: make_empty_score_record(
                 path,
@@ -77,13 +78,13 @@ class SourcePreviewTests(unittest.TestCase):
             second = nested / "b.jpg"
             first.write_bytes(b"first")
             second.write_bytes(b"second")
-            second_id = build_file_id(second.resolve())
+            second_id = build_file_id(second.absolute())
             cached = pd.DataFrame(
                 [
                     {
                         "file_id": second_id,
-                        "path": str(second.resolve()),
-                        "folder": str(nested.resolve()),
+                        "path": str(second.absolute()),
+                        "folder": str(nested.absolute()),
                         "filename": "b.jpg",
                         "error": "",
                         "recommendation_0_10": 8.4,
@@ -210,6 +211,7 @@ class SourcePreviewTests(unittest.TestCase):
                 sanitize_uploaded_paths=lambda paths: [Path(str(path)) for path in paths],
                 build_file_id=build_file_id,
                 load_cache_records=lambda _cache_path: pd.DataFrame(columns=CSV_COLUMNS),
+                save_source_config=lambda _config, _cache_path: {},
                 normalize_score_dataframe=lambda frame: frame.reindex(columns=CSV_COLUMNS),
                 make_empty_record=lambda path, file_id, error: make_empty_score_record(
                     path,
@@ -245,11 +247,11 @@ class SourcePreviewTests(unittest.TestCase):
         store = Store()
         apply_source_preview_state(store, result)
 
-        self.assertEqual(store.data["source"]["folders"], [tmp])
+        self.assertEqual(store.data["source"]["folders"], [str(Path(tmp).absolute())])
         self.assertEqual(store.data["source"]["cachePath"], str(Path(tmp) / "scores.sqlite"))
         self.assertEqual(store.data["sourcePreview"]["total"], 1)
         self.assertTrue(store.data["sourcePreview"]["ready"])
-        self.assertEqual(store.data["sourcePreview"]["folders"], [tmp])
+        self.assertEqual(store.data["sourcePreview"]["folders"], [str(Path(tmp).absolute())])
         self.assertEqual(len(store.data["scores_df"]), 1)
 
 

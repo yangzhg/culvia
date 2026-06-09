@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
+
+from culvia.path_semantics import is_same_or_child_path, path_identity_key, stable_path
 
 
 DEFAULT_CACHE_SUFFIXES = (".sqlite", ".sqlite3", ".db")
@@ -22,6 +25,22 @@ def normalize_source_mode(value: object) -> str:
     return mode if mode in SOURCE_MODES else "folders"
 
 
+def _source_path_key(path: Path) -> str:
+    return path_identity_key(path)
+
+
+def _normalized_source_path(value: object) -> Path | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    expanded = os.path.expandvars(os.path.expanduser(raw.replace("\\", os.sep)))
+    return stable_path(expanded)
+
+
+def _is_relative_to(child: Path, parent: Path) -> bool:
+    return is_same_or_child_path(child, parent)
+
+
 def normalize_source_folders(value: object) -> list[str]:
     if isinstance(value, (str, bytes)) or value is None:
         items: Iterable[object] = str(value).splitlines() if value else []
@@ -31,15 +50,24 @@ def normalize_source_folders(value: object) -> list[str]:
         except TypeError:
             items = [value]
 
-    folders: list[str] = []
+    paths: list[Path] = []
     seen: set[str] = set()
     for item in items:
-        folder = str(item or "").strip()
-        if not folder or folder in seen:
+        path = _normalized_source_path(item)
+        if path is None:
             continue
-        folders.append(folder)
-        seen.add(folder)
-    return folders
+        key = _source_path_key(path)
+        if key in seen:
+            continue
+        paths.append(path)
+        seen.add(key)
+
+    pruned = [
+        path
+        for index, path in enumerate(paths)
+        if not any(index != other_index and _is_relative_to(path, other) for other_index, other in enumerate(paths))
+    ]
+    return [str(path) for path in pruned]
 
 
 def normalize_uploaded_path_values(value: object) -> list[object]:

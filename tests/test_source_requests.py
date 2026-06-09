@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from pathlib import Path
 
@@ -22,6 +23,18 @@ class SourceRequestTests(unittest.TestCase):
         self.assertEqual(normalize_source_folders([" /a ", "", "/a", Path("/b")]), ["/a", "/b"])
         self.assertEqual(normalize_source_folders(" /single "), ["/single"])
         self.assertEqual(normalize_source_folders(" /a \n\n /b \n /a "), ["/a", "/b"])
+
+    def test_normalize_source_folders_expands_and_removes_redundant_children(self) -> None:
+        home = str(Path.home())
+        result = normalize_source_folders(["~/photos/session", "~/photos", "~/photos/session/picks"])
+
+        self.assertEqual(result, [str(Path(home, "photos").absolute())])
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS exposes /var as a /private/var alias")
+    def test_normalize_source_folders_deduplicates_macos_var_aliases_but_preserves_first_text(self) -> None:
+        result = normalize_source_folders(["/var/folders", "/private/var/folders/example"])
+
+        self.assertEqual(result, ["/var/folders"])
 
     def test_normalize_uploaded_path_values_preserves_raw_values_for_sanitizer(self) -> None:
         path = Path("/tmp/a.jpg")
@@ -50,7 +63,7 @@ class SourceRequestTests(unittest.TestCase):
         )
 
         self.assertEqual(source.mode, "uploads")
-        self.assertEqual(source.folders, ["/photos"])
+        self.assertEqual(source.folders, [str(Path("/photos").absolute())])
         self.assertEqual(source.cache_path, "/tmp/scores.sqlite3")
         self.assertEqual(source.uploaded_paths, ["/tmp/a.jpg"])
 

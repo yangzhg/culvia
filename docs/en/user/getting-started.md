@@ -36,6 +36,12 @@ culvia-web --host 127.0.0.1 --port 8501
 5. Apply manual decisions: pick, hold, reject, star rating, and color label.
 6. Export selected photos or CSV results.
 
+## Photo Sources
+
+In folder mode, the source editor is a list of folder rows. You can add paths one at a time, paste multiple paths into the add field, edit an existing row, copy a full path, or remove a row without rewriting the whole source list. Culvia expands `~`, normalizes folder paths, removes duplicate child folders when a parent folder is already present, then scans subfolders and deduplicates photos by canonical path.
+
+In drop mode, dropping a folder recursively imports supported images from that folder as temporary uploads. Folder source choices are restored on the next app start when the current score library is a SQLite file.
+
 ## Manual Decisions
 
 Manual decisions are the final culling layer. Model and LLM scores help sort and explain, but they do not override your pick/hold/reject decisions.

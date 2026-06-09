@@ -7,7 +7,7 @@ import pandas as pd
 
 from culvia.app_state import AppStateStore, create_initial_state
 from culvia.job_service import ScoringJobService
-from culvia.scoring_service import ScoringStartError, start_scoring_job_action
+from culvia.scoring_service import ScoringStartError, start_llm_review_job_action, start_scoring_job_action
 
 
 def make_store() -> AppStateStore:
@@ -101,6 +101,28 @@ class ScoringServiceTests(unittest.TestCase):
         self.assertEqual(error.exception.error_code, "scoringAlreadyRunning")
         self.assertEqual(error.exception.status_code, 409)
         self.assertEqual(len(FakeThread.created), 1)
+
+    def test_start_llm_review_job_action_reserves_labeled_job(self) -> None:
+        store = make_store()
+        service = ScoringJobService(store)
+        payload = {"mode": "folders", "folders": ["/photos"]}
+
+        result = start_llm_review_job_action(
+            payload,
+            store,
+            service,
+            run_llm_review_job=lambda *_args: None,
+            thread_factory=FakeThread,
+        )
+
+        self.assertTrue(result.job_id)
+        self.assertEqual(len(FakeThread.created), 1)
+        self.assertTrue(FakeThread.created[0].started)
+        with store.lock:
+            self.assertTrue(store.data["job"]["running"])
+            self.assertEqual(store.data["job"]["kind"], "llm_review")
+            self.assertEqual(store.data["job"]["phase"], "queued")
+            self.assertEqual(store.data["job"]["title"], "准备开始大模型评审")
 
 
 if __name__ == "__main__":

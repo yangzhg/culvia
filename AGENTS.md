@@ -60,6 +60,7 @@ For Chinese user-facing docs, see `README.zh-CN.md` and `docs/zh-CN/`.
 ## Source, Scoring, And Refresh Rules
 
 - Photo source preview is a backend job. It scans folders recursively, deduplicates canonical paths, reuses existing SQLite score rows, and creates unscored preview rows for new photos.
+- Keep user/source/photo paths stable for display, cache rows, file IDs, and API payloads. Do not use `Path.resolve()` as user-facing normalization because macOS rewrites `/var` to `/private/var`. Use `culvia.path_semantics.stable_path()` for stored/display paths, and use `path_identity_key()` or `is_same_or_child_path()` only for deduplication, containment, or security comparisons.
 - Gallery thumbnails are generated on demand; the UI should not load full-resolution images for thumbnail grids.
 - Scoring is a backend job. Page refresh must not be treated as task cancellation while the backend process is still alive.
 - The frontend restores running task state from `/api/state` and polls while `job.running` is true.

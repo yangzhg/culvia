@@ -15,6 +15,9 @@ from culvia.cache_schema import (
     INSIGHT_TABLE,
     LLM_CONFIG_STORAGE_KEYS,
     SQLITE_CACHE_EXTENSIONS,
+    SOURCE_CONFIG_STORAGE_KEYS,
+    json_dumps,
+    json_loads,
 )
 from culvia.cache_records import ScoreCacheStore
 from culvia.image_io import (
@@ -168,6 +171,7 @@ from culvia.schema import (
     score_column,
     score_columns_for_fields,
 )
+from culvia.source_requests import normalize_cache_path, normalize_source_folders, normalize_source_mode
 from culvia.score_records import (
     apply_dual_scale_scores,
     apply_single_scale_scores,
@@ -377,6 +381,29 @@ ANALYSIS_INSIGHT_STORE = AnalysisInsightStore(schema_ensurer=_ensure_cache_schem
 LLM_CONFIG_STORE = AppConfigStore(schema_ensurer=_ensure_cache_schema, clean_config=_clean_llm_config)
 
 
+def _clean_source_config(config: Mapping[str, object] | None) -> dict[str, str]:
+    source = dict(config or {})
+    if not any(key in source for key in ("mode", "folders", "folders_json", "cache_path", "cachePath")):
+        return {}
+    mode = normalize_source_mode(source.get("mode"))
+    folders_value = source.get("folders")
+    if folders_value is None:
+        folders_value = json_loads(source.get("folders_json"), [])
+    folders = normalize_source_folders(folders_value)
+    cleaned: dict[str, str] = {"mode": mode, "folders_json": json_dumps(folders)}
+    cache_path = str(source.get("cache_path") or source.get("cachePath") or "").strip()
+    if cache_path:
+        cleaned["cache_path"] = cache_path
+    return cleaned
+
+
+SOURCE_CONFIG_STORE = AppConfigStore(
+    schema_ensurer=_ensure_cache_schema,
+    clean_config=_clean_source_config,
+    storage_keys=SOURCE_CONFIG_STORAGE_KEYS,
+)
+
+
 def _load_cache_sqlite(cache_path: str | Path) -> pd.DataFrame:
     return SCORE_CACHE_STORE.load_sqlite(cache_path)
 
@@ -401,6 +428,37 @@ def load_llm_config_from_sqlite(cache_path: str | Path) -> dict[str, str]:
 
 def save_llm_config_to_sqlite(config: Mapping[str, object], cache_path: str | Path) -> dict[str, str]:
     return LLM_CONFIG_STORE.save(config, cache_path)
+
+
+def load_source_config_from_sqlite(cache_path: str | Path) -> dict[str, object]:
+    loaded = SOURCE_CONFIG_STORE.load(cache_path)
+    folders = normalize_source_folders(json_loads(loaded.get("folders_json"), []))
+    if not loaded and not folders:
+        return {}
+    config: dict[str, object] = {
+        "mode": normalize_source_mode(loaded.get("mode")),
+        "folders": folders,
+    }
+    if loaded.get("cache_path"):
+        try:
+            config["cachePath"] = normalize_cache_path(loaded.get("cache_path"), default_cache_path=cache_path)
+        except ValueError:
+            config["cachePath"] = str(cache_path)
+    return config
+
+
+def save_source_config_to_sqlite(config: Mapping[str, object], cache_path: str | Path) -> dict[str, object]:
+    if normalize_source_mode(config.get("mode")) != "folders":
+        return load_source_config_from_sqlite(cache_path)
+    saved = SOURCE_CONFIG_STORE.save(
+        {
+            "mode": config.get("mode"),
+            "folders": config.get("folders"),
+            "cache_path": config.get("cachePath") or cache_path,
+        },
+        cache_path,
+    )
+    return load_source_config_from_sqlite(cache_path) if saved else {}
 
 
 def load_cache_records(cache_path: str | Path) -> pd.DataFrame:
@@ -588,6 +646,10 @@ def _apply_clip_reference_scores(record: dict[str, object], scores: dict[str, fl
 
 def _apply_llm_review_scores(record: dict[str, object], scores: Mapping[str, float]) -> dict[str, object]:
     return apply_single_scale_scores(record, fields=LLM_REVIEW_FIELDS, scores=scores, only_present=True)
+
+
+def apply_llm_review_scores(record: dict[str, object], scores: Mapping[str, float]) -> dict[str, object]:
+    return _apply_llm_review_scores(record, scores)
 
 
 def _score_image_path_dependencies() -> ScoreImagePathDependencies:
