@@ -50,7 +50,7 @@ class FrontendCommandViewTests(unittest.TestCase):
             """
             const waiting = view.commandViewState({ sourceReady: false, model: { label: "等待", downloaded: false } });
             if (waiting.title !== "先选择照片来源") throw new Error("waiting title is wrong");
-            if (!waiting.mainScore.disabled || waiting.mainScore.label !== "准备模型并评分") {
+            if (!waiting.mainScore.disabled || waiting.mainScore.label !== "准备评分") {
               throw new Error("waiting main score state is wrong");
             }
             if (!waiting.llmReview.disabled) throw new Error("waiting LLM review should be disabled");
@@ -63,10 +63,10 @@ class FrontendCommandViewTests(unittest.TestCase):
             if (ready.title !== "可以开始评分" || ready.mainScore.disabled) {
               throw new Error("ready command state is wrong");
             }
-            if (ready.mainScore.icon !== "play" || ready.mainScore.label !== "开始评分") {
+            if (ready.mainScore.icon !== "play" || ready.mainScore.label !== "评分") {
               throw new Error("ready button state is wrong");
             }
-            if (ready.llmReview.disabled || ready.llmReview.label !== "大模型评审") {
+            if (ready.llmReview.disabled || ready.llmReview.label !== "AI评审") {
               throw new Error("ready LLM review button state is wrong");
             }
 

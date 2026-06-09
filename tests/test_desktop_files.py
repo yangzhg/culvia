@@ -10,6 +10,7 @@ from culvia.desktop_files import (
     DesktopActionUnsupported,
     choose_folder_path,
     choose_folder_paths,
+    open_path_with_default_app,
     reveal_path_in_file_manager,
 )
 
@@ -171,6 +172,54 @@ class DesktopFilesTests(unittest.TestCase):
         )
 
         runner.assert_called_once_with(["xdg-open", "/home/me/Pictures"], check=False)
+
+    def test_open_file_rejects_unsupported_platform_without_running_command(self) -> None:
+        runner = Mock()
+
+        with self.assertRaises(DesktopActionUnsupported):
+            open_path_with_default_app("/tmp/a.jpg", platform="linux", which=lambda _: None, runner=runner)
+
+        runner.assert_not_called()
+
+    def test_open_file_uses_macos_default_app_command(self) -> None:
+        runner = Mock(return_value=subprocess.CompletedProcess(["open"], 0))
+
+        open_path_with_default_app(
+            Path("/Users/me/Pictures/a.jpg"),
+            platform="darwin",
+            which=lambda command: "/usr/bin/open" if command == "open" else None,
+            runner=runner,
+        )
+
+        runner.assert_called_once_with(["open", "/Users/me/Pictures/a.jpg"], check=False)
+
+    def test_open_file_uses_windows_start_process_command(self) -> None:
+        runner = Mock(return_value=subprocess.CompletedProcess(["powershell"], 0))
+
+        open_path_with_default_app(
+            Path("C:/Users/me/Pictures/a.jpg"),
+            platform="win32",
+            which=lambda command: "powershell.exe" if command == "powershell" else None,
+            runner=runner,
+        )
+
+        command = runner.call_args.args[0]
+        kwargs = runner.call_args.kwargs
+        self.assertEqual(command[0], "powershell")
+        self.assertIn("Start-Process", command[-1])
+        self.assertEqual(kwargs["env"]["CULVIA_OPEN_FILE_PATH"], "C:/Users/me/Pictures/a.jpg")
+
+    def test_open_file_uses_linux_xdg_open_file(self) -> None:
+        runner = Mock(return_value=subprocess.CompletedProcess(["xdg-open"], 0))
+
+        open_path_with_default_app(
+            Path("/home/me/Pictures/a.jpg"),
+            platform="linux",
+            which=lambda command: "/usr/bin/xdg-open" if command == "xdg-open" else None,
+            runner=runner,
+        )
+
+        runner.assert_called_once_with(["xdg-open", "/home/me/Pictures/a.jpg"], check=False)
 
 
 if __name__ == "__main__":

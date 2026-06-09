@@ -83,6 +83,7 @@ let sourcePreviewTimer = null;
 let sourcePreviewRequestId = 0;
 let sourcePreviewLoading = false;
 let sourcePreviewPending = false;
+let desktopDropHandledUntil = 0;
 let curationHistoryLoading = false;
 let curationHistoryError = "";
 let shortcutHelpOpen = false;
@@ -563,6 +564,10 @@ function manualStatusLabel(status) {
   if (normalized === "hold") return t("manual.status.hold");
   if (normalized === "reject") return t("manual.status.reject");
   return t("manual.status.unreviewed");
+}
+
+function manualStatusClass(status) {
+  return manualStatus.statusClass(status);
 }
 
 function manualStatusBadgeLabel(status, fallbackLabel) {
@@ -1436,6 +1441,85 @@ function renderScoreRows(photo) {
   });
 }
 
+function fallbackScoreRowsMarkup(photo, error) {
+  const scoreTexts = photo?.scoreTexts || {};
+  const technicalTexts = photo?.technicalTexts || {};
+  const modelQualityTexts = photo?.modelQualityTexts || {};
+  const aestheticReferenceTexts = photo?.aestheticReferenceTexts || {};
+  const llmReviewTexts = photo?.llmReviewTexts || {};
+  const row = (field, text, missing = t("score.notCalculated")) => {
+    const label = t(metricLabelKeys[field] || `sort.${field}_0_10`);
+    const value = localizedMetricText(text, missing);
+    return `
+      <div class="score-row">
+        <span class="score-name"${textHintAttributes(label)}>${escapeHtml(label)}</span>
+        <span class="score-stars">☆☆☆☆☆</span>
+        <span class="score-num ${text ? "" : "is-missing"}"${textHintAttributes(value)}>${escapeHtml(value)}</span>
+      </div>
+    `;
+  };
+  const group = (title, rows) => {
+    const body = rows.filter(Boolean).join("");
+    return body
+      ? `
+        <div class="score-group">
+          <div class="score-group-title">
+            <div><span>${escapeHtml(title)}</span></div>
+          </div>
+          ${body}
+        </div>
+      `
+      : "";
+  };
+  const fileName = pathName(photo?.path || "");
+  const errorText = error?.message || String(error || "");
+  return `
+    <div class="score-detail-toolbar">
+      <span>${escapeHtml(t("score.detailTitle"))}</span>
+      ${errorText ? `<small class="score-render-error">${escapeHtml(errorText)}</small>` : ""}
+    </div>
+    <div class="score-detail-panel" role="tabpanel">
+      ${group(t("score.core.title"), [
+        row("overall", photo?.overallText),
+        row("quality", scoreTexts.quality),
+        row("composition", scoreTexts.composition),
+        row("lighting", scoreTexts.lighting),
+        row("color", scoreTexts.color),
+        row("depth_of_field", scoreTexts.depth_of_field),
+        row("content", scoreTexts.content),
+      ])}
+      ${group(t("score.aestheticReference.title"), [
+        row("clip_aesthetic", aestheticReferenceTexts.clip_aesthetic),
+        row("clip_relevance", aestheticReferenceTexts.clip_relevance),
+      ])}
+      ${group(t("score.technical.title"), [
+        row("clip_iqa_overall", modelQualityTexts.clip_iqa_overall),
+        row("technical_overall", technicalTexts.technical_overall),
+        row("exposure", technicalTexts.exposure),
+        row("sharpness", technicalTexts.sharpness),
+        row("noise", technicalTexts.noise),
+      ])}
+      ${group(t("score.llm.title"), [
+        row("llm_review_overall", llmReviewTexts.llm_review_overall, t("score.notReviewed")),
+        row("llm_aesthetic", llmReviewTexts.llm_aesthetic, t("score.notReviewed")),
+        row("llm_technical", llmReviewTexts.llm_technical, t("score.notReviewed")),
+      ])}
+      <div class="score-group">
+        <div class="score-group-title">
+          <div><span>${escapeHtml(t("score.file.title"))}</span></div>
+          <strong${textHintAttributes(fileName)}>${escapeHtml(fileName || t("score.noData"))}</strong>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderScoreRowsFallback(photo, error) {
+  const container = $("#scoreRows");
+  if (!container) return;
+  container.innerHTML = fallbackScoreRowsMarkup(photo, error);
+}
+
 function renderSignalChips(photo) {
   const container = $("#signalChips");
   if (!container) return;
@@ -1443,6 +1527,67 @@ function renderSignalChips(photo) {
     llmModel: appState.llm?.model || "",
   });
 }
+
+function renderFilmstrip(photos, activeIndex) {
+  const filmstrip = $("#filmstrip");
+  if (!filmstrip) return;
+  if (!photos.length) {
+    filmstrip.innerHTML = "";
+    return;
+  }
+  filmstrip.classList.remove("is-hidden");
+  const windowRange = filmstripWindow(photos, activeIndex);
+  const visibleThumbs = photos.slice(windowRange.start, windowRange.end);
+  const leadingCount = windowRange.start;
+  const trailingCount = photos.length - windowRange.end;
+  filmstrip.innerHTML = `
+    ${leadingCount ? `<div class="thumb-window-edge">${escapeHtml(t("viewer.beforeCount", { count: leadingCount }))}</div>` : ""}
+    ${visibleThumbs
+    .map(
+      (item, offset) => {
+        const index = windowRange.start + offset;
+        const itemLevel = localizedScoreLevel(item.level);
+        const thumbHint = `${itemLevel} · ${item.recommendationText || item.overallText}`;
+        return `
+        <button class="thumb ${index === activeIndex ? "is-active" : ""}" type="button" data-index="${index}" aria-label="${escapeHtml(thumbHint)}" data-ui-tooltip="${escapeHtml(thumbHint)}">
+          <img src="${item.thumb}" alt="${escapeHtml(t("viewer.thumbAlt"))}" loading="lazy" />
+          <span>${item.recommendationText || item.overallText}</span>
+          ${manualBadgeMarkup(item.manual, true)}
+        </button>
+      `;
+      },
+    )
+    .join("")}
+    ${trailingCount ? `<div class="thumb-window-edge">${escapeHtml(t("viewer.afterCount", { count: trailingCount }))}</div>` : ""}
+  `;
+  filmstrip.querySelectorAll(".thumb").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedIndex = Number(button.dataset.index);
+      renderViewer();
+    });
+  });
+  syncActiveThumbnail(filmstrip);
+}
+
+function renderViewerInspector(photo) {
+  try {
+    renderManualControls(photo);
+  } catch (error) {
+    console.error("Failed to render manual controls", error);
+  }
+  try {
+    renderSignalChips(photo);
+  } catch (error) {
+    console.error("Failed to render score signals", error);
+  }
+  try {
+    renderScoreRows(photo);
+  } catch (error) {
+    console.error("Failed to render score details", error);
+    renderScoreRowsFallback(photo, error);
+  }
+}
+
 function syncActiveThumbnail(filmstrip, behavior = "auto") {
   const activeThumb = filmstrip?.querySelector(".thumb.is-active");
   if (!activeThumb) return;
@@ -1560,6 +1705,7 @@ function renderViewer() {
 
   empty.classList.add("is-hidden");
   stage.classList.remove("is-hidden");
+  filmstrip.classList.remove("is-hidden");
   const photo = selectedPhoto();
   const mainImage = $("#mainImage");
   mainImage.onload = () => {
@@ -1578,7 +1724,14 @@ function renderViewer() {
   setText("#viewerLevel", currentLevel);
   $("#viewerLevel").dataset.uiTooltip = currentLevel;
   $("#viewerLevel").removeAttribute("title");
-  $("#previewLink").href = photo.preview;
+  const previewLink = $("#previewLink");
+  const nativePreviewSupported = appState?.capabilities?.nativeFilePreview === true;
+  previewLink.href = photo.preview;
+  previewLink.dataset.nativePreview = nativePreviewSupported ? "true" : "false";
+  const previewTitle = nativePreviewSupported ? t("viewer.previewNativeSupported") : t("viewer.previewWebSupported");
+  previewLink.setAttribute("aria-label", previewTitle);
+  previewLink.dataset.uiTooltip = previewTitle;
+  previewLink.removeAttribute("title");
   const revealSupported = appState?.capabilities?.revealInFileManager !== false;
   $("#revealBtn").disabled = !revealSupported;
   const revealTitle = revealSupported ? t("viewer.revealSupported") : t("viewer.revealUnsupported");
@@ -1587,41 +1740,8 @@ function renderViewer() {
   $("#revealBtn").removeAttribute("title");
   $("#prevBtn").disabled = selectedIndex <= 0;
   $("#nextBtn").disabled = selectedIndex >= photos.length - 1;
-  renderManualControls(photo);
-  renderSignalChips(photo);
-  renderScoreRows(photo);
-
-  const windowRange = filmstripWindow(photos, selectedIndex);
-  const visibleThumbs = photos.slice(windowRange.start, windowRange.end);
-  const leadingCount = windowRange.start;
-  const trailingCount = photos.length - windowRange.end;
-  filmstrip.innerHTML = `
-    ${leadingCount ? `<div class="thumb-window-edge">${escapeHtml(t("viewer.beforeCount", { count: leadingCount }))}</div>` : ""}
-    ${visibleThumbs
-    .map(
-      (item, offset) => {
-        const index = windowRange.start + offset;
-        const itemLevel = localizedScoreLevel(item.level);
-        const thumbHint = `${itemLevel} · ${item.recommendationText || item.overallText}`;
-        return `
-        <button class="thumb ${index === selectedIndex ? "is-active" : ""}" type="button" data-index="${index}" aria-label="${escapeHtml(thumbHint)}" data-ui-tooltip="${escapeHtml(thumbHint)}">
-          <img src="${item.thumb}" alt="${escapeHtml(t("viewer.thumbAlt"))}" loading="lazy" />
-          <span>${item.recommendationText || item.overallText}</span>
-          ${manualBadgeMarkup(item.manual, true)}
-        </button>
-      `;
-      },
-    )
-    .join("")}
-    ${trailingCount ? `<div class="thumb-window-edge">${escapeHtml(t("viewer.afterCount", { count: trailingCount }))}</div>` : ""}
-  `;
-  filmstrip.querySelectorAll(".thumb").forEach((button) => {
-    button.addEventListener("click", () => {
-      selectedIndex = Number(button.dataset.index);
-      renderViewer();
-    });
-  });
-  syncActiveThumbnail(filmstrip);
+  renderFilmstrip(photos, selectedIndex);
+  renderViewerInspector(photo);
 }
 
 function moveSelection(delta) {
@@ -3032,6 +3152,10 @@ function uploadFileName(file) {
   return file?.webkitRelativePath || file?.relativePath || file?.name || "upload";
 }
 
+function hasRelativeUploadPath(file) {
+  return Boolean(file?.webkitRelativePath || file?.relativePath);
+}
+
 function annotateDroppedFile(file, relativePath) {
   if (!relativePath || file.webkitRelativePath) return file;
   try {
@@ -3091,16 +3215,80 @@ async function filesFromDataTransfer(dataTransfer) {
   return files.length ? files : Array.from(dataTransfer?.files || []);
 }
 
+async function loadUploadedSourcePreview(savedPaths) {
+  const uploadedPaths = uniqueFolderList(savedPaths || []);
+  if (!uploadedPaths.length || appState?.job?.running) return;
+  sourcePreviewRequestId += 1;
+  sourcePreviewLoading = true;
+  sourcePreviewPending = false;
+  sourceMode = "uploads";
+  if (appState?.source) {
+    appState.source = {
+      ...(appState.source || {}),
+      mode: "uploads",
+      uploadedPaths,
+    };
+  }
+  render();
+  try {
+    appState = await postJson("/api/source/preview", {
+      mode: "uploads",
+      folders: foldersFromInput(),
+      cachePath: $("#cacheInput").value.trim(),
+      uploadedPaths,
+    });
+    sourceInputsDirty = false;
+    selectedIndex = 0;
+    syncPollTimer();
+    await loadState();
+  } catch (error) {
+    showCommandNotice(
+      {
+        tone: "danger",
+        state: t("source.previewFailedState"),
+        title: t("source.previewFailedTitle"),
+        detail: errorMessage(error),
+      },
+      4200,
+    );
+  } finally {
+    sourcePreviewLoading = false;
+    render();
+    syncPollTimer();
+  }
+}
+
 async function uploadFiles(fileList) {
   if (appState?.job?.running) return;
   const files = Array.from(fileList || []);
   if (!files.length) return;
+  const containsDirectoryUpload = files.some(hasRelativeUploadPath);
   const form = new FormData();
   files.forEach((file) => form.append("files", file, uploadFileName(file)));
-  $("#uploadHint").textContent = t("source.uploading");
+  $("#uploadHint").textContent = containsDirectoryUpload ? t("source.uploadingFolder") : t("source.uploading");
   const result = await apiClient.uploadForm("/api/upload", form);
   $("#uploadHint").textContent = t("source.uploadedCount", { count: Number(result.count || 0) });
-  await loadState();
+  if ((result.saved || []).length) {
+    await loadUploadedSourcePreview(result.saved || []);
+  } else {
+    await loadState();
+  }
+}
+
+function handleDesktopDroppedPaths(paths) {
+  const droppedPaths = uniqueFolderList(paths || []);
+  if (!droppedPaths.length || appState?.job?.running) return;
+  desktopDropHandledUntil = Date.now() + 1500;
+  addFolderEntries(droppedPaths, { previewDelay: 80 });
+  showCommandNotice(
+    {
+      tone: "ready",
+      state: t("source.desktopDropState"),
+      title: t("source.desktopDropTitle"),
+      detail: t("source.desktopDropDetail", { count: droppedPaths.length }),
+    },
+    2600,
+  );
 }
 
 function sourcePreviewPayload() {
@@ -3133,9 +3321,11 @@ function scheduleSourcePreview(delay = 240) {
 }
 
 async function loadSourcePreview(payload = sourcePreviewPayload(), requestId = ++sourcePreviewRequestId, options = {}) {
-  if (!appState || appState.job?.running || payload.mode !== "folders") return;
-  const sourceSnapshot = sourceInputSnapshot();
-  const showLoading = options.showLoading !== false && Boolean((payload.folders || []).length);
+  const mode = payload.mode || "folders";
+  if (!appState || appState.job?.running || !["folders", "uploads"].includes(mode)) return;
+  const hasSource = mode === "uploads" ? Boolean((payload.uploadedPaths || []).length) : Boolean((payload.folders || []).length);
+  const sourceSnapshot = mode === "folders" ? sourceInputSnapshot() : null;
+  const showLoading = options.showLoading !== false && hasSource;
   sourcePreviewLoading = showLoading;
   if (showLoading) {
     render();
@@ -3144,7 +3334,7 @@ async function loadSourcePreview(payload = sourcePreviewPayload(), requestId = +
     const response = await postJson("/api/source/preview", payload);
     if (requestId !== sourcePreviewRequestId) return;
     appState = response;
-    applySourceInputSnapshot(sourceSnapshot);
+    if (sourceSnapshot) applySourceInputSnapshot(sourceSnapshot);
     selectedIndex = 0;
     sourcePreviewLoading = false;
     syncPollTimer();
@@ -4337,6 +4527,23 @@ async function revealPhoto(photo) {
   await postJson("/api/reveal", { path: photo.path });
 }
 
+async function openPhotoPreview(photo) {
+  if (!photo?.path) return;
+  try {
+    await postJson("/api/open-file", { path: photo.path });
+  } catch (error) {
+    showCommandNotice(
+      {
+        tone: "danger",
+        state: t("viewer.previewFailedState"),
+        title: t("viewer.previewFailedTitle"),
+        detail: errorMessage(error) || t("viewer.previewFailedDetail"),
+      },
+      4200,
+    );
+  }
+}
+
 async function copyFileFolderPath(folderPath) {
   const path = String(folderPath || "").trim();
   if (!path) return;
@@ -4458,9 +4665,12 @@ function bindEvents() {
     });
   });
   dropzone.addEventListener("drop", (event) => {
-    if (!appState?.job?.running) {
+    if (!appState?.job?.running && Date.now() > desktopDropHandledUntil) {
       void filesFromDataTransfer(event.dataTransfer).then((files) => uploadFiles(files));
     }
+  });
+  window.addEventListener("culvia-desktop-drop", (event) => {
+    handleDesktopDroppedPaths(event.detail?.paths || []);
   });
 
   $("#mainScoreBtn").addEventListener("click", startScoring);
@@ -4622,6 +4832,11 @@ function bindEvents() {
   $("#exportPreflight").addEventListener("click", handleExportPreflightClick);
   $("#exportResult").addEventListener("click", handleExportResultClick);
   $("#exportSelectedBtn").addEventListener("click", exportSelectedPhotos);
+  $("#previewLink").addEventListener("click", (event) => {
+    if (appState?.capabilities?.nativeFilePreview !== true) return;
+    event.preventDefault();
+    void openPhotoPreview(selectedPhoto());
+  });
   $("#revealBtn").addEventListener("click", () => revealPhoto(selectedPhoto()));
   window.addEventListener("culvia:languagechange", () => render());
 

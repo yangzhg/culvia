@@ -1147,6 +1147,7 @@ class ServerSmokeTests(unittest.TestCase):
                 patch("culvia.desktop_files.subprocess.run") as run,
             ):
                 reveal_response = client.post("/api/reveal", json={"path": str(scored_outside)})
+                open_file_response = client.post("/api/open-file", json={"path": str(scored_outside)})
 
             self.assertEqual(allowed_response.status_code, 200)
             self.assertEqual(scored_response.status_code, 200)
@@ -1171,7 +1172,9 @@ class ServerSmokeTests(unittest.TestCase):
             self.assertEqual(thumbnail_denied_json_response.status_code, 403)
             self.assertEqual(thumbnail_denied_json_response.json()["errorCode"], "thumbnailAccessDenied")
             self.assertEqual(reveal_response.status_code, 200)
-            run.assert_called_once()
+            self.assertEqual(open_file_response.status_code, 200)
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args_list[1].args[0], ["open", str(scored_outside.resolve())])
             with culvia_app.STATE_LOCK:
                 self.assertTrue(culvia_app.STATE["scores_df"].equals(original_global_scores))
                 self.assertEqual(culvia_app.STATE["source"], original_global_source)
@@ -1188,8 +1191,10 @@ class ServerSmokeTests(unittest.TestCase):
         self.assertEqual(payload["mode"], "local")
         self.assertEqual(payload["platform"], "linux")
         self.assertTrue(payload["web"])
+        self.assertFalse(payload["desktopApp"])
         self.assertFalse(payload["nativeFolderPicker"])
         self.assertFalse(payload["revealInFileManager"])
+        self.assertFalse(payload["nativeFilePreview"])
 
     def test_state_payload_includes_capabilities(self) -> None:
         response = self._client.get("/api/state")
@@ -1197,8 +1202,10 @@ class ServerSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         capabilities = response.json()["capabilities"]
         self.assertEqual(capabilities["mode"], "local")
+        self.assertIn("desktopApp", capabilities)
         self.assertIn("nativeFolderPicker", capabilities)
         self.assertIn("revealInFileManager", capabilities)
+        self.assertIn("nativeFilePreview", capabilities)
 
     def test_native_folder_picker_has_predictable_unsupported_response(self) -> None:
         with (
@@ -1260,6 +1267,32 @@ class ServerSmokeTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["errorCode"], "revealOutsideSource")
+
+    def test_open_file_rejects_files_outside_current_photo_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "outside.jpg"
+            path.write_bytes(b"not really an image")
+            original_source = dict(culvia_app.STATE["source"])
+            original_scores = culvia_app.STATE["scores_df"].copy()
+            try:
+                with culvia_app.STATE_LOCK:
+                    culvia_app.STATE["source"].update({"mode": "folders", "folders": [], "uploadedPaths": []})
+                    culvia_app.STATE["scores_df"] = pd.DataFrame(columns=scoring.CSV_COLUMNS)
+                with (
+                    patch("culvia.capabilities.sys.platform", "darwin"),
+                    patch("culvia.capabilities.shutil.which", return_value="/usr/bin/open"),
+                    patch("culvia.desktop_files.subprocess.run") as run,
+                ):
+                    response = self._client.post("/api/open-file", json={"path": str(path)})
+            finally:
+                with culvia_app.STATE_LOCK:
+                    culvia_app.STATE["source"].clear()
+                    culvia_app.STATE["source"].update(original_source)
+                    culvia_app.STATE["scores_df"] = original_scores
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["errorCode"], "openFileOutsideSource")
+        run.assert_not_called()
 
     def test_reveal_allows_export_destination_directories_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

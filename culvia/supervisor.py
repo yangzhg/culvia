@@ -192,7 +192,7 @@ def parse_args(argv: Sequence[str] | None = None) -> SupervisorConfig:
     parser.add_argument(
         "--port",
         default=os.environ.get("CULVIA_PORT", str(DEFAULT_PORT)),
-        help="端口号；传 auto 时自动选择可用端口",
+        help="端口号；auto 优先默认端口，random 选择任意可用端口",
     )
     parser.add_argument("--no-open", action="store_true", help="启动后不自动打开浏览器")
     parser.add_argument("--print-json", action="store_true", help="健康检查通过后输出机器可读的 ready JSON")
@@ -202,7 +202,13 @@ def parse_args(argv: Sequence[str] | None = None) -> SupervisorConfig:
     parser.add_argument("--health-timeout", type=float, default=20.0)
     args = parser.parse_args(argv)
 
-    port = find_available_port(args.host, DEFAULT_PORT) if str(args.port).lower() == "auto" else int(args.port)
+    port_text = str(args.port).lower()
+    if port_text == "auto":
+        port = find_available_port(args.host, DEFAULT_PORT)
+    elif port_text == "random":
+        port = find_available_port(args.host, 0)
+    else:
+        port = int(args.port)
     return SupervisorConfig(
         target=ServerTarget(args.host, port),
         open_browser=not args.no_open,

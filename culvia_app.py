@@ -32,6 +32,7 @@ from culvia.desktop_files import (
     DesktopActionUnsupported,
     choose_folder_path,
     choose_folder_paths,
+    open_path_with_default_app,
     reveal_path_in_file_manager,
 )
 from culvia.export_service import (
@@ -1573,6 +1574,25 @@ async def api_pick_export_folder(request: Request) -> JSONResponse:
     return await choose_folder("选择导出目录")
 
 
+def authorized_media_path_from_payload(
+    payload: dict[str, Any], request: Request, *, denied_code: str, denied_message: str
+) -> tuple[Path | None, JSONResponse | None]:
+    try:
+        path = Path(str(payload.get("path") or "")).expanduser().resolve()
+    except Exception:
+        return None, api_error_response("pathInvalid", "路径不可用", status_code=400)
+    if not path.exists():
+        return None, api_error_response("fileMissing", "文件不存在", status_code=404, params={"path": str(path)})
+    state_store = request_state_store(request)
+    with state_store.lock:
+        state = state_store.data
+        source = dict(state.get("source", {}))
+        scores_df = normalize_score_dataframe(state["scores_df"]).copy()
+    if not is_allowed_media_path(path, source, scores_df):
+        return None, api_error_response(denied_code, denied_message, status_code=403, params={"path": str(path)})
+    return path, None
+
+
 async def api_reveal(request: Request) -> JSONResponse:
     payload = await request.json()
     try:
@@ -1606,6 +1626,25 @@ async def api_reveal(request: Request) -> JSONResponse:
         )
     try:
         reveal_path_in_file_manager(path)
+    except DesktopActionUnsupported as exc:
+        return api_error_response("desktopActionUnsupported", str(exc), status_code=501, params={"reason": str(exc)})
+    except DesktopActionError as exc:
+        return api_error_response("desktopActionFailed", str(exc), status_code=500, params={"reason": str(exc)})
+    return JSONResponse({"ok": True})
+
+
+async def api_open_file(request: Request) -> JSONResponse:
+    payload = await request.json()
+    path, error = authorized_media_path_from_payload(
+        payload,
+        request,
+        denied_code="openFileOutsideSource",
+        denied_message="只能预览当前照片来源中的文件。",
+    )
+    if error is not None:
+        return error
+    try:
+        open_path_with_default_app(path)
     except DesktopActionUnsupported as exc:
         return api_error_response("desktopActionUnsupported", str(exc), status_code=501, params={"reason": str(exc)})
     except DesktopActionError as exc:
@@ -1653,6 +1692,7 @@ def route_handlers() -> WebRouteHandlers:
         api_pick_folders=api_pick_folders,
         api_pick_export_folder=api_pick_export_folder,
         api_reveal=api_reveal,
+        api_open_file=api_open_file,
     )
 
 

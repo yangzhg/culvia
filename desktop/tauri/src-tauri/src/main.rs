@@ -15,13 +15,19 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tauri::{Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    DragDropEvent, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    WindowEvent,
+};
 
 const BACKEND_STEM: &str = "culvia-server";
 const BACKEND_RUNTIME_ROOT: &str = "runtime/backend";
 const MAIN_WINDOW_LABEL: &str = "main";
 const DEV_BACKEND_URL: &str = "http://127.0.0.1:8501";
 const HEALTH_PATH: &str = "/health";
+const DESKTOP_DROP_EVENT: &str = "culvia-desktop-drop";
+const DESKTOP_BACKEND_PORT: &str = "random";
+const DESKTOP_APP_ENV: &str = "CULVIA_DESKTOP_APP";
 const RUNTIME_MODE_ENV: &str = "CULVIA_DESKTOP_RUNTIME_MODE";
 const DEFAULT_RUNTIME_MODE: Option<&str> = option_env!("CULVIA_DESKTOP_DEFAULT_RUNTIME_MODE");
 const RUNTIME_HOME_ENV: &str = "CULVIA_RUNTIME_HOME";
@@ -851,20 +857,22 @@ fn start_production_backend(
     let path = backend_path_by_resource(resource_dir)?;
     set_status("Starting service", 2, SPLASH_STEPS);
     let backend_health_timeout = backend_health_timeout_from_env().as_secs().to_string();
-    let mut child = Command::new(path)
+    let mut command = Command::new(path);
+    command
         .args([
             "--host",
             "127.0.0.1",
             "--port",
-            "auto",
+            DESKTOP_BACKEND_PORT,
             "--no-open",
             "--print-json",
         ])
         .arg("--health-timeout")
         .arg(backend_health_timeout)
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()?;
+        .stderr(Stdio::inherit());
+    mark_desktop_backend_command(&mut command);
+    let mut child = command.spawn()?;
     set_status("Waiting for service", 3, SPLASH_STEPS);
     let ready = read_ready_event(&mut child, ready_timeout_from_env())?;
     set_status("Checking service", 4, SPLASH_STEPS);
@@ -890,22 +898,24 @@ fn start_lite_backend(
     let python = ensure_lite_runtime(config, set_status)?;
     set_status("Starting service", 3, SPLASH_STEPS);
     let backend_health_timeout = backend_health_timeout_from_env().as_secs().to_string();
-    let mut child = Command::new(python)
+    let mut command = Command::new(python);
+    command
         .args([
             "-m",
             "culvia.server",
             "--host",
             "127.0.0.1",
             "--port",
-            "auto",
+            DESKTOP_BACKEND_PORT,
             "--no-open",
             "--print-json",
         ])
         .arg("--health-timeout")
         .arg(backend_health_timeout)
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()?;
+        .stderr(Stdio::inherit());
+    mark_desktop_backend_command(&mut command);
+    let mut child = command.spawn()?;
     set_status("Waiting for service", 3, SPLASH_STEPS);
     let ready = read_ready_event(&mut child, ready_timeout_from_env())?;
     set_status("Checking service", 4, SPLASH_STEPS);
@@ -922,6 +932,10 @@ fn start_lite_backend(
         child: Some(child),
         runtime_mode: "lite",
     })
+}
+
+fn mark_desktop_backend_command(command: &mut Command) {
+    command.env(DESKTOP_APP_ENV, "1");
 }
 
 fn start_development_backend(
@@ -955,7 +969,31 @@ fn create_main_window(app: &tauri::AppHandle, base_url: &str) -> DesktopResult<W
     config.visible = false;
     config.focus = false;
     let window = WebviewWindowBuilder::from_config(app, &config)?.build()?;
+    install_desktop_drop_bridge(&window);
     Ok(window)
+}
+
+fn desktop_drop_script(paths: &[PathBuf]) -> String {
+    let payload = json!({
+        "paths": paths
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+    });
+    let payload_text =
+        serde_json::to_string(&payload).unwrap_or_else(|_| "{\"paths\":[]}".to_string());
+    format!("window.dispatchEvent(new CustomEvent('{DESKTOP_DROP_EVENT}', {{ detail: {payload_text} }}));")
+}
+
+fn install_desktop_drop_bridge(window: &WebviewWindow) {
+    let target = window.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event {
+            if !paths.is_empty() {
+                let _ = target.eval(desktop_drop_script(paths));
+            }
+        }
+    });
 }
 
 fn setup_desktop(app: &tauri::App, backend_slot: &SharedBackend) {
@@ -1268,5 +1306,35 @@ mod tests {
         let spec = CommandSpec::new("py", ["-3.11"]);
 
         assert_eq!(spec.display(), "py -3.11");
+    }
+
+    #[test]
+    fn desktop_backend_uses_random_port_outside_dev_mode() {
+        assert_eq!(DESKTOP_BACKEND_PORT, "random");
+    }
+
+    #[test]
+    fn desktop_backend_marks_app_environment() {
+        let mut command = Command::new("culvia-server");
+
+        mark_desktop_backend_command(&mut command);
+
+        let has_desktop_marker = command.get_envs().any(|(key, value)| {
+            key == DESKTOP_APP_ENV && value.and_then(|v| v.to_str()) == Some("1")
+        });
+        assert!(has_desktop_marker);
+    }
+
+    #[test]
+    fn desktop_drop_script_dispatches_paths_as_dom_event() {
+        let script = desktop_drop_script(&[
+            PathBuf::from("/tmp/photos"),
+            PathBuf::from("/tmp/quote\"path"),
+        ]);
+
+        assert!(script.contains("culvia-desktop-drop"));
+        assert!(script.contains("/tmp/photos"));
+        assert!(script.contains("quote\\\"path"));
+        assert!(script.contains("CustomEvent"));
     }
 }

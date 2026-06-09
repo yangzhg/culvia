@@ -58,6 +58,7 @@ class WebRouteHandlers:
     api_pick_folders: RouteEndpoint
     api_pick_export_folder: RouteEndpoint
     api_reveal: RouteEndpoint
+    api_open_file: RouteEndpoint
 
 
 APP_ROUTE_SPECS: tuple[RouteSpec, ...] = (
@@ -99,6 +100,7 @@ APP_ROUTE_SPECS: tuple[RouteSpec, ...] = (
     RouteSpec("/api/pick-folders", "api_pick_folders", ("POST",)),
     RouteSpec("/api/pick-export-folder", "api_pick_export_folder", ("POST",)),
     RouteSpec("/api/reveal", "api_reveal", ("POST",)),
+    RouteSpec("/api/open-file", "api_open_file", ("POST",)),
 )
 
 STATIC_ROUTE_PATH = "/static"

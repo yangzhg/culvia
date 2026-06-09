@@ -221,3 +221,50 @@ def reveal_path_in_file_manager(
         command_runner(_reveal_command(Path(path), platform_name, which), check=False)
     except Exception as exc:
         raise DesktopActionError(repr(exc)) from exc
+
+
+def _open_file_command(path: Path, platform: str, which: Any = None) -> tuple[list[str], dict[str, str] | None]:
+    if platform == "darwin":
+        if not _command_path("open", which):
+            raise DesktopActionUnsupported("当前环境不支持原生预览文件。")
+        return ["open", str(path)], None
+    if platform.startswith(("win32", "cygwin", "msys")):
+        shell = _first_command(("powershell", "pwsh"), which)
+        if not shell:
+            raise DesktopActionUnsupported("当前环境不支持原生预览文件。")
+        env = dict(os.environ)
+        env["CULVIA_OPEN_FILE_PATH"] = str(path)
+        return [
+            shell,
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Process -LiteralPath $env:CULVIA_OPEN_FILE_PATH",
+        ], env
+    if platform.startswith("linux"):
+        if _command_path("xdg-open", which):
+            return ["xdg-open", str(path)], None
+        if _command_path("gio", which):
+            return ["gio", "open", str(path)], None
+    raise DesktopActionUnsupported("当前环境不支持原生预览文件。")
+
+
+def open_path_with_default_app(
+    path: str | Path,
+    *,
+    platform: str | None = None,
+    which: Any = None,
+    runner: CommandRunner | None = None,
+) -> None:
+    platform_name = _platform_name(platform)
+    try:
+        command_runner = runner or subprocess.run
+        command, extra_env = _open_file_command(Path(path), platform_name, which)
+        run_kwargs: dict[str, Any] = {"check": False}
+        if extra_env is not None:
+            run_kwargs["env"] = extra_env
+        command_runner(command, **run_kwargs)
+    except DesktopActionUnsupported:
+        raise
+    except Exception as exc:
+        raise DesktopActionError(repr(exc)) from exc

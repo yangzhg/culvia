@@ -128,7 +128,7 @@ class SupervisorConfigTests(unittest.TestCase):
         original = os.environ.get("CULVIA_PORT")
         try:
             os.environ.pop("CULVIA_PORT", None)
-            with patch("culvia.supervisor.find_available_port", return_value=49153):
+            with patch("culvia.supervisor.find_available_port", return_value=49153) as find_port:
                 config = parse_args(["--host", "127.0.0.1", "--port", "auto", "--no-open", "--print-json"])
         finally:
             if original is None:
@@ -136,8 +136,19 @@ class SupervisorConfigTests(unittest.TestCase):
             else:
                 os.environ["CULVIA_PORT"] = original
 
+        find_port.assert_called_once_with("127.0.0.1", DEFAULT_PORT)
         self.assertEqual(config.target.host, "127.0.0.1")
         self.assertGreater(config.target.port, 0)
+        self.assertFalse(config.open_browser)
+        self.assertTrue(config.print_json)
+
+    def test_parse_args_supports_random_port_for_desktop_shells(self) -> None:
+        with patch("culvia.supervisor.find_available_port", return_value=49154) as find_port:
+            config = parse_args(["--host", "127.0.0.1", "--port", "random", "--no-open", "--print-json"])
+
+        find_port.assert_called_once_with("127.0.0.1", 0)
+        self.assertEqual(config.target.host, "127.0.0.1")
+        self.assertEqual(config.target.port, 49154)
         self.assertFalse(config.open_browser)
         self.assertTrue(config.print_json)
 

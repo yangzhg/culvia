@@ -18,6 +18,14 @@ class ServerRuntimeTests(unittest.TestCase):
         self.assertEqual(config.target.port, 49160)
         self.assertFalse(config.print_json)
 
+    def test_parse_args_accepts_random_port_for_desktop_backend(self) -> None:
+        with patch("culvia.server.find_available_port", return_value=49161) as find_port:
+            config = server.parse_args(["--port", "random"])
+
+        find_port.assert_called_once_with("127.0.0.1", 0)
+        self.assertEqual(config.target.host, "127.0.0.1")
+        self.assertEqual(config.target.port, 49161)
+
     def test_parse_args_accepts_production_startup_args(self) -> None:
         config = server.parse_args(
             [

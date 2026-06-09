@@ -30,7 +30,7 @@
     "--host",
     "127.0.0.1",
     "--port",
-    "auto",
+    "random",
     "--no-open",
     "--print-json"
   ],
@@ -62,7 +62,7 @@
     "runtimeResponsibilities": [
       "resolve bundled backend path",
       "search runtime/backend target directories in packaged resources, portable package roots, environment overrides, and development paths",
-      "spawn backend with --port auto --no-open --print-json",
+      "spawn backend with --port random --no-open --print-json",
       "parse ready JSON from stdout",
       "wait for /health",
       "create the main window after backend readiness",

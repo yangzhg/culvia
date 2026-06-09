@@ -739,6 +739,16 @@
   font-weight: 780;
 }
 
+.score-render-error {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .score-missing-toggle {
   display: inline-flex;
   align-items: center;

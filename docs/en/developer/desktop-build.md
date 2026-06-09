@@ -53,6 +53,8 @@ Desktop startup supports four runtime modes. Desktop users should rely on automa
 - `auto`: use the bundled backend when it exists; otherwise fall back to `lite`.
 - `dev`: use the existing development server at `http://127.0.0.1:8501`.
 
+In `full`, `lite`, and `auto`, the desktop shell starts the local backend on a random available localhost port and reads the final URL from the backend ready event. Only `dev` mode assumes port `8501`.
+
 Lite mode never installs dependencies into a global Python environment. It creates or repairs a virtualenv under the user data directory by default:
 
 ```text

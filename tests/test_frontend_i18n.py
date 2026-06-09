@@ -193,10 +193,10 @@ class FrontendI18nTests(unittest.TestCase):
         output = json.loads(result.stdout)
         self.assertEqual(output["language"], "en")
         self.assertEqual(output["normalized"], "en")
-        self.assertEqual(output["start"], "Start scoring")
+        self.assertEqual(output["start"], "Score")
         self.assertEqual(output["fallback"], "missing.key")
         self.assertEqual(output["next"], "zh-CN")
-        self.assertEqual(output["zhStart"], "开始评分")
+        self.assertEqual(output["zhStart"], "评分")
         self.assertEqual(output["title"], "Culvia")
         self.assertEqual(output["lang"], "zh-CN")
 

@@ -77,6 +77,7 @@ class WebRouteTests(unittest.TestCase):
                 ("/api/pick-folders", "api_pick_folders", ("POST",)),
                 ("/api/pick-export-folder", "api_pick_export_folder", ("POST",)),
                 ("/api/reveal", "api_reveal", ("POST",)),
+                ("/api/open-file", "api_open_file", ("POST",)),
             ],
         )
 

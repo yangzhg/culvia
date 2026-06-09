@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--port",
         default=os.environ.get("CULVIA_PORT", str(DEFAULT_PORT)),
-        help="Port number, or auto to choose an available port.",
+        help="Port number, auto to prefer the default port, or random to choose any available port.",
     )
     parser.add_argument(
         "--no-open", action="store_true", help="Accepted for packaged desktop startup; no browser is opened."
@@ -46,7 +46,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def parse_args(argv: Sequence[str] | None = None) -> ServerConfig:
     args = build_parser().parse_args(argv)
-    port = find_available_port(args.host, DEFAULT_PORT) if str(args.port).lower() == "auto" else int(args.port)
+    port_text = str(args.port).lower()
+    if port_text == "auto":
+        port = find_available_port(args.host, DEFAULT_PORT)
+    elif port_text == "random":
+        port = find_available_port(args.host, 0)
+    else:
+        port = int(args.port)
     return ServerConfig(
         target=ServerTarget(args.host, port),
         print_json=bool(args.print_json),
