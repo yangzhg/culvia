@@ -77,6 +77,14 @@ class ServerSmokeTests(unittest.TestCase):
         self.assertEqual(payload["source"]["cachePath"], cache_path)
         self.assertEqual(payload["models"]["selected"], [scoring.MODEL_CORE_AESTHETIC])
 
+    def test_state_route_does_not_read_keychain_on_startup(self) -> None:
+        culvia_app.reset_llm_api_key_refresh_cache()
+        self.addCleanup(culvia_app.reset_llm_api_key_refresh_cache)
+        with patch("culvia_app.load_llm_api_key", side_effect=AssertionError("state must not read keychain")):
+            response = self._client.get("/api/state")
+
+        self.assertEqual(response.status_code, 200)
+
     def test_injected_state_store_serves_filter_and_mark_routes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache_path = str(Path(tmp) / "custom.sqlite")

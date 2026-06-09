@@ -527,6 +527,13 @@ def refresh_persisted_llm_config(cache_path: str | Path) -> None:
     refresh_persisted_llm_config_action(cache_path, llm_config_service_dependencies())
 
 
+def refresh_persisted_llm_config_for_state(cache_path: str | Path) -> None:
+    try:
+        set_persisted_llm_config(load_llm_config_from_sqlite(cache_path))
+    except Exception:
+        set_persisted_llm_config({})
+
+
 def apply_llm_config(payload: dict[str, Any], cache_path: str | Path) -> None:
     apply_llm_config_action(payload, cache_path, llm_config_service_dependencies())
 
@@ -756,7 +763,7 @@ STATE_PAYLOAD_DEPENDENCIES = StatePayloadDependencies(
     aesthetic_reference_labels=AESTHETIC_REFERENCE_LABELS,
     llm_review_labels=LLM_REVIEW_LABELS,
     normalize_score_dataframe=normalize_score_dataframe,
-    refresh_persisted_llm_config=refresh_persisted_llm_config,
+    refresh_persisted_llm_config=refresh_persisted_llm_config_for_state,
     frame_file_ids=frame_file_ids,
     load_photo_marks=load_photo_marks,
     dataframe_for_display=dataframe_for_display,
