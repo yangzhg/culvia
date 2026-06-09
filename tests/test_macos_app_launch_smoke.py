@@ -142,6 +142,18 @@ class MacosAppLaunchSmokeTests(unittest.TestCase):
 
         self.assertEqual(check_macos_app_launch_smoke.base_url_from_events(events), "http://127.0.0.1:1")
 
+    def test_backend_workflow_path_check_accepts_canonical_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            real_dir = Path(tmp) / "real"
+            real_dir.mkdir()
+            image = real_dir / "photo.jpg"
+            image.write_bytes(b"photo")
+            alias_dir = Path(tmp) / "alias"
+            alias_dir.symlink_to(real_dir, target_is_directory=True)
+
+            self.assertTrue(check_backend_workflow_smoke.same_canonical_path(alias_dir / "photo.jpg", image))
+            self.assertFalse(check_backend_workflow_smoke.same_canonical_path(alias_dir / "missing.jpg", image))
+
     def test_collect_app_runtime_checks_reuses_workflow_semantics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture = {

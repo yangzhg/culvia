@@ -258,6 +258,17 @@ def numeric_score_map(value: Any) -> dict[str, float]:
     return scores
 
 
+def same_canonical_path(left: Any, right: Any) -> bool:
+    left_text = str(left or "").strip()
+    right_text = str(right or "").strip()
+    if not left_text or not right_text:
+        return False
+    try:
+        return Path(left_text).expanduser().resolve() == Path(right_text).expanduser().resolve()
+    except OSError:
+        return left_text == right_text
+
+
 def sqlite_basic_technical_row(cache_path: Path) -> dict[str, Any]:
     columns = (
         "file_id",
@@ -331,6 +342,7 @@ def collect_basic_technical_scoring_checks(
     technical_scores = numeric_score_map(photo.get("technicalScores") if isinstance(photo, dict) else {})
     expected_fields = {"technical_overall", "sharpness", "exposure", "contrast", "cleanliness"}
     recommendation = photo.get("recommendation") if isinstance(photo, dict) else None
+    photo_path = str(photo.get("path") or "")
 
     checks.append(
         check(
@@ -353,13 +365,14 @@ def collect_basic_technical_scoring_checks(
             and int(summary.get("scored") or 0) == 1
             and int(summary.get("showing") or 0) == 1
             and int(final_state.get("errors") or 0) == 0
-            and str(photo.get("path") or "") == str(image_path)
+            and same_canonical_path(photo_path, image_path)
             and set(technical_scores) == expected_fields
             and all(0.0 <= value <= 10.0 for value in technical_scores.values())
             and recommendation is not None
             and abs(float(recommendation) - technical_scores["technical_overall"]) < 0.0001,
             f"source={source.get('mode')} folders={source.get('folders')} scored={summary.get('scored')} "
-            f"showing={summary.get('showing')} technicalFields={sorted(technical_scores)} recommendation={recommendation}",
+            f"showing={summary.get('showing')} photoPath={photo_path} expectedPath={image_path} "
+            f"technicalFields={sorted(technical_scores)} recommendation={recommendation}",
         )
     )
     try:
@@ -375,14 +388,15 @@ def collect_basic_technical_scoring_checks(
             check(
                 "backend workflow writes basic technical scores to SQLite",
                 int(row.get("count") or 0) == 1
-                and row.get("path") == str(image_path)
-                and row.get("folder") == str(photo_dir)
+                and same_canonical_path(row.get("path"), image_path)
+                and same_canonical_path(row.get("folder"), photo_dir)
                 and row.get("filename") == image_path.name
                 and row.get("error") == ""
                 and all(
                     row.get(column) is not None and 0.0 <= float(row[column]) <= 10.0 for column in technical_columns
                 ),
-                f"count={row.get('count')}, path={row.get('path')}, technicalColumns={[(column, row.get(column)) for column in technical_columns]}",
+                f"count={row.get('count')}, path={row.get('path')}, folder={row.get('folder')}, "
+                f"expectedPath={image_path}, technicalColumns={[(column, row.get(column)) for column in technical_columns]}",
             )
         )
     except Exception as exc:  # noqa: BLE001
