@@ -55,13 +55,17 @@ class SecretStoreTests(unittest.TestCase):
 
         self.assertIn("locked", str(ctx.exception))
 
-    def test_disable_env_makes_keyring_unavailable(self) -> None:
+    def test_disable_env_blocks_real_backend_but_not_injected_modules(self) -> None:
         original = os.environ.get(secret_store.DISABLE_KEYCHAIN_ENV)
         try:
             os.environ[secret_store.DISABLE_KEYCHAIN_ENV] = "1"
-            self.assertFalse(secret_store.keyring_available(FakeKeyring()))
+            self.assertFalse(secret_store.keyring_available())
             with self.assertRaises(secret_store.SecretStoreUnavailable):
-                secret_store.load_llm_api_key(keyring_module=FakeKeyring())
+                secret_store.load_llm_api_key()
+            # Explicitly injected backends (test doubles) stay usable so test
+            # runs with the env switch set can still exercise store logic.
+            self.assertTrue(secret_store.keyring_available(FakeKeyring()))
+            self.assertEqual(secret_store.load_llm_api_key(keyring_module=FakeKeyring()), "")
         finally:
             if original is None:
                 os.environ.pop(secret_store.DISABLE_KEYCHAIN_ENV, None)

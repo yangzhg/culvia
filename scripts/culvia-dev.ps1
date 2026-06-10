@@ -181,7 +181,11 @@ switch ($CommandName) {
     "runtime-create" { Invoke-PythonMain "culvia.runtime_manager" "culvia runtime" (@("create") + $Rest) }
     "runtime-install" { Invoke-PythonMain "culvia.runtime_manager" "culvia runtime" (@("install") + $Rest) }
     "runtime-ensure" { Invoke-PythonMain "culvia.runtime_manager" "culvia runtime" (@("ensure") + $Rest) }
-    "test" { Invoke-Tool @("-m", "unittest", "discover", "-s", "tests") }
+    "test" {
+        $env:CULVIA_DISABLE_KEYCHAIN = "1"
+        try { Invoke-Tool @("-m", "unittest", "discover", "-s", "tests") }
+        finally { Remove-Item Env:CULVIA_DISABLE_KEYCHAIN -ErrorAction SilentlyContinue }
+    }
     "js-check" { Invoke-Tool @("tools/pre_commit_checks.py", "js-syntax") }
     "lint" {
         Invoke-Tool @("-m", "ruff", "format", "--check", "culvia", "culvia_app.py", "tests", "tools", "desktop/tauri/scripts")

@@ -125,6 +125,16 @@ class LLMConfigServiceTests(unittest.TestCase):
         self.assertEqual(env.persisted, {"model": "mock-vlm"})
         self.assertEqual(env.secure, {"api_key": "keychain-key"})
 
+    def test_refresh_skips_keychain_when_llm_was_never_configured(self) -> None:
+        env = FakeLLMConfigEnvironment()
+        env.loaded_persisted = {}
+        env.load_api_key_error = AssertionError("keychain must not be read")
+
+        refresh_persisted_llm_config_action("scores.sqlite", env.dependencies())
+
+        self.assertEqual(env.persisted, {})
+        self.assertEqual(env.secure, {})
+
     def test_refresh_clears_layers_when_sqlite_or_keychain_load_fails(self) -> None:
         env = FakeLLMConfigEnvironment()
         env.persisted = {"model": "old"}

@@ -18,10 +18,12 @@ class SecretStoreUnavailable(SecretStoreError):
 
 
 def _load_keyring(keyring_module: Any = None) -> Any:
-    if os.environ.get(DISABLE_KEYCHAIN_ENV) == "1":
-        raise SecretStoreUnavailable("system keychain backend is disabled")
+    # Explicitly injected backends (test doubles, smoke fixtures) bypass the
+    # environment switch; it only guards access to the real system keychain.
     if keyring_module is not None:
         return keyring_module
+    if os.environ.get(DISABLE_KEYCHAIN_ENV) == "1":
+        raise SecretStoreUnavailable("system keychain backend is disabled")
     try:
         import keyring  # type: ignore[import-not-found]
     except Exception as exc:  # pragma: no cover - depends on optional desktop extra.
