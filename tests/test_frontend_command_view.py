@@ -116,7 +116,7 @@ class FrontendCommandViewTests(unittest.TestCase):
                 currentFile: "portrait.jpg",
                 progress: 0.5,
                 running: true,
-                title: "正在进行大模型评审",
+                titleText: { key: "jobText.llmRunning" },
               },
             });
             if (llmReview.state !== "大模型评审中" || llmReview.title !== "正在进行大模型评审") {
@@ -129,14 +129,14 @@ class FrontendCommandViewTests(unittest.TestCase):
             const paused = view.commandViewState({
               sourceReady: true,
               job: {
-                activeEvaluation: "大模型评审",
-                completedEvaluations: ["基础质检", "审美"],
+                activeEvaluation: "stage.llmReview",
+                completedEvaluations: ["stage.basicTechnical", "stage.clipAesthetic"],
                 currentFile: "portrait.jpg",
                 currentThumb: "/api/image/thumb",
                 paused: true,
                 progress: 0.42,
                 running: true,
-                title: "处理照片",
+                titleText: { key: "jobText.scoring" },
               },
             });
             if (paused.state !== "已暂停" || paused.pause.label !== "继续" || paused.pause.icon !== "play") {
@@ -148,16 +148,26 @@ class FrontendCommandViewTests(unittest.TestCase):
             if (paused.currentPhoto.completed.length !== 2 || paused.progress.width !== "42%") {
               throw new Error("paused progress state is wrong");
             }
+            if (paused.currentPhoto.completed[0] !== "技术质检" || paused.currentPhoto.completed[1] !== "审美参考") {
+              throw new Error("completed evaluations should resolve stage keys");
+            }
 
             const preparing = view.commandViewState({
               sourceReady: true,
               job: {
-                modelProgress: { detail: "下载权重", label: "准备模型", progress: 1.4 },
+                modelProgress: {
+                  detailText: { key: "jobText.connectingSource" },
+                  labelText: { key: "jobText.prepModel" },
+                  progress: 1.4,
+                },
                 running: true,
               },
             });
             if (preparing.progress.width !== "100%" || preparing.currentPhoto.visible) {
               throw new Error("model progress should clamp and hide current photo");
+            }
+            if (preparing.progress.label !== "准备模型" || preparing.progress.detail !== "正在连接下载源") {
+              throw new Error("model progress text refs should resolve");
             }
             """
         )
@@ -196,6 +206,39 @@ class FrontendCommandViewTests(unittest.TestCase):
               throw new Error("notice action is wrong");
             }
             if (notice.progress.width !== "100%") throw new Error("notice progress should clamp");
+            """
+        )
+
+    def test_text_refs_resolve_with_params_and_nesting(self) -> None:
+        self.assert_js_passes(
+            """
+            const simple = view.resolveTextRef({ key: "jobText.photosReadyDetail", params: { count: 12 } });
+            if (simple !== "找到 12 张可评分照片") throw new Error("param resolution is wrong: " + simple);
+
+            const nested = view.resolveTextRef({
+              key: "jobText.scoringDoneDetail",
+              params: { count: 3, device: { key: "device.appleSilicon" } },
+            });
+            if (nested !== "3 张照片 · Apple 芯片加速") throw new Error("nested ref is wrong: " + nested);
+
+            const stats = view.resolveTextRef({
+              key: "jobText.downloadStats",
+              params: {
+                downloaded: "41.0 MB",
+                expected: "333.7 MB",
+                speed: "2.1 MB/s",
+                eta: { key: "duration.minutesSeconds", params: { minutes: 2, seconds: "10" } },
+              },
+            });
+            if (stats !== "41.0 MB / 333.7 MB · 2.1 MB/s · 约 2分10秒") {
+              throw new Error("download stats ref is wrong: " + stats);
+            }
+
+            const legacy = view.commandViewState({
+              sourceReady: true,
+              job: { kind: "llm_review", running: true, title: "旧版纯文本标题" },
+            });
+            if (legacy.title !== "旧版纯文本标题") throw new Error("legacy plain title should pass through");
             """
         )
 

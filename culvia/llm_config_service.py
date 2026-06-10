@@ -7,6 +7,8 @@ from pathlib import Path
 from culvia.llm_config_requests import llm_config_update_from_payload
 from culvia.secret_store import SecretStoreError, SecretStoreUnavailable
 
+from culvia.job_text import TranslatableValueError
+
 
 @dataclass(frozen=True)
 class LLMConfigServiceDependencies:
@@ -60,7 +62,9 @@ def apply_llm_config_action(
         except SecretStoreUnavailable:
             pass
         except SecretStoreError as exc:
-            raise ValueError(f"系统钥匙串清除失败：{exc}") from exc
+            raise TranslatableValueError(
+                "error.keychainClearFailed", fallback=f"系统钥匙串清除失败：{exc}", reason=str(exc)
+            ) from exc
 
     dependencies.set_session_config(update.config)
 
@@ -73,6 +77,8 @@ def apply_llm_config_action(
             except SecretStoreUnavailable:
                 dependencies.clear_secure_config("api_key")
             except SecretStoreError as exc:
-                raise ValueError(f"系统钥匙串保存失败：{exc}") from exc
+                raise TranslatableValueError(
+                    "error.keychainSaveFailed", fallback=f"系统钥匙串保存失败：{exc}", reason=str(exc)
+                ) from exc
         persisted = dependencies.save_persisted_config(update.config, cache_path)
         dependencies.set_persisted_config(persisted)

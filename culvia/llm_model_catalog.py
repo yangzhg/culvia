@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from culvia.job_text import TranslatableValueError
+
 
 class ResponseLike(Protocol):
     status_code: int
@@ -71,7 +73,7 @@ def fetch_llm_model_catalog(
 ) -> dict[str, Any]:
     cleaned_key = api_key.strip()
     if not cleaned_key:
-        raise ValueError("请先填写或保存 API Key。")
+        raise TranslatableValueError("error.llmKeyRequired", fallback="请先填写或保存 API Key。")
 
     models_url = llm_models_url(base_url, endpoint)
     response = get(
@@ -81,16 +83,23 @@ def fetch_llm_model_catalog(
     )
     if response.status_code >= 400:
         detail = response.text.strip()[:240] or response.reason
-        raise ValueError(f"模型列表读取失败：HTTP {response.status_code} {detail}")
+        raise TranslatableValueError(
+            "error.llmModelListHttp",
+            fallback=f"模型列表读取失败：HTTP {response.status_code} {detail}",
+            status=response.status_code,
+            detail=detail,
+        )
 
     try:
         response_payload = response.json()
     except ValueError as exc:
-        raise ValueError("模型列表读取失败：接口没有返回 JSON。") from exc
+        raise TranslatableValueError(
+            "error.llmModelListNotJson", fallback="模型列表读取失败：接口没有返回 JSON。"
+        ) from exc
 
     models = parse_llm_model_list(response_payload, current_model)
     if not models:
-        raise ValueError("模型列表为空。")
+        raise TranslatableValueError("error.llmModelListEmpty", fallback="模型列表为空。")
     return {
         "models": models,
         "currentModel": current_model,

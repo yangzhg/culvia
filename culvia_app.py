@@ -18,7 +18,8 @@ from culvia.cache_schema import SQLITE_CACHE_EXTENSIONS
 from culvia.capabilities import local_capabilities
 from culvia.config_payloads import (
     available_selected_models,
-    device_label as _device_label,
+    device_text as _device_text,
+    device_text_key,
     llm_config_payload as _llm_config_payload,
     model_option_payloads as _model_option_payloads,
     model_payload as _model_payload,
@@ -53,6 +54,7 @@ from culvia.gallery_display import (
 )
 from culvia.image_io import HEIF_AVAILABLE
 from culvia.job_service import ScoringJobService
+from culvia.job_text import exception_reason
 from culvia.llm_model_catalog import (
     fetch_llm_model_catalog,
     llm_models_url as _llm_models_url,
@@ -488,8 +490,8 @@ def enrich_scores_for_display(df: pd.DataFrame, filters: dict[str, Any]) -> pd.D
     )
 
 
-def device_label(device: str | None = None) -> str:
-    return _device_label(device or get_device())
+def device_text(device: str | None = None) -> dict[str, Any]:
+    return _device_text(device or get_device())
 
 
 def network_payload(network: dict[str, Any]) -> dict[str, Any]:
@@ -708,11 +710,11 @@ def model_option_payloads(selected_models: list[str]) -> list[dict[str, Any]]:
         runtime_status={
             RUNTIME_CORE_AESTHETIC: core_status,
             RUNTIME_CLIP_REFERENCE: clip_status,
-            RUNTIME_LOCAL: {"downloaded": True, "partial": False, "model_size_label": "无需下载"},
+            RUNTIME_LOCAL: {"downloaded": True, "partial": False, "model_size_label": ""},
             RUNTIME_LLM_REVIEW: {
                 "downloaded": bool(llm_status["configured"]),
                 "partial": False,
-                "model_size_label": "已配置" if llm_status["configured"] else "需配置",
+                "model_size_label": "",
             },
         },
         llm_status=llm_status,
@@ -746,7 +748,7 @@ def model_payload(network: dict[str, Any], selected_models: list[str]) -> dict[s
         clip_status=clip_status,
         network_status=network_status,
         runtime_loaded=runtime_loaded,
-        runtime_device_label=device_label(selected_device),
+        runtime_device_text=device_text(selected_device),
     )
 
 
@@ -785,7 +787,7 @@ STATE_PAYLOAD_DEPENDENCIES = StatePayloadDependencies(
     serialize_photo=serialize_photo,
     curation_summary=curation_summary,
     local_capabilities=local_capabilities,
-    device_label=device_label,
+    device_text=device_text,
     network_payload=network_payload,
     llm_config_payload=llm_config_payload,
     normalize_selected_models=normalize_selected_models,
@@ -869,7 +871,9 @@ async def api_llm_config(request: Request) -> JSONResponse:
     try:
         apply_llm_config(payload, cache_path)
     except ValueError as exc:
-        return api_error_response("llmConfigInvalid", str(exc), status_code=400, params={"reason": str(exc)})
+        return api_error_response(
+            "llmConfigInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
+        )
     if not bool(llm_review_status()["configured"]):
         with state_store.lock:
             selected = normalize_selected_models(state_store.data["models"].get("selected"))
@@ -889,7 +893,9 @@ async def api_llm_models(request: Request) -> JSONResponse:
     try:
         return JSONResponse(fetch_llm_models(payload))
     except ValueError as exc:
-        return api_error_response("llmModelListInvalid", str(exc), status_code=400, params={"reason": str(exc)})
+        return api_error_response(
+            "llmModelListInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
+        )
     except requests.RequestException as exc:
         return api_error_response(
             "llmModelListRequestFailed",
@@ -922,7 +928,9 @@ async def api_cache(request: Request) -> JSONResponse:
     try:
         result = load_source_cache_action(payload, source_cache_dependencies())
     except ValueError as exc:
-        return api_error_response("cachePathInvalid", str(exc), status_code=400, params={"reason": str(exc)})
+        return api_error_response(
+            "cachePathInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
+        )
     apply_source_cache_state(state_store, result)
     save_source_config_to_sqlite(
         {
@@ -949,7 +957,9 @@ async def api_source_preview(request: Request) -> JSONResponse:
             thread_factory=threading.Thread,
         )
     except ValueError as exc:
-        return api_error_response("sourcePreviewInvalid", str(exc), status_code=400, params={"reason": str(exc)})
+        return api_error_response(
+            "sourcePreviewInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
+        )
     except SourcePreviewStartError as exc:
         return api_error_response(exc.error_code, exc.message, status_code=exc.status_code)
     response_payload = state_payload(state_store)
@@ -983,7 +993,7 @@ async def api_clear_history(request: Request) -> JSONResponse:
     )
     if cache_path is None:
         return api_error_response(
-            "historyCachePathInvalid", error or "评分记录路径不可用。", status_code=400, params={"reason": error or ""}
+            "historyCachePathInvalid", "评分记录路径不可用。", status_code=400, params={"reason": error or ""}
         )
 
     result = clear_history_cache(cache_path)
@@ -1013,7 +1023,7 @@ async def api_clear_local_data(request: Request) -> JSONResponse:
     if cache_path is None:
         return api_error_response(
             "localDataCachePathInvalid",
-            error or "评分记录路径不可用。",
+            "评分记录路径不可用。",
             status_code=400,
             params={"reason": error or ""},
         )
@@ -1042,10 +1052,12 @@ async def api_clear_local_data(request: Request) -> JSONResponse:
             huggingface_cache_root=get_huggingface_cache_root(),
         )
     except ValueError as exc:
-        return api_error_response("localDataClearInvalid", str(exc), status_code=400, params={"reason": str(exc)})
+        return api_error_response(
+            "localDataClearInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
+        )
     except OSError as exc:
         return api_error_response(
-            "localDataClearFailed", f"清理失败：{exc}", status_code=500, params={"reason": str(exc)}
+            "localDataClearFailed", f"清理失败：{exc}", status_code=500, params={"reason": exception_reason(exc)}
         )
 
     next_state = create_initial_state(
@@ -1073,9 +1085,13 @@ async def api_clear_model(request: Request) -> JSONResponse:
     try:
         result = clear_model_caches(APP_MODEL_CACHE_DIR, MODEL_REPO_CACHE_DIRS, get_huggingface_cache_root())
     except ValueError as exc:
-        return api_error_response("modelClearInvalid", str(exc), status_code=400, params={"reason": str(exc)})
+        return api_error_response(
+            "modelClearInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
+        )
     except OSError as exc:
-        return api_error_response("modelClearFailed", f"删除失败：{exc}", status_code=500, params={"reason": str(exc)})
+        return api_error_response(
+            "modelClearFailed", f"删除失败：{exc}", status_code=500, params={"reason": exception_reason(exc)}
+        )
 
     MODEL_RUNTIME.clear()
     with state_store.lock:
@@ -1159,7 +1175,7 @@ def scoring_runner_dependencies() -> ScoringRunnerDependencies:
         model_loader=cached_model_loader,
         clip_reference_loader=cached_clip_reference_loader,
         thumbnail_url=thumbnail_url,
-        device_label=device_label,
+        device_key=lambda device: device_text_key(device or get_device()),
     )
 
 
@@ -1524,17 +1540,21 @@ async def choose_folder(prompt: str) -> JSONResponse:
     try:
         folder = choose_folder_path(prompt)
     except DesktopActionUnsupported as exc:
-        return api_error_response("desktopActionUnsupported", str(exc), status_code=501, params={"reason": str(exc)})
+        return api_error_response(
+            "desktopActionUnsupported", str(exc), status_code=501, params={"reason": exception_reason(exc)}
+        )
     except DesktopActionCancelled as exc:
         return api_error_response(
             "desktopActionCancelled",
             str(exc),
             status_code=400,
-            params={"reason": str(exc)},
+            params={"reason": exception_reason(exc)},
             cancelled=True,
         )
     except DesktopActionError as exc:
-        return api_error_response("desktopActionFailed", str(exc), status_code=500, params={"reason": str(exc)})
+        return api_error_response(
+            "desktopActionFailed", str(exc), status_code=500, params={"reason": exception_reason(exc)}
+        )
     return JSONResponse({"folder": folder})
 
 
@@ -1542,17 +1562,21 @@ async def choose_folders(prompt: str) -> JSONResponse:
     try:
         folders = choose_folder_paths(prompt)
     except DesktopActionUnsupported as exc:
-        return api_error_response("desktopActionUnsupported", str(exc), status_code=501, params={"reason": str(exc)})
+        return api_error_response(
+            "desktopActionUnsupported", str(exc), status_code=501, params={"reason": exception_reason(exc)}
+        )
     except DesktopActionCancelled as exc:
         return api_error_response(
             "desktopActionCancelled",
             str(exc),
             status_code=400,
-            params={"reason": str(exc)},
+            params={"reason": exception_reason(exc)},
             cancelled=True,
         )
     except DesktopActionError as exc:
-        return api_error_response("desktopActionFailed", str(exc), status_code=500, params={"reason": str(exc)})
+        return api_error_response(
+            "desktopActionFailed", str(exc), status_code=500, params={"reason": exception_reason(exc)}
+        )
     return JSONResponse({"folders": folders, "folder": folders[0] if folders else ""})
 
 
@@ -1610,10 +1634,12 @@ async def api_reveal(request: Request) -> JSONResponse:
             reveal_path_in_file_manager(path)
         except DesktopActionUnsupported as exc:
             return api_error_response(
-                "desktopActionUnsupported", str(exc), status_code=501, params={"reason": str(exc)}
+                "desktopActionUnsupported", str(exc), status_code=501, params={"reason": exception_reason(exc)}
             )
         except DesktopActionError as exc:
-            return api_error_response("desktopActionFailed", str(exc), status_code=500, params={"reason": str(exc)})
+            return api_error_response(
+                "desktopActionFailed", str(exc), status_code=500, params={"reason": exception_reason(exc)}
+            )
         return JSONResponse({"ok": True})
     state_store = request_state_store(request)
     with state_store.lock:
@@ -1627,9 +1653,13 @@ async def api_reveal(request: Request) -> JSONResponse:
     try:
         reveal_path_in_file_manager(path)
     except DesktopActionUnsupported as exc:
-        return api_error_response("desktopActionUnsupported", str(exc), status_code=501, params={"reason": str(exc)})
+        return api_error_response(
+            "desktopActionUnsupported", str(exc), status_code=501, params={"reason": exception_reason(exc)}
+        )
     except DesktopActionError as exc:
-        return api_error_response("desktopActionFailed", str(exc), status_code=500, params={"reason": str(exc)})
+        return api_error_response(
+            "desktopActionFailed", str(exc), status_code=500, params={"reason": exception_reason(exc)}
+        )
     return JSONResponse({"ok": True})
 
 
@@ -1646,9 +1676,13 @@ async def api_open_file(request: Request) -> JSONResponse:
     try:
         open_path_with_default_app(path)
     except DesktopActionUnsupported as exc:
-        return api_error_response("desktopActionUnsupported", str(exc), status_code=501, params={"reason": str(exc)})
+        return api_error_response(
+            "desktopActionUnsupported", str(exc), status_code=501, params={"reason": exception_reason(exc)}
+        )
     except DesktopActionError as exc:
-        return api_error_response("desktopActionFailed", str(exc), status_code=500, params={"reason": str(exc)})
+        return api_error_response(
+            "desktopActionFailed", str(exc), status_code=500, params={"reason": exception_reason(exc)}
+        )
     return JSONResponse({"ok": True})
 
 

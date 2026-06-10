@@ -8,6 +8,23 @@ from typing import Any
 
 DESCRIPTION = "照片审美与技术评分命令行工具"
 
+# scan_image_paths returns translatable text refs; render them for terminal output.
+WARNING_TEMPLATES = {
+    "warning.folderMissing": "目录不存在：{path}",
+    "warning.unsupportedImage": "不是支持的图片格式：{path}",
+    "warning.scanFailed": "扫描目录失败：{path} ({error})",
+}
+
+
+def format_warning(warning: Any) -> str:
+    if isinstance(warning, dict):
+        params = warning.get("params") or {}
+        template = WARNING_TEMPLATES.get(str(warning.get("key")))
+        if template:
+            return template.format(**params)
+        return " ".join([str(warning.get("key")), *map(str, params.values())]).strip()
+    return str(warning)
+
 
 def load_scoring_runtime() -> Any:
     from culvia import scoring
@@ -62,7 +79,7 @@ def main(argv: list[str] | None = None, *, runtime: Any | None = None) -> int:
 
     paths, warnings = scoring.scan_image_paths(folders)
     for warning in warnings:
-        print(f"Warning: {warning}", file=sys.stderr)
+        print(f"Warning: {format_warning(warning)}", file=sys.stderr)
 
     print(f"Using device: {scoring.get_device()}")
     print(f"Scanned images: {len(paths)}")

@@ -10,6 +10,8 @@ import pandas as pd
 
 from culvia.cache_schema import SCORE_TABLE, ensure_cache_schema, is_sqlite_cache_path, sqlite_value
 
+from culvia.job_text import TranslatableValueError
+
 
 class FieldGroup(Protocol):
     cache_columns: tuple[str, ...]
@@ -54,7 +56,10 @@ class ScoreCacheStore:
     def _sqlite_path(self, cache_path: str | Path) -> Path:
         path = Path(cache_path).expanduser()
         if not is_sqlite_cache_path(path):
-            raise ValueError("评分缓存只支持 SQLite 文件（.sqlite、.sqlite3 或 .db）。CSV 仅用于导出。")
+            raise TranslatableValueError(
+                "error.scoreCacheNotSqlite",
+                fallback="评分缓存只支持 SQLite 文件（.sqlite、.sqlite3 或 .db）。CSV 仅用于导出。",
+            )
         return path
 
     def load_sqlite(self, cache_path: str | Path) -> pd.DataFrame:

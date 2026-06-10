@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from culvia.app_state import AppStateStore
+from culvia.job_text import text_ref
 
 
 class JobCancelled(Exception):
@@ -53,8 +54,8 @@ class ScoringJobService:
         *,
         kind: str = "scoring",
         phase: str = "queued",
-        title: str = "准备开始评分",
-        detail: str = "正在启动后台任务",
+        title_text: dict[str, Any] | None = None,
+        detail_text: dict[str, Any] | None = None,
     ) -> str | None:
         job_id = uuid.uuid4().hex
         with self.state_store.lock:
@@ -67,13 +68,16 @@ class ScoringJobService:
                     "kind": kind,
                     "running": True,
                     "phase": phase,
-                    "title": title,
-                    "detail": detail,
+                    "title": "",
+                    "detail": "",
+                    "titleText": title_text or text_ref("jobText.scoringQueued"),
+                    "detailText": detail_text or text_ref("jobText.startingBackgroundTask"),
                     "progress": 0.0,
                     "done": 0,
                     "total": 0,
                     "warnings": [],
                     "error": "",
+                    "errorText": None,
                     "modelProgress": None,
                     "currentFile": "",
                     "currentPath": "",
@@ -113,7 +117,12 @@ class ScoringJobService:
             if str(self.control.get("jobId") or "") != job_id:
                 return False
             self.control["pauseRequested"] = True
-        self.update(paused=True, phase="pausing", title="准备暂停", detail="当前阶段结束后会暂停")
+        self.update(
+            paused=True,
+            phase="pausing",
+            titleText=text_ref("jobText.pausePending"),
+            detailText=text_ref("jobText.pauseAfterStage"),
+        )
         return True
 
     def request_resume(self) -> bool:
@@ -129,7 +138,12 @@ class ScoringJobService:
                 return False
             self.control["pauseRequested"] = False
             self.condition.notify_all()
-        self.update(paused=False, phase="scoring", title="继续评分", detail="正在恢复任务")
+        self.update(
+            paused=False,
+            phase="scoring",
+            titleText=text_ref("jobText.resuming"),
+            detailText=text_ref("jobText.resumingDetail"),
+        )
         return True
 
     def request_cancel(self) -> bool:
@@ -146,7 +160,12 @@ class ScoringJobService:
             self.control["pauseRequested"] = False
             self.control["cancelRequested"] = True
             self.condition.notify_all()
-        self.update(paused=False, phase="cancelling", title="正在取消", detail="当前阶段结束后会中止")
+        self.update(
+            paused=False,
+            phase="cancelling",
+            titleText=text_ref("jobText.cancelPending"),
+            detailText=text_ref("jobText.cancelAfterStage"),
+        )
         return True
 
     def raise_if_cancelled(self) -> None:
@@ -162,7 +181,9 @@ class ScoringJobService:
             while self.control["pauseRequested"] and (not job_id or str(self.control.get("jobId") or "") == job_id):
                 if self.control.get("cancelRequested"):
                     raise JobCancelled()
-                detail = f"已暂停 · {path.name}" if path is not None else "已暂停"
-                self.update(paused=True, phase="paused", title="已暂停", detail=detail)
+                detail_text = (
+                    text_ref("jobText.pausedAtFile", file=path.name) if path is not None else text_ref("jobText.paused")
+                )
+                self.update(paused=True, phase="paused", titleText=text_ref("jobText.paused"), detailText=detail_text)
                 self.condition.wait(timeout=0.5)
         self.update(paused=False)

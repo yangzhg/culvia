@@ -13,11 +13,11 @@ from culvia.schema import (
 
 
 EVALUATION_ORDER: tuple[tuple[str, str], ...] = (
-    (MODEL_CORE_AESTHETIC, "核心审美"),
-    (MODEL_BASIC_TECHNICAL, "技术质检"),
-    (MODEL_CLIP_IQA, "模型画质"),
-    (MODEL_CLIP_AESTHETIC, "审美参考"),
-    (MODEL_LLM_REVIEW, "大模型评审"),
+    (MODEL_CORE_AESTHETIC, "stage.coreAesthetic"),
+    (MODEL_BASIC_TECHNICAL, "stage.basicTechnical"),
+    (MODEL_CLIP_IQA, "stage.clipIqa"),
+    (MODEL_CLIP_AESTHETIC, "stage.clipAesthetic"),
+    (MODEL_LLM_REVIEW, "stage.llmReview"),
 )
 
 STATE_COMPLETED_MODELS: dict[str, set[str]] = {
@@ -32,11 +32,11 @@ STATE_COMPLETED_MODELS: dict[str, set[str]] = {
 }
 
 ACTIVE_LABEL_BY_STATE = {
-    "started": "准备照片",
-    "cached": "读取缓存",
-    "reviewed": "完成评审",
-    "inspected": "完成质检",
-    "error": "处理失败",
+    "started": "stage.preparingPhoto",
+    "cached": "stage.readingCache",
+    "reviewed": "stage.reviewDone",
+    "inspected": "stage.inspectDone",
+    "error": "stage.failed",
 }
 
 DONE_INDEX_STATES = {"cached", "reviewed", "inspected", "scored", "error"}
@@ -44,7 +44,8 @@ DONE_INDEX_STATES = {"cached", "reviewed", "inspected", "scored", "error"}
 
 @dataclass(frozen=True)
 class ScoringProgress:
-    title: str
+    # All text fields hold i18n keys resolved by the web UI, not display text.
+    title_key: str
     current_index: int
     active_evaluation: str
     completed_evaluations: list[str]
@@ -52,19 +53,19 @@ class ScoringProgress:
 
 def progress_title(state: str) -> str:
     if state == "cached":
-        return "读取缓存"
+        return "stage.readingCache"
     if state in {"reviewed", "llm_done", "clip_done"}:
-        return "正在评价"
+        return "jobText.evaluating"
     if state in {"inspected", "technical_done"}:
-        return "正在质检"
+        return "jobText.inspecting"
     if state == "started":
-        return "准备照片"
-    return "正在评分"
+        return "stage.preparingPhoto"
+    return "jobText.scoring"
 
 
 def completed_evaluations(state: str, selected_models: Iterable[str]) -> list[str]:
     if state == "cached":
-        return ["缓存"]
+        return ["stage.cache"]
     selected = set(str(model_key) for model_key in selected_models)
     completed_keys = STATE_COMPLETED_MODELS.get(state, set())
     return [label for model_key, label in EVALUATION_ORDER if model_key in selected and model_key in completed_keys]
@@ -78,7 +79,7 @@ def active_evaluation(state: str, selected_models: Iterable[str]) -> str:
     for model_key, label in EVALUATION_ORDER:
         if model_key in selected and model_key not in completed_keys:
             return label
-    return "整理结果"
+    return "stage.finalizing"
 
 
 def current_index(done: int, total: int, state: str) -> int:
@@ -88,7 +89,7 @@ def current_index(done: int, total: int, state: str) -> int:
 def scoring_progress(done: int, total: int, state: str, selected_models: Iterable[str]) -> ScoringProgress:
     state_text = str(state)
     return ScoringProgress(
-        title=progress_title(state_text),
+        title_key=progress_title(state_text),
         current_index=current_index(done, total, state_text),
         active_evaluation=active_evaluation(state_text, selected_models),
         completed_evaluations=completed_evaluations(state_text, selected_models),

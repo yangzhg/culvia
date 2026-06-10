@@ -7,6 +7,8 @@ from typing import Iterable, Mapping
 
 from culvia.path_semantics import is_same_or_child_path, path_identity_key, stable_path
 
+from culvia.job_text import TranslatableValueError
+
 
 DEFAULT_CACHE_SUFFIXES = (".sqlite", ".sqlite3", ".db")
 SOURCE_MODES = ("folders", "uploads")
@@ -89,7 +91,7 @@ def normalize_cache_path(
     suffix = Path(cache_path).expanduser().suffix.lower()
     allowed = {item.lower() for item in allowed_suffixes}
     if suffix not in allowed:
-        raise ValueError("评分记录路径只支持 SQLite 文件。")
+        raise TranslatableValueError("error.cachePathNotSqlite", fallback="评分记录路径只支持 SQLite 文件。")
     return cache_path
 
 

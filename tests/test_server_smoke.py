@@ -297,7 +297,7 @@ class ServerSmokeTests(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertIn("SQLite", response.json()["error"])
             self.assertEqual(response.json()["errorCode"], "cachePathInvalid")
-            self.assertIn("SQLite", response.json()["errorParams"]["reason"])
+            self.assertEqual(response.json()["errorParams"]["reason"], {"key": "error.cachePathNotSqlite"})
             with store.lock:
                 self.assertEqual(store.data["source"]["cachePath"], cache_path)
 
@@ -476,7 +476,7 @@ class ServerSmokeTests(unittest.TestCase):
             response = client.post("/api/cache/clear", json={"cachePath": str(other_cache)})
 
             self.assertEqual(response.status_code, 400)
-            self.assertEqual(response.json()["error"], "只能清理当前正在使用的评分记录。")
+            self.assertEqual(response.json()["errorParams"]["reason"], {"key": "error.historyCacheNotCurrent"})
             self.assertEqual(response.json()["errorCode"], "historyCachePathInvalid")
             self.assertTrue(other_cache.exists())
 

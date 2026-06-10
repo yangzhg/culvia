@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from culvia.job_text import TranslatableValueError, text_ref
+
 
 @dataclass(frozen=True)
 class HistoryClearResult:
@@ -61,7 +63,8 @@ def resolve_history_cache_path(
     current_cache_path: object,
     default_cache_path: str | Path,
     allowed_suffixes: Iterable[str],
-) -> tuple[Path | None, str]:
+) -> tuple[Path | None, dict[str, object] | None]:
+    """Resolve the cache path to clear; the error is a text ref for the web UI."""
     current_text = str(current_cache_path or default_cache_path).strip()
     requested_text = str(requested_path or "").strip()
     selected = Path(requested_text or current_text).expanduser()
@@ -69,21 +72,21 @@ def resolve_history_cache_path(
     allowed = {suffix.lower() for suffix in allowed_suffixes}
 
     if selected.suffix.lower() not in allowed:
-        return None, "评分记录只支持清理 SQLite 文件。"
+        return None, text_ref("error.historyCacheNotSqlite")
 
     try:
         selected_resolved = selected.resolve()
         current_resolved = current.resolve()
     except Exception:
-        return None, "评分记录路径不可用。"
+        return None, text_ref("error.historyCachePathUnavailable")
 
     if selected_resolved != current_resolved:
-        return None, "只能清理当前正在使用的评分记录。"
+        return None, text_ref("error.historyCacheNotCurrent")
 
     if selected.exists() and not selected.is_file():
-        return None, "缓存路径不是文件，未执行清理。"
+        return None, text_ref("error.historyCacheNotFile")
 
-    return selected, ""
+    return selected, None
 
 
 def remove_path_safely(path: Path) -> bool:
@@ -109,10 +112,10 @@ def clear_model_caches(
     lock_cache_paths = [huggingface_cache_root / ".locks" / repo_dir for repo_dir in model_repo_cache_dirs]
     for repo_dir, path in zip(model_repo_cache_dirs, repo_cache_paths):
         if path.name != repo_dir:
-            raise ValueError("模型缓存路径异常，未执行清理。")
+            raise TranslatableValueError("error.modelCachePathInvalid", fallback="模型缓存路径异常，未执行清理。")
     for repo_dir, path in zip(model_repo_cache_dirs, lock_cache_paths):
         if path.name != repo_dir:
-            raise ValueError("模型缓存路径异常，未执行清理。")
+            raise TranslatableValueError("error.modelCachePathInvalid", fallback="模型缓存路径异常，未执行清理。")
 
     deleted_paths: list[Path] = []
     for path in (app_model_cache_dir, *repo_cache_paths, *lock_cache_paths):

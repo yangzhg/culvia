@@ -2,6 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 const llmConfigView = window.CulviaLlmConfigView;
 const commandView = window.CulviaCommandView;
+const resolveTextRef = (ref, fallback = "") => commandView.resolveTextRef(ref, fallback);
 const galleryKeyboard = window.CulviaGalleryKeyboard;
 const galleryView = window.CulviaGalleryView;
 const viewerKeyboard = window.CulviaViewerKeyboard;
@@ -490,10 +491,8 @@ function hasSelectedSource() {
   return Boolean(foldersFromInput().length || appState?.source?.uploadedPaths?.length);
 }
 
-function displayNetworkLabel(label) {
-  if (label === "跟随系统设置") return t("network.systemConnection");
-  if (label === "普通连接") return t("network.directConnection");
-  return label || t("network.directConnection");
+function displayNetworkLabel(labelText) {
+  return resolveTextRef(labelText, "") || t("network.directConnection");
 }
 
 function updatePathSummaries() {
@@ -591,13 +590,8 @@ function localizedModelOptionSubtitle(option = {}) {
 }
 
 function localizedModelOptionState(option = {}) {
-  const raw = String(option.state || "").trim();
-  if (raw) {
-    const normalized = raw.toLowerCase();
-    if (["已配置", "configured", "ready", "ready locally"].includes(normalized)) return t("model.configured");
-    if (["需配置", "未配置", "not configured", "needs config", "setup needed"].includes(normalized)) return t("model.needsConfig");
-    return raw;
-  }
+  const stateText = resolveTextRef(option.stateText, "");
+  if (stateText) return stateText;
   if (option.requiresDownload) return option.downloaded ? t("model.ready") : t("model.firstUse");
   return t("model.localCompute");
 }
@@ -823,10 +817,14 @@ async function updateSelectedModels() {
 function renderModel(model) {
   const dot = $("#modelDot");
   dot.className = `dot ${model.tone || ""}`.trim();
-  setText("#modelLabel", model.label || t("topbar.modelStatus"));
+  const modelLabelText = resolveTextRef(model.labelText, "");
+  if (modelLabelText) $("#modelLabel")?.removeAttribute("data-i18n");
+  setText("#modelLabel", modelLabelText || t("topbar.modelStatus"));
   const modelReady = model.downloaded ? t("model.ready") : model.tone === "partial" ? t("model.preparing") : t("model.pending");
+  const deviceText =
+    resolveTextRef(model.runtimeDeviceText, "") || resolveTextRef(appState?.app?.deviceText, "") || t("common.currentDevice");
   const runtimeState = model.runtimeLoaded
-    ? t("model.runtimeLoaded", { device: model.runtimeDevice || appState?.app?.device || t("common.currentDevice") })
+    ? t("model.runtimeLoaded", { device: deviceText })
     : model.downloaded
       ? t("model.filesReady")
       : t("model.firstUse");
@@ -836,8 +834,8 @@ function renderModel(model) {
     [t("model.status"), runtimeState],
     [t("model.coreAesthetic"), model.size || t("common.unknown")],
     [t("model.clipReference"), model.clipSize || t("common.unknown")],
-    [t("model.device"), appState?.app?.device || model.runtimeDevice || t("common.currentDevice")],
-    [t("model.fileConnection"), displayNetworkLabel(model.proxyLabel)],
+    [t("model.device"), deviceText],
+    [t("model.fileConnection"), displayNetworkLabel(model.proxyLabelText)],
   ];
   $("#modelTooltip").innerHTML = `
     <div class="model-tooltip-head">
@@ -1176,7 +1174,7 @@ function renderCommand(model, job, summary) {
     hasResults,
     job,
     model,
-    networkText: displayNetworkLabel(model?.proxyLabel),
+    networkText: displayNetworkLabel(model?.proxyLabelText),
     sourceReady,
     summary,
     llmConfigured: Boolean(appState?.llm?.configured),

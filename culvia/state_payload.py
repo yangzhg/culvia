@@ -42,7 +42,7 @@ class StatePayloadDependencies:
     serialize_photo: Callable[[pd.Series, Mapping[str, Any], Mapping[str, Any]], dict[str, Any]]
     curation_summary: Callable[[Mapping[str, Any], Sequence[str]], dict[str, Any]]
     local_capabilities: Callable[[], Mapping[str, Any]]
-    device_label: Callable[[], str]
+    device_text: Callable[[], Mapping[str, Any]]
     network_payload: Callable[[Mapping[str, Any]], Mapping[str, Any]]
     llm_config_payload: Callable[[], Mapping[str, Any]]
     normalize_selected_models: Callable[[Any], Sequence[str]]
@@ -93,7 +93,7 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         "app": {
             "name": deps.app_name,
             "subtitle": deps.app_subtitle,
-            "device": deps.device_label(),
+            "deviceText": dict(deps.device_text()),
             "heifAvailable": deps.heif_available,
         },
         "capabilities": deps.local_capabilities(),

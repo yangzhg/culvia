@@ -9,6 +9,7 @@ from pathlib import Path
 import requests
 from huggingface_hub import hf_hub_download, hf_hub_url
 
+from culvia.job_text import TranslatableRuntimeError
 from culvia.settings import rsinema_model_cache_dir
 
 
@@ -53,8 +54,9 @@ def sanitize_proxy_env_for_httpx() -> None:
 
 
 def format_bytes(size: int | float | None) -> str:
+    # Unknown sizes render as empty so the web UI can fall back to its own localized label.
     if size is None:
-        return "未知"
+        return ""
     size = float(size)
     for unit in ("B", "KB", "MB", "GB"):
         if size < 1024 or unit == "GB":
@@ -190,7 +192,7 @@ def get_hf_snapshot_status(
         "downloaded": False,
         "partial": False,
         "model_size": None,
-        "model_size_label": "未知",
+        "model_size_label": format_bytes(None),
         "active_download_size": active_download_size,
         "active_download_size_label": format_bytes(active_download_size),
         "missing_files": required_files.copy(),
@@ -236,10 +238,12 @@ def get_model_assets_dir() -> Path:
     status = get_model_cache_status()
     snapshot_path = str(status.get("snapshot_path") or "")
     if not snapshot_path:
-        raise RuntimeError("模型配置文件未准备好，请先完成模型准备。")
+        raise TranslatableRuntimeError("error.modelAssetsNotReady", fallback="模型配置文件未准备好，请先完成模型准备。")
     path = Path(snapshot_path)
     if not path.exists():
-        raise RuntimeError(f"模型配置目录不存在：{path}")
+        raise TranslatableRuntimeError(
+            "error.modelAssetsDirMissing", fallback=f"模型配置目录不存在：{path}", path=str(path)
+        )
     return path
 
 

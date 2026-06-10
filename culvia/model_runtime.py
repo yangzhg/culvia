@@ -6,8 +6,9 @@ from contextlib import contextmanager
 from typing import Any, Iterable
 
 from culvia.job_service import ScoringJobService
+from culvia.job_text import text_ref
 from culvia.model_loaders import load_clip_reference_model, load_model
-from culvia.model_files import ensure_clip_reference_model_files, ensure_model_files
+from culvia.model_files import ensure_clip_reference_model_files, ensure_model_files, format_bytes
 from culvia.schema import (
     RUNTIME_CLIP_REFERENCE,
     RUNTIME_CORE_AESTHETIC,
@@ -45,42 +46,66 @@ def temporary_proxy_environment(mode: str):
                 os.environ[key] = value
 
 
+def duration_text_ref(seconds: int | float | None) -> dict[str, Any]:
+    if seconds is None:
+        return text_ref("jobText.downloadCalculating")
+    seconds = max(0, int(seconds))
+    minutes, sec = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return text_ref("duration.hoursMinutes", hours=hours, minutes=f"{minutes:02d}")
+    if minutes:
+        return text_ref("duration.minutesSeconds", minutes=minutes, seconds=f"{sec:02d}")
+    return text_ref("duration.seconds", seconds=sec)
+
+
 def model_progress_payload(
     filename: str, stage: int, total: int, state: str, info: dict[str, Any]
 ) -> dict[str, Any] | None:
     if filename != "model.pt":
         progress = max(0.03, min((stage - 0.35) / max(total, 1), 0.94))
         active_size = str(info.get("active_download_size_label") or "")
-        suffix = f" · 已接收 {active_size}" if active_size and active_size != "0.0 B" else ""
         if state in {"cached", "ready"}:
             return None
+        detail = (
+            text_ref("jobText.prepFileWithSize", filename=filename, size=active_size)
+            if active_size and active_size != "0.0 B"
+            else text_ref("jobText.prepFile", filename=filename)
+        )
         return {
-            "label": f"准备参考模型 {stage}/{total}",
+            "labelText": text_ref("jobText.prepRefModel", stage=stage, total=total),
             "progress": progress,
-            "detail": f"正在准备 {filename}{suffix}",
+            "detailText": detail,
         }
 
     fraction = info.get("download_fraction")
     progress = float(fraction) if isinstance(fraction, float) else 0.02
     progress = max(0.02, min(progress, 0.995))
-    percent = str(info.get("download_percent_label") or "准备中")
-    speed = str(info.get("speed_label") or "等待数据")
-    eta = str(info.get("eta_label") or "计算中")
-    downloaded = str(info.get("active_download_size_label") or "")
-    expected = str(info.get("expected_size_label") or "")
 
     if state in {"cached", "ready"}:
         return None
     if state in {"connecting", "connected", "starting"}:
         return {
-            "label": "准备模型",
+            "labelText": text_ref("jobText.prepModel"),
             "progress": progress,
-            "detail": "正在连接下载源",
+            "detailText": text_ref("jobText.connectingSource"),
         }
+
+    percent = f"{fraction * 100:.1f}%" if isinstance(fraction, float) else text_ref("jobText.downloadPreparing")
+    speed_bps = info.get("speed_bps")
+    speed = f"{format_bytes(speed_bps)}/s" if speed_bps else text_ref("jobText.downloadWaitingData")
+    expected_size = info.get("expected_size")
+    expected = format_bytes(expected_size) if expected_size else text_ref("jobText.unknown")
     return {
-        "label": f"下载模型 {percent}",
+        "labelText": text_ref("jobText.downloadingModel", percent=percent),
         "progress": progress,
-        "detail": f"{downloaded} / {expected} · {speed} · 约 {eta}",
+        "detailText": text_ref(
+            "jobText.downloadStats",
+            downloaded=format_bytes(info.get("active_download_size") or 0),
+            expected=expected,
+            speed=speed,
+            eta=duration_text_ref(info.get("eta_seconds")),
+        ),
     }
 
 
@@ -130,15 +155,15 @@ class ModelRuntimeCache:
             info: dict[str, Any],
         ) -> None:
             progress = model_progress_payload(filename, stage, total, state, info)
-            job_service.update(phase="model", title="正在准备评分模型", modelProgress=progress)
+            job_service.update(phase="model", titleText=text_ref("jobText.prepScoringModel"), modelProgress=progress)
 
         with temporary_proxy_environment(network_mode):
             ensure_model_files(update_model_progress)
             job_service.update(
                 phase="loading_model",
                 modelProgress=None,
-                title="正在载入评分模型",
-                detail="模型已在本机准备好",
+                titleText=text_ref("jobText.loadingScoringModel"),
+                detailText=text_ref("jobText.modelReadyLocal"),
             )
             loaded = load_model(device)
         self.set(RUNTIME_CORE_AESTHETIC, device, loaded)
@@ -163,15 +188,15 @@ class ModelRuntimeCache:
             info: dict[str, Any],
         ) -> None:
             progress = model_progress_payload(filename, stage, total, state, info)
-            job_service.update(phase="model", title="正在准备 CLIP 参考模型", modelProgress=progress)
+            job_service.update(phase="model", titleText=text_ref("jobText.prepClipModel"), modelProgress=progress)
 
         with temporary_proxy_environment(network_mode):
             ensure_clip_reference_model_files(update_model_progress)
             job_service.update(
                 phase="loading_model",
                 modelProgress=None,
-                title="正在载入 CLIP 参考模型",
-                detail="用于模型画质和审美参考",
+                titleText=text_ref("jobText.loadingClipModel"),
+                detailText=text_ref("jobText.clipModelPurpose"),
             )
             loaded = load_clip_reference_model(device)
         self.set(RUNTIME_CLIP_REFERENCE, device, loaded)

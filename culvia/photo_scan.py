@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
+from culvia.job_text import text_ref
 from culvia.path_semantics import path_identity_key, stable_path
 
 
@@ -23,9 +25,9 @@ def _canonical_path(path: Path) -> Path:
     return stable_path(path)
 
 
-def scan_image_paths(folders: Iterable[str | Path]) -> tuple[list[Path], list[str]]:
+def scan_image_paths(folders: Iterable[str | Path]) -> tuple[list[Path], list[dict[str, Any]]]:
     paths: list[Path] = []
-    warnings: list[str] = []
+    warnings: list[dict[str, Any]] = []
 
     for folder in folders:
         folder_text = str(folder).strip()
@@ -34,14 +36,14 @@ def scan_image_paths(folders: Iterable[str | Path]) -> tuple[list[Path], list[st
 
         root = Path(folder_text).expanduser()
         if not root.exists():
-            warnings.append(f"目录不存在：{root}")
+            warnings.append(text_ref("warning.folderMissing", path=str(root)))
             continue
 
         if root.is_file():
             if root.suffix.lower() in SUPPORTED_EXTENSIONS:
                 paths.append(_canonical_path(root))
             else:
-                warnings.append(f"不是支持的图片格式：{root}")
+                warnings.append(text_ref("warning.unsupportedImage", path=str(root)))
             continue
 
         try:
@@ -49,7 +51,7 @@ def scan_image_paths(folders: Iterable[str | Path]) -> tuple[list[Path], list[st
                 if child.is_file() and child.suffix.lower() in SUPPORTED_EXTENSIONS:
                     paths.append(_canonical_path(child))
         except Exception as exc:
-            warnings.append(f"扫描目录失败：{root} ({exc!r})")
+            warnings.append(text_ref("warning.scanFailed", path=str(root), error=repr(exc)))
 
     unique_by_key: dict[str, Path] = {}
     for path in paths:

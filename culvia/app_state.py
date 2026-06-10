@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
+from culvia.job_text import text_ref
+
 
 def empty_job(now: float | None = None) -> dict[str, Any]:
     return {
@@ -13,13 +15,16 @@ def empty_job(now: float | None = None) -> dict[str, Any]:
         "kind": "",
         "running": False,
         "phase": "idle",
-        "title": "准备就绪",
-        "detail": "选择照片来源后即可开始评分",
+        "title": "",
+        "detail": "",
+        "titleText": text_ref("jobText.idleReady"),
+        "detailText": text_ref("jobText.idleChooseSource"),
         "progress": 0.0,
         "done": 0,
         "total": 0,
         "warnings": [],
         "error": "",
+        "errorText": None,
         "modelProgress": None,
         "currentFile": "",
         "currentPath": "",

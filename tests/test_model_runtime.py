@@ -29,16 +29,18 @@ class ModelProgressPayloadTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(payload)
-        self.assertEqual(payload["label"], "准备参考模型 2/5")
-        self.assertIn("tokenizer.json", str(payload["detail"]))
-        self.assertIn("3.4 MB", str(payload["detail"]))
+        self.assertEqual(payload["labelText"], {"key": "jobText.prepRefModel", "params": {"stage": 2, "total": 5}})
+        self.assertEqual(
+            payload["detailText"],
+            {"key": "jobText.prepFileWithSize", "params": {"filename": "tokenizer.json", "size": "3.4 MB"}},
+        )
         self.assertGreater(float(payload["progress"]), 0)
 
     def test_core_model_connection_progress_is_terse(self) -> None:
         payload = model_progress_payload("model.pt", 5, 5, "connecting", {})
 
-        self.assertEqual(payload["label"], "准备模型")
-        self.assertEqual(payload["detail"], "正在连接下载源")
+        self.assertEqual(payload["labelText"], {"key": "jobText.prepModel"})
+        self.assertEqual(payload["detailText"], {"key": "jobText.connectingSource"})
         self.assertGreater(float(payload["progress"]), 0)
 
     def test_core_model_download_progress_includes_size_speed_and_eta(self) -> None:
@@ -49,17 +51,27 @@ class ModelProgressPayloadTests(unittest.TestCase):
             "downloading",
             {
                 "download_fraction": 0.123,
-                "download_percent_label": "12.3%",
-                "active_download_size_label": "41.0 MB",
-                "expected_size_label": "333.7 MB",
-                "speed_label": "2.1 MB/s",
-                "eta_label": "2分10秒",
+                "active_download_size": 41.0 * 1024 * 1024,
+                "expected_size": 333.7 * 1024 * 1024,
+                "speed_bps": 2.1 * 1024 * 1024,
+                "eta_seconds": 130,
             },
         )
 
-        self.assertEqual(payload["label"], "下载模型 12.3%")
+        self.assertEqual(payload["labelText"], {"key": "jobText.downloadingModel", "params": {"percent": "12.3%"}})
         self.assertEqual(payload["progress"], 0.123)
-        self.assertEqual(payload["detail"], "41.0 MB / 333.7 MB · 2.1 MB/s · 约 2分10秒")
+        self.assertEqual(
+            payload["detailText"],
+            {
+                "key": "jobText.downloadStats",
+                "params": {
+                    "downloaded": "41.0 MB",
+                    "expected": "333.7 MB",
+                    "speed": "2.1 MB/s",
+                    "eta": {"key": "duration.minutesSeconds", "params": {"minutes": 2, "seconds": "10"}},
+                },
+            },
+        )
 
 
 class ModelRuntimeCacheTests(unittest.TestCase):

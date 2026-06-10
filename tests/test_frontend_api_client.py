@@ -38,6 +38,16 @@ class FrontendApiClientTests(unittest.TestCase):
                     }),
                   });
                 }
+                if (url === "/api/error-ref") {
+                  return response({
+                    ok: false,
+                    text: JSON.stringify({
+                      errorCode: "cachePathInvalid",
+                      error: "fallback message",
+                      errorParams: { reason: { key: "error.cachePathNotSqlite" } },
+                    }),
+                  });
+                }
                 return response({ json: { ok: true, url } });
               },
             };
@@ -46,7 +56,15 @@ class FrontendApiClientTests(unittest.TestCase):
               t(key, params = {}) {
                 if (key === "common.operationFailed") return "Operation failed";
                 if (key === "apiError.NO_ACCESS") return `No access: ${params.path}`;
+                if (key === "apiError.cachePathInvalid") return `Path invalid: ${params.reason}`;
+                if (key === "error.cachePathNotSqlite") return "SQLite only";
                 return key;
+              },
+            };
+            context.window.CulviaCommandView = {
+              resolveTextRef(ref, fallback = "") {
+                if (!ref || typeof ref !== "object" || !ref.key) return fallback;
+                return context.window.CulviaI18n.t(ref.key, ref.params || {});
               },
             };
             vm.createContext(context);
@@ -87,6 +105,16 @@ class FrontendApiClientTests(unittest.TestCase):
                 const message = api.errorMessage(error);
                 if (message !== "No access: /photos") {
                   throw new Error(`translated API error was ${message}`);
+                }
+              }
+
+              try {
+                await api.getJson("/api/error-ref");
+                throw new Error("getJson should throw API failures");
+              } catch (error) {
+                const message = api.errorMessage(error);
+                if (message !== "Path invalid: SQLite only") {
+                  throw new Error(`nested ref error param was ${message}`);
                 }
               }
             })().catch((error) => {

@@ -21,10 +21,10 @@ class ScoringProgressTests(unittest.TestCase):
             [schema.MODEL_CORE_AESTHETIC, schema.MODEL_BASIC_TECHNICAL],
         )
 
-        self.assertEqual(progress.title, "读取缓存")
+        self.assertEqual(progress.title_key, "stage.readingCache")
         self.assertEqual(progress.current_index, 3)
-        self.assertEqual(progress.active_evaluation, "读取缓存")
-        self.assertEqual(progress.completed_evaluations, ["缓存"])
+        self.assertEqual(progress.active_evaluation, "stage.readingCache")
+        self.assertEqual(progress.completed_evaluations, ["stage.cache"])
 
     def test_technical_done_moves_to_next_selected_model(self) -> None:
         selected = [
@@ -36,10 +36,10 @@ class ScoringProgressTests(unittest.TestCase):
 
         progress = scoring_progress(0, 5, "technical_done", selected)
 
-        self.assertEqual(progress.title, "正在质检")
+        self.assertEqual(progress.title_key, "jobText.inspecting")
         self.assertEqual(progress.current_index, 1)
-        self.assertEqual(progress.active_evaluation, "模型画质")
-        self.assertEqual(progress.completed_evaluations, ["核心审美", "技术质检"])
+        self.assertEqual(progress.active_evaluation, "stage.clipIqa")
+        self.assertEqual(progress.completed_evaluations, ["stage.coreAesthetic", "stage.basicTechnical"])
 
     def test_llm_done_marks_all_selected_models_completed(self) -> None:
         selected = [
@@ -50,15 +50,15 @@ class ScoringProgressTests(unittest.TestCase):
             schema.MODEL_LLM_REVIEW,
         ]
 
-        self.assertEqual(active_evaluation("llm_done", selected), "整理结果")
+        self.assertEqual(active_evaluation("llm_done", selected), "stage.finalizing")
         self.assertEqual(
             completed_evaluations("llm_done", selected),
-            ["核心审美", "技术质检", "模型画质", "审美参考", "大模型评审"],
+            ["stage.coreAesthetic", "stage.basicTechnical", "stage.clipIqa", "stage.clipAesthetic", "stage.llmReview"],
         )
 
     def test_started_and_error_index_rules_match_previous_ui_behavior(self) -> None:
-        self.assertEqual(progress_title("started"), "准备照片")
-        self.assertEqual(active_evaluation("started", []), "准备照片")
+        self.assertEqual(progress_title("started"), "stage.preparingPhoto")
+        self.assertEqual(active_evaluation("started", []), "stage.preparingPhoto")
         self.assertEqual(current_index(0, 7, "started"), 1)
         self.assertEqual(current_index(6, 7, "error"), 6)
 

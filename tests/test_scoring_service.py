@@ -122,7 +122,7 @@ class ScoringServiceTests(unittest.TestCase):
             self.assertTrue(store.data["job"]["running"])
             self.assertEqual(store.data["job"]["kind"], "llm_review")
             self.assertEqual(store.data["job"]["phase"], "queued")
-            self.assertEqual(store.data["job"]["title"], "准备开始大模型评审")
+            self.assertEqual(store.data["job"]["titleText"], {"key": "jobText.llmQueued"})
 
 
 if __name__ == "__main__":

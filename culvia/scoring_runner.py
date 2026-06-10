@@ -8,6 +8,7 @@ import pandas as pd
 
 from culvia.app_state import AppStateStore
 from culvia.job_service import JobCancelled, ScoringJobService
+from culvia.job_text import exception_text, text_ref
 from culvia.scoring_progress import scoring_progress
 from culvia.source_requests import source_request_from_payload
 
@@ -27,12 +28,12 @@ class ScoringRunnerDependencies:
     refresh_persisted_llm_config: Callable[[str], None]
     save_source_config: Callable[[dict[str, Any], str], Any]
     llm_review_configured: Callable[[], bool]
-    scan_image_paths: Callable[[Sequence[str]], tuple[list[Path], list[str]]]
+    scan_image_paths: Callable[[Sequence[str]], tuple[list[Path], list[dict[str, Any]]]]
     score_image_paths: ScoreImagePaths
     model_loader: ModelLoader
     clip_reference_loader: ModelLoader
     thumbnail_url: Callable[[str, int], str]
-    device_label: Callable[[str | None], str]
+    device_key: Callable[[str | None], str]
 
 
 def run_scoring_job(
@@ -49,9 +50,10 @@ def run_scoring_job(
         job_service.update(
             running=False,
             phase="error",
-            title="评分失败",
-            detail="请检查照片来源或评分记录路径",
+            titleText=text_ref("jobText.scoringFailed"),
+            detailText=text_ref("jobText.checkSourceOrCache"),
             error=repr(exc),
+            errorText=exception_text(exc),
             modelProgress=None,
             currentFile="",
             currentPath="",
@@ -79,13 +81,14 @@ def run_scoring_job(
     job_service.update(
         running=True,
         phase="scanning",
-        title="正在整理照片",
-        detail="",
+        titleText=text_ref("jobText.organizingPhotos"),
+        detailText=None,
         progress=0.0,
         done=0,
         total=0,
         warnings=[],
         error="",
+        errorText=None,
         modelProgress=None,
         currentFile="",
         currentPath="",
@@ -98,7 +101,7 @@ def run_scoring_job(
     try:
         if mode == "uploads":
             paths = [path for path in uploaded_paths if path.exists()]
-            warnings: list[str] = []
+            warnings: list[dict[str, Any]] = []
             active_cache_path = cache_path
             use_cache = False
         else:
@@ -108,8 +111,8 @@ def run_scoring_job(
 
         job_service.update(
             phase="ready",
-            title="照片已就绪",
-            detail=f"找到 {len(paths)} 张可评分照片",
+            titleText=text_ref("jobText.photosReady"),
+            detailText=text_ref("jobText.photosReadyDetail", count=len(paths)),
             total=len(paths),
             warnings=warnings,
         )
@@ -121,8 +124,8 @@ def run_scoring_job(
             job_service.update(
                 running=False,
                 phase="empty",
-                title="没有找到照片",
-                detail="换一个目录或拖入图片后再试",
+                titleText=text_ref("jobText.noPhotos"),
+                detailText=text_ref("jobText.noPhotosDetail"),
                 progress=0.0,
             )
             return
@@ -132,8 +135,13 @@ def run_scoring_job(
             progress = scoring_progress(done, total, state, selected_models)
             job_service.update(
                 phase="scoring",
-                title=progress.title,
-                detail=f"第 {progress.current_index} / {total} 张 · {path.name}",
+                titleText=text_ref(progress.title_key),
+                detailText=text_ref(
+                    "jobText.photoProgressDetail",
+                    index=progress.current_index,
+                    total=total,
+                    file=path.name,
+                ),
                 progress=done / max(total, 1),
                 done=done,
                 total=total,
@@ -169,8 +177,12 @@ def run_scoring_job(
         job_service.update(
             running=False,
             phase="done",
-            title="评分完成",
-            detail=f"{len(scored_df)} 张照片 · {dependencies.device_label(device)}",
+            titleText=text_ref("jobText.scoringDone"),
+            detailText=text_ref(
+                "jobText.scoringDoneDetail",
+                count=len(scored_df),
+                device=text_ref(dependencies.device_key(device)),
+            ),
             progress=1.0,
             modelProgress=None,
             currentFile="",
@@ -185,8 +197,8 @@ def run_scoring_job(
         job_service.update(
             running=False,
             phase="cancelled",
-            title="评分已取消",
-            detail="当前任务已中止，可以调整来源或模型后重新开始",
+            titleText=text_ref("jobText.scoringCancelled"),
+            detailText=text_ref("jobText.scoringCancelledDetail"),
             progress=0.0,
             modelProgress=None,
             currentFile="",
@@ -201,9 +213,10 @@ def run_scoring_job(
         job_service.update(
             running=False,
             phase="error",
-            title="评分失败",
-            detail="请检查网络、目录或模型文件",
+            titleText=text_ref("jobText.scoringFailed"),
+            detailText=text_ref("jobText.checkNetworkOrModels"),
             error=repr(exc),
+            errorText=exception_text(exc),
             modelProgress=None,
             currentFile="",
             currentPath="",

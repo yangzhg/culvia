@@ -9,6 +9,7 @@ import pandas as pd
 
 from culvia.app_state import AppStateStore
 from culvia.job_service import ScoringJobService
+from culvia.job_text import exception_text, text_ref
 from culvia.source_requests import SourceRequest, source_request_from_payload
 
 
@@ -23,7 +24,7 @@ RunSourcePreviewJob = Callable[[str, dict[str, Any], AppStateStore, ScoringJobSe
 @dataclass(frozen=True)
 class SourcePreviewDependencies:
     default_cache_path: str | Path
-    scan_image_paths: Callable[[Iterable[str | Path]], tuple[list[Path], list[str]]]
+    scan_image_paths: Callable[[Iterable[str | Path]], tuple[list[Path], list[dict[str, Any]]]]
     sanitize_uploaded_paths: Callable[[object], list[Path]]
     build_file_id: Callable[[Path], str]
     load_cache_records: Callable[[str | Path], pd.DataFrame]
@@ -36,7 +37,7 @@ class SourcePreviewDependencies:
 class SourcePreviewResult:
     request: SourceRequest
     paths: list[Path]
-    warnings: list[str]
+    warnings: list[dict[str, Any]]
     scores_df: pd.DataFrame
 
     def source_payload(self) -> dict[str, object]:
@@ -94,7 +95,7 @@ def source_preview_action(
     request = source_request_from_payload(payload, default_cache_path=dependencies.default_cache_path)
     if request.mode == "uploads":
         paths = dependencies.sanitize_uploaded_paths(request.uploaded_paths)
-        warnings: list[str] = []
+        warnings: list[dict[str, Any]] = []
         cached_records: dict[str, dict[str, object]] = {}
     else:
         paths, warnings = dependencies.scan_image_paths(request.folders)
@@ -108,7 +109,7 @@ def source_preview_action(
         try:
             file_id = dependencies.build_file_id(path)
         except OSError as exc:
-            warnings.append(f"读取照片失败：{path} ({exc!r})")
+            warnings.append(text_ref("warning.photoReadFailed", path=str(path), error=repr(exc)))
             continue
         valid_paths.append(path)
         rows.append(cached_records.get(file_id) or dependencies.make_empty_record(path, file_id, ""))
@@ -134,8 +135,8 @@ def start_source_preview_job_action(
     job_id = job_service.reserve(
         kind="source_preview",
         phase="source_scanning",
-        title="正在扫描照片来源",
-        detail="正在读取目录和已有评分记录",
+        title_text=text_ref("jobText.scanningSource"),
+        detail_text=text_ref("jobText.scanningSourceDetail"),
     )
     if not job_id:
         raise SourcePreviewStartError("jobAlreadyRunning", "当前已有任务正在运行。", status_code=409)
@@ -178,13 +179,14 @@ def run_source_preview_job(
             }
         job_service.update(
             phase="source_scanning",
-            title="正在扫描照片来源",
-            detail="正在读取目录、去重照片并复用已有评分",
+            titleText=text_ref("jobText.scanningSource"),
+            detailText=text_ref("jobText.scanningSourceDedupeDetail"),
             progress=0.2,
             done=0,
             total=0,
             warnings=[],
             error="",
+            errorText=None,
             currentFile="",
             currentPath="",
             currentThumb="",
@@ -200,8 +202,10 @@ def run_source_preview_job(
         job_service.update(
             running=False,
             phase="source_ready" if total else "source_empty",
-            title="照片来源已更新" if total else "没有找到照片",
-            detail=f"去重后 {total} 张照片" if total else "当前来源没有可用照片",
+            titleText=text_ref("jobText.sourceUpdated") if total else text_ref("jobText.noPhotos"),
+            detailText=text_ref("jobText.sourceUpdatedDetail", count=total)
+            if total
+            else text_ref("jobText.sourceEmptyDetail"),
             progress=1.0,
             done=total,
             total=total,
@@ -218,9 +222,10 @@ def run_source_preview_job(
         job_service.update(
             running=False,
             phase="error",
-            title="扫描失败",
-            detail="请检查照片来源或评分记录路径",
+            titleText=text_ref("jobText.scanFailed"),
+            detailText=text_ref("jobText.checkSourceOrCache"),
             error=repr(exc),
+            errorText=exception_text(exc),
             modelProgress=None,
             currentFile="",
             currentPath="",

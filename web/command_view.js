@@ -10,6 +10,20 @@ window.CulviaCommandView = (() => {
     return Math.min(max, Math.max(min, number));
   }
 
+  // Resolves a backend text reference ({ key, params }); param values may be nested refs.
+  function resolveTextRef(ref, fallback = "") {
+    if (!ref || typeof ref !== "object" || !ref.key) return fallback;
+    const params = {};
+    for (const [name, value] of Object.entries(ref.params || {})) {
+      params[name] = value && typeof value === "object" && value.key ? resolveTextRef(value) : value;
+    }
+    return t(ref.key, params);
+  }
+
+  function jobText(source, field, fallbackText = "") {
+    return resolveTextRef(source?.[`${field}Text`], String(source?.[field] || "")) || fallbackText;
+  }
+
   function isPaused(job = {}) {
     return Boolean(job?.paused) || job?.phase === "paused" || job?.phase === "pausing";
   }
@@ -25,9 +39,11 @@ window.CulviaCommandView = (() => {
         visible: false,
       };
     }
-    const activeStage = job.activeEvaluation || t("command.processingButton");
+    const activeStage = job.activeEvaluation ? t(job.activeEvaluation) : t("command.processingButton");
     return {
-      completed: Array.isArray(job.completedEvaluations) ? job.completedEvaluations : [],
+      completed: (Array.isArray(job.completedEvaluations) ? job.completedEvaluations : []).map((item) =>
+        t(String(item)),
+      ),
       emptyText: t("command.waitingEvaluation"),
       file: job.currentFile,
       stage: paused ? t("command.pausedStage") : t("command.currentStage", { stage: activeStage }),
@@ -67,7 +83,7 @@ window.CulviaCommandView = (() => {
     const loadingModel = !sourcePreviewRunning && job?.phase === "loading_model";
     const resolvedNetworkText = networkText || t("network.directConnection");
     let dotTone = model?.tone || "";
-    let state = model?.label || t("command.state");
+    let state = resolveTextRef(model?.labelText, String(model?.label || "")) || t("command.state");
     let title = sourceReady ? (model?.downloaded ? t("command.readyToScore") : t("command.firstRunPrepares")) : t("command.chooseSourceFirst");
     let detail = sourceReady
       ? model?.downloaded
@@ -80,20 +96,20 @@ window.CulviaCommandView = (() => {
       dotTone = "partial";
       if (sourcePreviewRunning) {
         state = t("command.scanningSource");
-        title = job.title || t("command.scanningSourceTitle");
-        detail = job.detail || t("command.scanningSourceDetail");
+        title = jobText(job, "title") || t("command.scanningSourceTitle");
+        detail = jobText(job, "detail") || t("command.scanningSourceDetail");
       } else if (cancelling) {
         state = t("command.cancellingState");
         title = t("command.cancellingTitle");
-        detail = job.detail || t("command.cancellingDetail");
+        detail = jobText(job, "detail") || t("command.cancellingDetail");
       } else if (llmReviewRunning) {
         state = t("command.llmReview");
-        title = job.title || t("command.llmReviewTitle");
-        detail = job.detail || t("command.llmReviewDetail");
+        title = jobText(job, "title") || t("command.llmReviewTitle");
+        detail = jobText(job, "detail") || t("command.llmReviewDetail");
       } else if (paused) {
         state = t("command.pausedState");
         title = t("command.pausedTitle");
-        detail = job.detail || t("command.resumeDetail");
+        detail = jobText(job, "detail") || t("command.resumeDetail");
       } else if (modelProgress) {
         state = t("command.preparingModel");
         title = t("command.preparingTitle");
@@ -101,22 +117,22 @@ window.CulviaCommandView = (() => {
       } else if (loadingModel) {
         state = t("command.loadingModel");
         title = t("command.loadingTitle");
-        detail = job.detail || t("command.modelReadyLocal");
+        detail = jobText(job, "detail") || t("command.modelReadyLocal");
       } else {
         state = t("command.scoring");
         title = t("command.scoringTitle");
-        detail = job.detail || t("command.waitPlease");
+        detail = jobText(job, "detail") || t("command.waitPlease");
       }
       progress = {
-        detail: modelProgress?.detail || job.detail || "",
-        label: modelProgress?.label || job.title || t("command.processing"),
+        detail: jobText(modelProgress, "detail") || jobText(job, "detail"),
+        label: jobText(modelProgress, "label") || jobText(job, "title") || t("command.processing"),
         value: modelProgress?.progress ?? (loadingModel ? 0.96 : job.progress ?? 0),
       };
     } else if (job?.phase === "error") {
       dotTone = "danger";
       state = t("command.needsAction");
       title = t("command.incomplete");
-      detail = job.error || job.detail || t("command.retryDetail");
+      detail = jobText(job, "error") || jobText(job, "detail") || t("command.retryDetail");
     } else if ((summary?.scored || 0) > 0) {
       dotTone = "ready";
       state = t("command.resultsReady");
@@ -259,5 +275,6 @@ window.CulviaCommandView = (() => {
     currentPhotoView,
     isPaused,
     progressView,
+    resolveTextRef,
   };
 })();

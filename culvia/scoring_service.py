@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from culvia.app_state import AppStateStore
 from culvia.job_service import ScoringJobService
+from culvia.job_text import text_ref
 
 
 class ThreadLike(Protocol):
@@ -70,8 +71,7 @@ def start_llm_review_job_action(
     job_id = job_service.reserve(
         kind="llm_review",
         phase="queued",
-        title="准备开始大模型评审",
-        detail="正在启动后台任务",
+        title_text=text_ref("jobText.llmQueued"),
     )
     if not job_id:
         raise ScoringStartError("scoringAlreadyRunning", "评分正在进行中", status_code=409)

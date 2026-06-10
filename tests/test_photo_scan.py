@@ -69,8 +69,10 @@ class PhotoScanTests(unittest.TestCase):
 
         self.assertEqual(paths, [])
         self.assertEqual(len(warnings), 2)
-        self.assertIn("不是支持的图片格式", warnings[0])
-        self.assertIn("目录不存在", warnings[1])
+        self.assertEqual(warnings[0]["key"], "warning.unsupportedImage")
+        self.assertEqual(warnings[0]["params"]["path"], str(unsupported))
+        self.assertEqual(warnings[1]["key"], "warning.folderMissing")
+        self.assertEqual(warnings[1]["params"]["path"], str(missing))
 
     def test_build_file_id_includes_path_size_and_mtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

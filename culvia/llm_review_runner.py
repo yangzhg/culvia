@@ -10,6 +10,7 @@ import pandas as pd
 from culvia.app_state import AppStateStore
 from culvia.insight_store import AnalysisInsight
 from culvia.job_service import JobCancelled, ScoringJobService
+from culvia.job_text import exception_text, text_ref
 from culvia.llm_runtime import AnalyzerOutput
 from culvia.schema import (
     CSV_COLUMNS,
@@ -32,7 +33,7 @@ class LlmReviewRunnerDependencies:
     llm_review_configured: Callable[[], bool]
     llm_review_status: Callable[[], Mapping[str, object]]
     sanitize_uploaded_paths: Callable[[object], list[Path]]
-    scan_image_paths: Callable[[Sequence[str]], tuple[list[Path], list[str]]]
+    scan_image_paths: Callable[[Sequence[str]], tuple[list[Path], list[dict[str, Any]]]]
     build_file_id: Callable[[str | Path], str]
     normalize_score_dataframe: Callable[[pd.DataFrame], pd.DataFrame]
     score_llm_review_image: ScoreLlmReviewImage
@@ -57,8 +58,8 @@ def run_llm_review_job(
             job_service.update(
                 running=False,
                 phase="error",
-                title="大模型评审未配置",
-                detail="请先在设置中配置 API Key 与模型",
+                titleText=text_ref("jobText.llmNotConfigured"),
+                detailText=text_ref("jobText.llmNotConfiguredDetail"),
                 error="llmReviewNotConfigured",
             )
             job_service.reset_control(job_id)
@@ -75,7 +76,7 @@ def run_llm_review_job(
         with state_store.lock:
             source_df = dependencies.normalize_score_dataframe(pd.DataFrame(state_store.data.get("scores_df"))).copy()
 
-        warnings: list[str] = []
+        warnings: list[dict[str, Any]] = []
         if source_df.empty:
             if source_request.mode == "uploads":
                 paths = [path for path in uploaded_paths if path.exists()]
@@ -101,18 +102,19 @@ def run_llm_review_job(
             running=True,
             kind="llm_review",
             phase="llm_review",
-            title="正在进行大模型评审",
-            detail=f"需要评审 {total} 张照片",
+            titleText=text_ref("jobText.llmRunning"),
+            detailText=text_ref("jobText.llmPendingDetail", count=total),
             progress=0.0 if total else 1.0,
             done=0,
             total=total,
             warnings=warnings,
             error="",
+            errorText=None,
             modelProgress=None,
             currentFile="",
             currentPath="",
             currentThumb="",
-            activeEvaluation="大模型评审",
+            activeEvaluation="stage.llmReview",
             completedEvaluations=[],
             paused=False,
         )
@@ -123,8 +125,8 @@ def run_llm_review_job(
             job_service.update(
                 running=False,
                 phase="done",
-                title="大模型评审已是最新",
-                detail="当前模型与提示词下没有需要补评的照片",
+                titleText=text_ref("jobText.llmUpToDate"),
+                detailText=text_ref("jobText.llmUpToDateDetail"),
                 progress=1.0,
                 activeEvaluation="",
             )
@@ -138,15 +140,15 @@ def run_llm_review_job(
             file_id = str(record.get("file_id") or "")
             job_service.update(
                 phase="llm_review",
-                title="正在进行大模型评审",
-                detail=f"第 {index} / {total} 张 · {path.name}",
+                titleText=text_ref("jobText.llmRunning"),
+                detailText=text_ref("jobText.photoProgressDetail", index=index, total=total, file=path.name),
                 progress=(index - 1) / max(total, 1),
                 done=index - 1,
                 total=total,
                 currentFile=path.name,
                 currentPath=str(path),
                 currentThumb=dependencies.thumbnail_url(str(path), 180),
-                activeEvaluation="大模型评审",
+                activeEvaluation="stage.llmReview",
                 completedEvaluations=[],
             )
             output = dependencies.score_llm_review_image(path, file_id, record)
@@ -158,17 +160,17 @@ def run_llm_review_job(
             with state_store.lock:
                 state_store.data["scores_df"] = scored_df
             job_service.update(
-                detail=f"已完成 {index} / {total} 张 · {path.name}",
+                detailText=text_ref("jobText.llmCompletedDetail", index=index, total=total, file=path.name),
                 progress=index / max(total, 1),
                 done=index,
-                completedEvaluations=["大模型评审"],
+                completedEvaluations=["stage.llmReview"],
             )
 
         job_service.update(
             running=False,
             phase="done",
-            title="大模型评审完成",
-            detail=f"已评审 {total} 张照片",
+            titleText=text_ref("jobText.llmDone"),
+            detailText=text_ref("jobText.llmDoneDetail", count=total),
             progress=1.0,
             modelProgress=None,
             currentFile="",
@@ -183,8 +185,8 @@ def run_llm_review_job(
         job_service.update(
             running=False,
             phase="cancelled",
-            title="大模型评审已取消",
-            detail="已保留完成照片的评审结果",
+            titleText=text_ref("jobText.llmCancelled"),
+            detailText=text_ref("jobText.llmCancelledDetail"),
             progress=0.0,
             modelProgress=None,
             currentFile="",
@@ -199,9 +201,10 @@ def run_llm_review_job(
         job_service.update(
             running=False,
             phase="error",
-            title="大模型评审失败",
-            detail="请检查网络、API Key 或模型配置",
+            titleText=text_ref("jobText.llmFailed"),
+            detailText=text_ref("jobText.llmFailedDetail"),
             error=repr(exc),
+            errorText=exception_text(exc),
             modelProgress=None,
             currentFile="",
             currentPath="",

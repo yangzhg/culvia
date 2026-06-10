@@ -182,9 +182,10 @@ def llm_review_prompt_text(
 
 
 def mask_llm_api_key(api_key: str) -> str:
+    # Empty keys mask to empty; the web UI shows its own localized "not configured" label.
     key = str(api_key or "").strip()
     if not key:
-        return "未配置"
+        return ""
     if len(key) <= 8:
         return f"{key[:2]}****{key[-2:]}"
     return f"{key[:4]}****{key[-4:]}"

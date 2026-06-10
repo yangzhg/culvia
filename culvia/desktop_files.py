@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from culvia.capabilities import native_folder_picker_available, reveal_in_file_manager_available
+from culvia.job_text import text_ref
 
 
 class CommandRunner(Protocol):
@@ -15,7 +16,14 @@ class CommandRunner(Protocol):
 
 
 class DesktopActionError(Exception):
-    """Raised when a supported desktop action fails unexpectedly."""
+    """Raised when a supported desktop action fails unexpectedly.
+
+    ``text_key`` attaches an i18n text reference resolved by the web UI.
+    """
+
+    def __init__(self, message: str, *, text_key: str | None = None, **params: Any) -> None:
+        super().__init__(message)
+        self.text = text_ref(text_key, **params) if text_key else None
 
 
 class DesktopActionUnsupported(DesktopActionError):
@@ -51,7 +59,7 @@ def _normalize_folder_output(value: object, platform: str) -> str:
     if platform == "darwin" or platform.startswith("linux"):
         folder = "/" if folder == "/" else folder.rstrip("/")
     if not folder:
-        raise DesktopActionError("系统没有返回目录路径。")
+        raise DesktopActionError("系统没有返回目录路径。", text_key="error.desktopNoFolder")
     return folder
 
 
@@ -68,7 +76,7 @@ def _normalize_folder_outputs(value: object, platform: str) -> list[str]:
         folders.append(folder)
         seen.add(folder)
     if not folders:
-        raise DesktopActionError("系统没有返回目录路径。")
+        raise DesktopActionError("系统没有返回目录路径。", text_key="error.desktopNoFolder")
     return folders
 
 
@@ -116,7 +124,9 @@ def _folder_picker_command(
             return command, None
         if _command_path("kdialog", which):
             return ["kdialog", "--title", prompt, "--getexistingdirectory", str(Path.home())], None
-    raise DesktopActionUnsupported("当前环境不支持原生目录选择。请直接输入目录路径。")
+    raise DesktopActionUnsupported(
+        "当前环境不支持原生目录选择。请直接输入目录路径。", text_key="error.desktopPickUnsupported"
+    )
 
 
 def choose_folder_path(
@@ -129,7 +139,9 @@ def choose_folder_path(
 ) -> str:
     platform_name = _platform_name(platform)
     if not native_folder_picker_available(platform_name, which):
-        raise DesktopActionUnsupported("当前环境不支持原生目录选择。请直接输入目录路径。")
+        raise DesktopActionUnsupported(
+            "当前环境不支持原生目录选择。请直接输入目录路径。", text_key="error.desktopPickUnsupported"
+        )
 
     try:
         command_runner = runner or subprocess.run
@@ -150,7 +162,7 @@ def choose_folder_path(
         raise DesktopActionError(repr(exc)) from exc
 
     if result.returncode != 0:
-        raise DesktopActionCancelled("用户取消了目录选择。")
+        raise DesktopActionCancelled("用户取消了目录选择。", text_key="error.desktopPickCancelled")
 
     return _normalize_folder_output(result.stdout, platform_name)
 
@@ -165,7 +177,9 @@ def choose_folder_paths(
 ) -> list[str]:
     platform_name = _platform_name(platform)
     if not native_folder_picker_available(platform_name, which):
-        raise DesktopActionUnsupported("当前环境不支持原生目录选择。请直接输入目录路径。")
+        raise DesktopActionUnsupported(
+            "当前环境不支持原生目录选择。请直接输入目录路径。", text_key="error.desktopPickUnsupported"
+        )
 
     try:
         command_runner = runner or subprocess.run
@@ -186,7 +200,7 @@ def choose_folder_paths(
         raise DesktopActionError(repr(exc)) from exc
 
     if result.returncode != 0:
-        raise DesktopActionCancelled("用户取消了目录选择。")
+        raise DesktopActionCancelled("用户取消了目录选择。", text_key="error.desktopPickCancelled")
 
     return _normalize_folder_outputs(result.stdout, platform_name)
 
@@ -202,7 +216,7 @@ def _reveal_command(path: Path, platform: str, which: Any = None) -> list[str]:
             return ["xdg-open", str(target)]
         if _command_path("gio", which):
             return ["gio", "open", str(target)]
-    raise DesktopActionUnsupported("当前环境不支持在文件管理器中定位。")
+    raise DesktopActionUnsupported("当前环境不支持在文件管理器中定位。", text_key="error.desktopRevealUnsupported")
 
 
 def reveal_path_in_file_manager(
@@ -214,7 +228,7 @@ def reveal_path_in_file_manager(
 ) -> None:
     platform_name = _platform_name(platform)
     if not reveal_in_file_manager_available(platform_name, which):
-        raise DesktopActionUnsupported("当前环境不支持在文件管理器中定位。")
+        raise DesktopActionUnsupported("当前环境不支持在文件管理器中定位。", text_key="error.desktopRevealUnsupported")
 
     try:
         command_runner = runner or subprocess.run
@@ -226,12 +240,12 @@ def reveal_path_in_file_manager(
 def _open_file_command(path: Path, platform: str, which: Any = None) -> tuple[list[str], dict[str, str] | None]:
     if platform == "darwin":
         if not _command_path("open", which):
-            raise DesktopActionUnsupported("当前环境不支持原生预览文件。")
+            raise DesktopActionUnsupported("当前环境不支持原生预览文件。", text_key="error.desktopPreviewUnsupported")
         return ["open", str(path)], None
     if platform.startswith(("win32", "cygwin", "msys")):
         shell = _first_command(("powershell", "pwsh"), which)
         if not shell:
-            raise DesktopActionUnsupported("当前环境不支持原生预览文件。")
+            raise DesktopActionUnsupported("当前环境不支持原生预览文件。", text_key="error.desktopPreviewUnsupported")
         env = dict(os.environ)
         env["CULVIA_OPEN_FILE_PATH"] = str(path)
         return [
@@ -246,7 +260,7 @@ def _open_file_command(path: Path, platform: str, which: Any = None) -> tuple[li
             return ["xdg-open", str(path)], None
         if _command_path("gio", which):
             return ["gio", "open", str(path)], None
-    raise DesktopActionUnsupported("当前环境不支持原生预览文件。")
+    raise DesktopActionUnsupported("当前环境不支持原生预览文件。", text_key="error.desktopPreviewUnsupported")
 
 
 def open_path_with_default_app(

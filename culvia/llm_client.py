@@ -4,6 +4,8 @@ from typing import Callable, Protocol
 
 import requests
 
+from culvia.job_text import TranslatableRuntimeError
+
 
 class LLMHTTPResponse(Protocol):
     status_code: int
@@ -25,7 +27,9 @@ def post_openai_compatible_chat(
     post: LLMPost = requests.post,
 ) -> dict[str, object]:
     if not api_key:
-        raise RuntimeError("大模型评审未配置：请设置 CULVIA_LLM_API_KEY 或 OPENAI_API_KEY。")
+        raise TranslatableRuntimeError(
+            "error.llmNotConfigured", fallback="大模型评审未配置：请设置 CULVIA_LLM_API_KEY 或 OPENAI_API_KEY。"
+        )
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -39,5 +43,5 @@ def post_openai_compatible_chat(
     response.raise_for_status()
     parsed = response.json()
     if not isinstance(parsed, dict):
-        raise RuntimeError("大模型接口返回内容不是 JSON 对象。")
+        raise TranslatableRuntimeError("error.llmResponseNotJson", fallback="大模型接口返回内容不是 JSON 对象。")
     return dict(parsed)

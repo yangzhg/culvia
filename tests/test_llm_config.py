@@ -141,7 +141,7 @@ class LLMConfigTests(unittest.TestCase):
         self.assertEqual(llm_config.llm_review_max_image_size({"MAX": "bad"}, "MAX", 1024), 1024)
 
     def test_mask_api_key_only_shows_edges(self) -> None:
-        self.assertEqual(llm_config.mask_llm_api_key(""), "未配置")
+        self.assertEqual(llm_config.mask_llm_api_key(""), "")
         self.assertEqual(llm_config.mask_llm_api_key("abcdef"), "ab****ef")
         self.assertEqual(
             llm_config.mask_llm_api_key("unit-test-api-key-0000000000003931"),

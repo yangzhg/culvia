@@ -24,6 +24,7 @@ window.CulviaExportResultData = (() => {
       return result.skippedDetails.map((item) => ({
         label: item?.label || "未复制",
         message: item?.message || "",
+        messageText: item?.messageText || null,
         path: item?.path || "",
         reason: item?.reason || "unknown",
       }));

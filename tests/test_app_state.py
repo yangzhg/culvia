@@ -12,7 +12,9 @@ class AppStateStoreTests(unittest.TestCase):
         self.assertEqual(job["jobId"], "")
         self.assertFalse(job["running"])
         self.assertEqual(job["phase"], "idle")
-        self.assertEqual(job["title"], "准备就绪")
+        self.assertEqual(job["title"], "")
+        self.assertEqual(job["titleText"], {"key": "jobText.idleReady"})
+        self.assertEqual(job["detailText"], {"key": "jobText.idleChooseSource"})
         self.assertEqual(job["updatedAt"], 123.0)
         self.assertEqual(job["completedEvaluations"], [])
 

@@ -100,7 +100,7 @@ class StatePayloadBuilderTests(unittest.TestCase):
                 "markCount": len(mark_by_file_id),
             },
             local_capabilities=lambda: {"desktop": True},
-            device_label=lambda: "CPU",
+            device_text=lambda: {"key": "device.genericCpu"},
             network_payload=lambda network: {"mode": network["mode"]},
             llm_config_payload=lambda: {"configured": True},
             normalize_selected_models=lambda selected: ["normalized", *(selected or [])],

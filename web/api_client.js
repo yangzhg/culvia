@@ -33,12 +33,22 @@ window.CulviaApi = (() => {
     return fetch(url, { method: "POST", body: form }).then(jsonResponse);
   }
 
+  // Param values may be backend text refs ({ key, params }); resolve them before formatting.
+  function resolvedParams(params) {
+    const resolve = window.CulviaCommandView?.resolveTextRef;
+    const output = {};
+    for (const [name, value] of Object.entries(params || {})) {
+      output[name] = resolve && value && typeof value === "object" && value.key ? resolve(value) : value;
+    }
+    return output;
+  }
+
   function errorMessage(error) {
     const message = error?.message || t("common.operationFailed", {}, "Operation failed");
     try {
       const parsed = JSON.parse(message);
       if (parsed?.errorCode) {
-        return t(`apiError.${parsed.errorCode}`, parsed.errorParams || {}, parsed.error || message);
+        return t(`apiError.${parsed.errorCode}`, resolvedParams(parsed.errorParams), parsed.error || message);
       }
       return parsed.error || message;
     } catch (_error) {

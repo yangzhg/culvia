@@ -85,7 +85,7 @@ window.CulviaExportResult = (() => {
           .map(
             (item) => `
               <strong aria-label="${helpers.escapeHtml(item.reason || "")}" data-ui-tooltip="${helpers.escapeHtml(item.reason || "")}">
-                ${helpers.escapeHtml(localizedSkippedLabel(item.label))}${item.count ? ` · ${helpers.escapeHtml(item.count)}` : ""}
+                ${helpers.escapeHtml(localizedSkippedLabel(item))}${item.count ? ` · ${helpers.escapeHtml(item.count)}` : ""}
               </strong>
             `,
           )
@@ -160,8 +160,9 @@ window.CulviaExportResult = (() => {
 
   function renderSkippedPathRow(item, helpers) {
     const text = String(item?.path || "");
-    const label = localizedSkippedLabel(item?.label);
-    const message = String(item?.message || "");
+    const label = localizedSkippedLabel(item);
+    const resolveRef = window.CulviaCommandView?.resolveTextRef;
+    const message = (resolveRef ? resolveRef(item?.messageText, "") : "") || String(item?.message || "");
     const detail = `${label}${message ? ` · ${message}` : ""}`;
     return `
       <div class="export-result-row">
@@ -171,8 +172,11 @@ window.CulviaExportResult = (() => {
     `;
   }
 
-  function localizedSkippedLabel(label) {
-    const text = String(label || "");
+  function localizedSkippedLabel(item) {
+    const reason = String(item?.reason || "");
+    if (reason === "missing") return t("export.resultReasonMissing", {}, "源文件缺失");
+    if (reason === "copy_failed") return t("export.resultReasonCopyFailed", {}, "复制失败");
+    const text = String(item?.label || "");
     if (!text || text === "未复制") return t("export.resultNotCopied", {}, "未复制");
     if (text === "源文件缺失") return t("export.resultReasonMissing", {}, "源文件缺失");
     return text;

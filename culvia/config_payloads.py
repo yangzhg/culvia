@@ -3,11 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
+from culvia.job_text import text_ref
+
 
 class ModelCapabilityLike(Protocol):
     key: str
-    label: str
-    subtitle: str
     model_id: str
     runtime_key: str
     requires_download: bool
@@ -15,20 +15,28 @@ class ModelCapabilityLike(Protocol):
     supports_text_insights: bool
 
 
-def device_label(device: str | None) -> str:
-    return "Apple 芯片加速" if device == "mps" else "通用处理器"
+def device_text_key(device: str | None) -> str:
+    """i18n key for the device name, resolved by the web UI."""
+    return "device.appleSilicon" if device == "mps" else "device.genericCpu"
+
+
+def device_text(device: str | None) -> dict[str, Any]:
+    return text_ref(device_text_key(device))
 
 
 def normalize_network_mode(value: object) -> str:
     return str(value) if value in {"direct", "system"} else "direct"
 
 
+def network_label_key(mode: str) -> str:
+    return "network.systemConnection" if mode == "system" else "network.directConnection"
+
+
 def network_payload(network: Mapping[str, Any], *, system_proxy_available: bool) -> dict[str, Any]:
     mode = normalize_network_mode(network.get("mode"))
-    label = "跟随系统设置" if mode == "system" else "普通连接"
     return {
         "mode": mode,
-        "label": label,
+        "labelText": text_ref(network_label_key(mode)),
         "systemProxyAvailable": system_proxy_available,
     }
 
@@ -46,10 +54,10 @@ def llm_config_payload(
     mask_api_key: Callable[[str], str],
 ) -> dict[str, Any]:
     configured = bool(status.get("configured"))
-    key_label = mask_api_key(api_key) if configured else "未配置"
+    key_label = mask_api_key(api_key) if configured else ""
     return {
         "configured": configured,
-        "source": status.get("sources", {}).get("apiKey") if configured else "未配置",
+        "source": status.get("sources", {}).get("apiKey") if configured else "",
         "model": model,
         "baseUrl": base_url,
         "endpoint": endpoint,
@@ -104,30 +112,32 @@ def model_option_payloads(
         status = runtime_status.get(capability.runtime_key, {})
         is_llm = capability.key == llm_model_key
         available = (not is_llm) or bool(llm_status.get("configured"))
-        state = ""
-        detail = ""
+        state_text: dict[str, Any] | None = None
+        detail_text: dict[str, Any] | None = None
         if is_llm:
-            state = "已配置" if available else "需配置"
-            input_mode_label = "文本评审" if llm_status.get("inputMode") == "text" else "图片评审"
-            detail = (
-                f"使用 {llm_status['model']} · {input_mode_label} · 生成影像评价和建议"
+            state_text = text_ref("model.configured") if available else text_ref("model.needsConfig")
+            input_mode_key = "llm.inputMode.text" if llm_status.get("inputMode") == "text" else "llm.inputMode.image"
+            detail_text = (
+                text_ref(
+                    "model.option.llm_review.detailConfigured",
+                    model=str(llm_status["model"]),
+                    inputMode=text_ref(input_mode_key),
+                )
                 if available
-                else "设置 CULVIA_LLM_API_KEY 或 OPENAI_API_KEY 后可用"
+                else text_ref("model.option.llm_review.detailNeedsKey")
             )
         payloads.append(
             {
                 "key": capability.key,
-                "label": capability.label,
-                "subtitle": capability.subtitle,
                 "model": str(llm_status["model"]) if is_llm else capability.model_id,
                 "requiresDownload": capability.requires_download,
                 "downloaded": bool(status.get("downloaded")),
                 "partial": bool(status.get("partial")),
-                "size": status.get("model_size_label") or "未知",
+                "size": status.get("model_size_label") or "",
                 "selected": capability.key in selected_models and available,
                 "disabled": not available,
-                "state": state,
-                "detail": detail,
+                "stateText": state_text,
+                "detailText": detail_text,
                 "provider": capability.provider,
                 "supportsTextInsights": capability.supports_text_insights,
             }
@@ -144,7 +154,7 @@ def model_payload(
     clip_status: Mapping[str, Any],
     network_status: Mapping[str, Any],
     runtime_loaded: bool,
-    runtime_device_label: str,
+    runtime_device_text: Mapping[str, Any],
 ) -> dict[str, Any]:
     selected_downloadables = [option for option in options if option["selected"] and option["requiresDownload"]]
     downloaded = (
@@ -153,34 +163,30 @@ def model_payload(
     any_downloaded = any(bool(option["downloaded"]) for option in selected_downloadables)
     partial = any(option["selected"] and option["requiresDownload"] and option["partial"] for option in options)
     if downloaded:
-        label = "模型已就绪"
+        state_key = "ready"
         tone = "ready"
-        hint = "可直接开始评分"
     elif partial:
-        label = "模型准备中"
+        state_key = "preparing"
         tone = "partial"
-        hint = "首次评分会继续下载"
     elif any_downloaded:
-        label = "部分模型待准备"
+        state_key = "partiallyReady"
         tone = "partial"
-        hint = "首次使用新增模型会自动下载"
     else:
-        label = "模型待准备"
+        state_key = "pending"
         tone = "missing"
-        hint = "首次评分会自动下载"
 
     return {
         "id": model_id,
         "selected": list(selected_models),
         "options": list(options),
-        "label": label,
+        "labelText": text_ref(f"model.state.{state_key}"),
         "tone": tone,
-        "hint": hint,
-        "size": core_status.get("model_size_label") or "未知",
-        "clipSize": clip_status.get("model_size_label") or "未知",
+        "hintText": text_ref(f"model.hint.{state_key}"),
+        "size": core_status.get("model_size_label") or "",
+        "clipSize": clip_status.get("model_size_label") or "",
         "downloaded": downloaded,
         "runtimeLoaded": runtime_loaded,
-        "runtimeDevice": runtime_device_label,
+        "runtimeDeviceText": dict(runtime_device_text),
         "proxyEnabled": network_status["mode"] == "system" and bool(network_status["systemProxyAvailable"]),
-        "proxyLabel": network_status["label"],
+        "proxyLabelText": dict(network_status["labelText"]),
     }

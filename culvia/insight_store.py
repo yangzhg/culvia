@@ -17,6 +17,7 @@ from culvia.cache_schema import (
     json_dumps,
     json_loads,
 )
+from culvia.job_text import TranslatableValueError
 
 
 @dataclass(frozen=True)
@@ -158,7 +159,9 @@ class AppConfigStore:
     def save(self, config: Mapping[str, object], cache_path: str | Path) -> dict[str, str]:
         path = Path(cache_path).expanduser()
         if not is_sqlite_cache_path(path):
-            raise ValueError("大模型配置持久化需要 SQLite 缓存文件。")
+            raise TranslatableValueError(
+                "error.llmConfigNeedsSqlite", fallback="大模型配置持久化需要 SQLite 缓存文件。"
+            )
         path.parent.mkdir(parents=True, exist_ok=True)
         cleaned = self.clean_config(config)
         now = time.time()

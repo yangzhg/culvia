@@ -70,9 +70,8 @@ class ScoreFieldGroup:
 
 @dataclass(frozen=True)
 class ModelCapability:
+    # Display name and subtitle come from the web locales (model.option.<key>.label / .subtitle).
     key: str
-    label: str
-    subtitle: str
     model_id: str
     field_group_key: str
     runtime_key: str
@@ -185,8 +184,6 @@ LLM_REVIEW_LABELS = dict(LLM_REVIEW_GROUP.labels)
 MODEL_CAPABILITIES = {
     MODEL_CORE_AESTHETIC: ModelCapability(
         key=MODEL_CORE_AESTHETIC,
-        label="核心审美",
-        subtitle="构图、光线、色彩等画像",
         model_id=MODEL_ID,
         field_group_key=CORE_AESTHETIC_GROUP.key,
         runtime_key=RUNTIME_CORE_AESTHETIC,
@@ -195,8 +192,6 @@ MODEL_CAPABILITIES = {
     ),
     MODEL_CLIP_IQA: ModelCapability(
         key=MODEL_CLIP_IQA,
-        label="模型画质",
-        subtitle="CLIP-IQA 感知画质",
         model_id=CLIP_REFERENCE_MODEL_ID,
         field_group_key=MODEL_QUALITY_GROUP.key,
         runtime_key=RUNTIME_CLIP_REFERENCE,
@@ -206,8 +201,6 @@ MODEL_CAPABILITIES = {
     ),
     MODEL_CLIP_AESTHETIC: ModelCapability(
         key=MODEL_CLIP_AESTHETIC,
-        label="审美参考",
-        subtitle="CLIP 零样本参考",
         model_id=CLIP_REFERENCE_MODEL_ID,
         field_group_key=AESTHETIC_REFERENCE_GROUP.key,
         runtime_key=RUNTIME_CLIP_REFERENCE,
@@ -217,17 +210,13 @@ MODEL_CAPABILITIES = {
     ),
     MODEL_BASIC_TECHNICAL: ModelCapability(
         key=MODEL_BASIC_TECHNICAL,
-        label="基础质检",
-        subtitle="清晰、曝光、噪点统计",
-        model_id="本地规则",
+        model_id="local-rules",
         field_group_key=TECHNICAL_GROUP.key,
         runtime_key=RUNTIME_LOCAL,
         requires_download=False,
     ),
     MODEL_LLM_REVIEW: ModelCapability(
         key=MODEL_LLM_REVIEW,
-        label="大模型评审",
-        subtitle="审美、技术、评价与修图建议",
         model_id=DEFAULT_LLM_MODEL,
         field_group_key=LLM_REVIEW_GROUP.key,
         runtime_key=RUNTIME_LLM_REVIEW,

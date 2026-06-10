@@ -40,15 +40,20 @@ class ScoringJobServiceTests(unittest.TestCase):
     def test_reserve_can_label_source_preview_jobs(self) -> None:
         service = make_service()
 
-        job_id = service.reserve(kind="source_preview", phase="source_scanning", title="扫描照片", detail="读取目录")
+        job_id = service.reserve(
+            kind="source_preview",
+            phase="source_scanning",
+            title_text={"key": "jobText.scanningSource"},
+            detail_text={"key": "jobText.scanningSourceDetail"},
+        )
 
         self.assertTrue(job_id)
         with service.state_store.lock:
             job = service.state_store.data["job"]
             self.assertEqual(job["kind"], "source_preview")
             self.assertEqual(job["phase"], "source_scanning")
-            self.assertEqual(job["title"], "扫描照片")
-            self.assertEqual(job["detail"], "读取目录")
+            self.assertEqual(job["titleText"], {"key": "jobText.scanningSource"})
+            self.assertEqual(job["detailText"], {"key": "jobText.scanningSourceDetail"})
 
     def test_thread_bound_updates_cannot_overwrite_a_new_job(self) -> None:
         service = make_service()

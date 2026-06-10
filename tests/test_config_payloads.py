@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 from culvia.config_payloads import (
     available_selected_models,
-    device_label,
+    device_text,
+    device_text_key,
     llm_config_payload,
     model_option_payloads,
     model_payload,
@@ -18,8 +19,6 @@ from culvia.config_payloads import (
 @dataclass(frozen=True)
 class FakeCapability:
     key: str
-    label: str
-    subtitle: str
     model_id: str
     runtime_key: str
     requires_download: bool
@@ -28,14 +27,17 @@ class FakeCapability:
 
 
 class ConfigPayloadTests(unittest.TestCase):
-    def test_network_payload_uses_friendly_labels(self) -> None:
+    def test_network_payload_uses_text_refs(self) -> None:
         self.assertEqual(normalize_network_mode("weird"), "direct")
-        self.assertEqual(network_payload({"mode": "direct"}, system_proxy_available=True)["label"], "普通连接")
+        self.assertEqual(
+            network_payload({"mode": "direct"}, system_proxy_available=True)["labelText"],
+            {"key": "network.directConnection"},
+        )
 
         payload = network_payload({"mode": "system"}, system_proxy_available=True)
 
         self.assertEqual(payload["mode"], "system")
-        self.assertEqual(payload["label"], "跟随系统设置")
+        self.assertEqual(payload["labelText"], {"key": "network.systemConnection"})
         self.assertTrue(payload["systemProxyAvailable"])
 
     def test_llm_config_payload_masks_key_and_preserves_prompt_presets(self) -> None:
@@ -75,16 +77,14 @@ class ConfigPayloadTests(unittest.TestCase):
         )
 
         self.assertFalse(payload["configured"])
-        self.assertEqual(payload["keyLabel"], "未配置")
-        self.assertEqual(payload["source"], "未配置")
+        self.assertEqual(payload["keyLabel"], "")
+        self.assertEqual(payload["source"], "")
 
     def test_model_options_disable_llm_until_configured(self) -> None:
         capabilities = {
-            "core": FakeCapability("core", "核心审美", "构图光线", "core-model", "core-runtime", True),
+            "core": FakeCapability("core", "core-model", "core-runtime", True),
             "llm": FakeCapability(
                 "llm",
-                "大模型评审",
-                "文本评价",
                 "default-llm",
                 "llm-runtime",
                 False,
@@ -99,7 +99,7 @@ class ConfigPayloadTests(unittest.TestCase):
             model_capabilities=capabilities,
             runtime_status={
                 "core-runtime": {"downloaded": True, "partial": False, "model_size_label": "123 MB"},
-                "llm-runtime": {"downloaded": False, "partial": False, "model_size_label": "需配置"},
+                "llm-runtime": {"downloaded": False, "partial": False, "model_size_label": ""},
             },
             llm_status={"configured": False, "model": "qwen-plus", "inputMode": "image"},
             llm_model_key="llm",
@@ -107,9 +107,42 @@ class ConfigPayloadTests(unittest.TestCase):
 
         self.assertTrue(options[0]["selected"])
         self.assertEqual(options[0]["size"], "123 MB")
+        self.assertIsNone(options[0]["stateText"])
+        self.assertIsNone(options[0]["detailText"])
         self.assertFalse(options[1]["selected"])
         self.assertTrue(options[1]["disabled"])
-        self.assertEqual(options[1]["state"], "需配置")
+        self.assertEqual(options[1]["stateText"], {"key": "model.needsConfig"})
+        self.assertEqual(options[1]["detailText"], {"key": "model.option.llm_review.detailNeedsKey"})
+
+    def test_model_options_describe_configured_llm(self) -> None:
+        capabilities = {
+            "llm": FakeCapability(
+                "llm",
+                "default-llm",
+                "llm-runtime",
+                False,
+                provider="openai-compatible",
+                supports_text_insights=True,
+            ),
+        }
+
+        options = model_option_payloads(
+            ["llm"],
+            model_keys=["llm"],
+            model_capabilities=capabilities,
+            runtime_status={"llm-runtime": {"downloaded": True, "partial": False, "model_size_label": ""}},
+            llm_status={"configured": True, "model": "qwen-plus", "inputMode": "text"},
+            llm_model_key="llm",
+        )
+
+        self.assertEqual(options[0]["stateText"], {"key": "model.configured"})
+        self.assertEqual(
+            options[0]["detailText"],
+            {
+                "key": "model.option.llm_review.detailConfigured",
+                "params": {"model": "qwen-plus", "inputMode": {"key": "llm.inputMode.text"}},
+            },
+        )
 
     def test_model_payload_reports_partial_and_proxy_state(self) -> None:
         payload = model_payload(
@@ -121,29 +154,37 @@ class ConfigPayloadTests(unittest.TestCase):
             ],
             core_status={"model_size_label": "333 MB"},
             clip_status={"model_size_label": "900 MB"},
-            network_status={"mode": "system", "label": "跟随系统设置", "systemProxyAvailable": True},
+            network_status={
+                "mode": "system",
+                "labelText": {"key": "network.systemConnection"},
+                "systemProxyAvailable": True,
+            },
             runtime_loaded=False,
-            runtime_device_label="Apple 芯片加速",
+            runtime_device_text={"key": "device.appleSilicon"},
         )
 
         self.assertEqual(payload["tone"], "partial")
-        self.assertEqual(payload["label"], "模型准备中")
+        self.assertEqual(payload["labelText"], {"key": "model.state.preparing"})
+        self.assertEqual(payload["hintText"], {"key": "model.hint.preparing"})
         self.assertFalse(payload["downloaded"])
         self.assertTrue(payload["proxyEnabled"])
-        self.assertEqual(payload["runtimeDevice"], "Apple 芯片加速")
+        self.assertEqual(payload["proxyLabelText"], {"key": "network.systemConnection"})
+        self.assertEqual(payload["runtimeDeviceText"], {"key": "device.appleSilicon"})
 
     def test_model_selection_helpers(self) -> None:
         capabilities = {
-            "core": FakeCapability("core", "核心", "", "core-model", "core-runtime", True),
-            "local": FakeCapability("local", "本地", "", "local-model", "local-runtime", False),
-            "llm": FakeCapability("llm", "大模型", "", "llm-model", "llm-runtime", False),
+            "core": FakeCapability("core", "core-model", "core-runtime", True),
+            "local": FakeCapability("local", "local-model", "local-runtime", False),
+            "llm": FakeCapability("llm", "llm-model", "llm-runtime", False),
         }
 
         self.assertEqual(
             available_selected_models(["core", "llm"], llm_configured=False, llm_model_key="llm"), ["core"]
         )
-        self.assertEqual(device_label("mps"), "Apple 芯片加速")
-        self.assertEqual(device_label("cpu"), "通用处理器")
+        self.assertEqual(device_text_key("mps"), "device.appleSilicon")
+        self.assertEqual(device_text_key("cpu"), "device.genericCpu")
+        self.assertEqual(device_text("mps"), {"key": "device.appleSilicon"})
+        self.assertEqual(device_text("cpu"), {"key": "device.genericCpu"})
         self.assertEqual(
             model_runtime_keys(
                 ["core", "local", "llm"],

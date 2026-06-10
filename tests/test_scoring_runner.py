@@ -57,8 +57,8 @@ def make_dependencies(
     def thumbnail_url(path: str, max_size: int) -> str:
         return f"/thumb?path={Path(path).name}&max={max_size}"
 
-    def device_label(device: str | None) -> str:
-        return f"设备 {device or 'cpu'}"
+    def device_key(device: str | None) -> str:
+        return f"device.{device or 'cpu'}"
 
     return ScoringRunnerDependencies(
         default_cache_path="/tmp/default.sqlite",
@@ -75,7 +75,7 @@ def make_dependencies(
         model_loader=model_loader,
         clip_reference_loader=clip_reference_loader,
         thumbnail_url=thumbnail_url,
-        device_label=device_label,
+        device_key=device_key,
     )
 
 
@@ -177,7 +177,13 @@ class ScoringRunnerTests(unittest.TestCase):
             self.assertEqual(store.data["source"]["uploadedPaths"], [str(image_path)])
             self.assertFalse(store.data["job"]["running"])
             self.assertEqual(store.data["job"]["phase"], "done")
-            self.assertEqual(store.data["job"]["detail"], "1 张照片 · 设备 mps")
+            self.assertEqual(
+                store.data["job"]["detailText"],
+                {
+                    "key": "jobText.scoringDoneDetail",
+                    "params": {"count": 1, "device": {"key": "device.mps"}},
+                },
+            )
             self.assertEqual(store.data["job"]["currentFile"], "")
         self.assertEqual(calls["paths"], [image_path])
         self.assertFalse(calls["use_cache"])
@@ -212,8 +218,9 @@ class ScoringRunnerTests(unittest.TestCase):
         with store.lock:
             self.assertFalse(store.data["job"]["running"])
             self.assertEqual(store.data["job"]["phase"], "error")
-            self.assertEqual(store.data["job"]["title"], "评分失败")
+            self.assertEqual(store.data["job"]["titleText"], {"key": "jobText.scoringFailed"})
             self.assertIn("RuntimeError", store.data["job"]["error"])
+            self.assertIsNone(store.data["job"]["errorText"])
         self.assertEqual(service.control["jobId"], "")
         self.assertEqual(service.active_thread_job_id(), "")
 
@@ -244,7 +251,7 @@ class ScoringRunnerTests(unittest.TestCase):
         with store.lock:
             self.assertFalse(store.data["job"]["running"])
             self.assertEqual(store.data["job"]["phase"], "cancelled")
-            self.assertEqual(store.data["job"]["title"], "评分已取消")
+            self.assertEqual(store.data["job"]["titleText"], {"key": "jobText.scoringCancelled"})
         self.assertEqual(service.control["jobId"], "")
 
     def test_unsupported_cache_path_suffix_is_reported_as_job_error(self) -> None:
@@ -265,6 +272,7 @@ class ScoringRunnerTests(unittest.TestCase):
             self.assertFalse(store.data["job"]["running"])
             self.assertEqual(store.data["job"]["phase"], "error")
             self.assertIn("ValueError", store.data["job"]["error"])
+            self.assertEqual(store.data["job"]["errorText"], {"key": "error.cachePathNotSqlite"})
             self.assertEqual(store.data["source"]["cachePath"], "/tmp/current.sqlite")
         self.assertEqual(service.control["jobId"], "")
         self.assertEqual(service.active_thread_job_id(), "")

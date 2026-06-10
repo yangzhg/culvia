@@ -12,6 +12,7 @@ import pandas as pd
 from culvia.curation import PhotoMark, curation_export_dataframe, load_photo_marks
 from culvia.curation_context import DisplayDataframeBuilder, build_curation_display_context
 from culvia.curation_targets import frame_file_ids
+from culvia.job_text import text_ref
 
 
 EXPORT_PAYLOAD_VERSION = 1
@@ -43,17 +44,19 @@ class ExportSkippedFile:
     path: Path
     reason: str
     message: str = ""
+    message_text: dict[str, object] | None = None
 
     @property
     def label(self) -> str:
         return SKIPPED_REASON_LABELS.get(self.reason, "未复制")
 
-    def to_payload(self) -> dict[str, str]:
+    def to_payload(self) -> dict[str, object]:
         return {
             "path": str(self.path),
             "reason": self.reason,
             "label": self.label,
             "message": self.message,
+            "messageText": self.message_text,
         }
 
 
@@ -75,7 +78,7 @@ class ExportCopyResult:
     def resolved_skipped_details(self) -> list[ExportSkippedFile]:
         if self.skipped_details is not None:
             return self.skipped_details
-        return [ExportSkippedFile(path, "copy_failed", "未复制") for path in self.skipped_paths]
+        return [ExportSkippedFile(path, "copy_failed") for path in self.skipped_paths]
 
     def skipped_reason_summary(self) -> list[dict[str, object]]:
         counts: dict[str, int] = {}
@@ -303,7 +306,14 @@ def copy_selected_photo_files(selected_df: pd.DataFrame, destination: Path) -> E
         source_path = Path(str(row.get("path") or "")).expanduser()
         if not source_path.exists() or not source_path.is_file():
             skipped.append(source_path)
-            skipped_details.append(ExportSkippedFile(source_path, "missing", "源文件不存在或不是文件"))
+            skipped_details.append(
+                ExportSkippedFile(
+                    source_path,
+                    "missing",
+                    "源文件不存在或不是文件",
+                    message_text=text_ref("export.skippedMissingDetail"),
+                )
+            )
             continue
         try:
             target = unique_destination_path(destination, source_path.name)
@@ -311,7 +321,14 @@ def copy_selected_photo_files(selected_df: pd.DataFrame, destination: Path) -> E
             copied.append(target)
         except Exception as exc:
             skipped.append(source_path)
-            skipped_details.append(ExportSkippedFile(source_path, "copy_failed", f"复制失败：{exc}"))
+            skipped_details.append(
+                ExportSkippedFile(
+                    source_path,
+                    "copy_failed",
+                    f"复制失败：{exc}",
+                    message_text=text_ref("export.skippedCopyFailedDetail", error=str(exc)),
+                )
+            )
     return ExportCopyResult(
         destination=destination,
         copied_paths=copied,

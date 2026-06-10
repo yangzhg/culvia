@@ -225,7 +225,8 @@ class SourcePreviewTests(unittest.TestCase):
 
         self.assertEqual(result.paths, [])
         self.assertEqual(len(result.scores_df), 0)
-        self.assertIn("读取照片失败", result.warnings[0])
+        self.assertEqual(result.warnings[0]["key"], "warning.photoReadFailed")
+        self.assertIn("path", result.warnings[0]["params"])
 
     def test_apply_preview_state_updates_source_and_scores(self) -> None:
         class Store:

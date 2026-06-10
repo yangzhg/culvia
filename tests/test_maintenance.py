@@ -113,7 +113,7 @@ class MaintenanceTests(unittest.TestCase):
             )
 
         self.assertEqual(path, current)
-        self.assertEqual(error, "")
+        self.assertIsNone(error)
 
     def test_resolve_history_cache_path_allows_current_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,7 +127,7 @@ class MaintenanceTests(unittest.TestCase):
             )
 
         self.assertEqual(path, current)
-        self.assertEqual(error, "")
+        self.assertIsNone(error)
 
     def test_resolve_history_cache_path_rejects_non_current_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -142,7 +142,7 @@ class MaintenanceTests(unittest.TestCase):
             )
 
         self.assertIsNone(path)
-        self.assertEqual(error, "只能清理当前正在使用的评分记录。")
+        self.assertEqual(error, {"key": "error.historyCacheNotCurrent"})
 
     def test_resolve_history_cache_path_rejects_unsupported_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -157,7 +157,7 @@ class MaintenanceTests(unittest.TestCase):
             )
 
         self.assertIsNone(path)
-        self.assertEqual(error, "评分记录只支持清理 SQLite 文件。")
+        self.assertEqual(error, {"key": "error.historyCacheNotSqlite"})
 
     def test_resolve_history_cache_path_rejects_existing_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -172,7 +172,7 @@ class MaintenanceTests(unittest.TestCase):
             )
 
         self.assertIsNone(path)
-        self.assertEqual(error, "缓存路径不是文件，未执行清理。")
+        self.assertEqual(error, {"key": "error.historyCacheNotFile"})
 
 
 if __name__ == "__main__":

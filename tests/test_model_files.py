@@ -11,7 +11,7 @@ from culvia import model_files
 
 class ModelFileHelperTests(unittest.TestCase):
     def test_format_helpers_are_compact_and_localized(self) -> None:
-        self.assertEqual(model_files.format_bytes(None), "未知")
+        self.assertEqual(model_files.format_bytes(None), "")
         self.assertEqual(model_files.format_bytes(1536), "1.5 KB")
         self.assertEqual(model_files.format_duration(None), "计算中")
         self.assertEqual(model_files.format_duration(65), "1分05秒")
