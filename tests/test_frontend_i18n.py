@@ -111,6 +111,7 @@ class FrontendI18nTests(unittest.TestCase):
 
     def test_high_visibility_dynamic_notices_use_i18n_resources(self) -> None:
         app_js = (WEB / "app.js").read_text(encoding="utf-8")
+        app_js += (WEB / "llm_config_panel.js").read_text(encoding="utf-8")
 
         for stale_literal in (
             'curationHistoryError = "暂时无法读取最近操作"',

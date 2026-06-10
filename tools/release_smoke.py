@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB_DATA_PREFIX = "share/culvia/web"
 DEFAULT_PYTHON_DIST_DIR = ROOT / "dist" / "python"
 STATIC_REFERENCE_RE = re.compile(r'(?:href|src)="([^"]+)"')
+MODULE_IMPORT_RE = re.compile(r"""^\s*import\s+(?:[^"']*?\bfrom\s+)?["'](\.{1,2}/[^"']+)["']""", re.MULTILINE)
 REQUIRED_PACKAGE_SUFFIXES = (
     "culvia/__init__.py",
     "culvia/settings.py",
@@ -111,19 +112,45 @@ def static_references_from_html(html: str) -> set[str]:
     return references
 
 
+def module_graph_files(web_dir: Path, entry_relative: str) -> set[str]:
+    """Relative paths of a JS module and everything it transitively imports."""
+    resolved: set[str] = set()
+    queue = [entry_relative]
+    while queue:
+        relative = queue.pop()
+        normalized = os.path.normpath(relative).replace(os.sep, "/")
+        if normalized in resolved or normalized.startswith(".."):
+            continue
+        resolved.add(normalized)
+        path = web_dir / normalized
+        if path.suffix != ".js" or not path.exists():
+            continue
+        parent = os.path.dirname(normalized)
+        for spec in MODULE_IMPORT_RE.findall(path.read_text(encoding="utf-8")):
+            queue.append(os.path.join(parent, spec))
+    return resolved
+
+
+def web_static_files(root: Path = ROOT) -> set[str]:
+    web_dir = root / "web"
+    html = (web_dir / "index.html").read_text(encoding="utf-8")
+    files: set[str] = set()
+    for relative in static_references_from_html(html):
+        files.update(module_graph_files(web_dir, relative))
+    return files
+
+
 def expected_web_data_files(root: Path = ROOT) -> set[str]:
-    html = (root / "web" / "index.html").read_text(encoding="utf-8")
     expected = {f"{WEB_DATA_PREFIX}/index.html"}
     expected.update(f"{WEB_DATA_PREFIX}/{relative}" for relative in INSTALLED_WEB_REQUIRED_FILES)
-    expected.update(f"{WEB_DATA_PREFIX}/{relative}" for relative in static_references_from_html(html))
+    expected.update(f"{WEB_DATA_PREFIX}/{relative}" for relative in web_static_files(root))
     return expected
 
 
 def expected_web_source_files(root: Path = ROOT) -> set[str]:
-    html = (root / "web" / "index.html").read_text(encoding="utf-8")
     expected = {"web/index.html"}
     expected.update(f"web/{relative}" for relative in INSTALLED_WEB_REQUIRED_FILES)
-    expected.update(f"web/{relative}" for relative in static_references_from_html(html))
+    expected.update(f"web/{relative}" for relative in web_static_files(root))
     return expected
 
 

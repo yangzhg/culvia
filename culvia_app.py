@@ -801,7 +801,10 @@ def state_payload(state_store: AppStateStore | None = None) -> dict[str, Any]:
 
 
 async def homepage(request: Request) -> Response:
-    return FileResponse(request_runtime_config(request).web_dir / "index.html")
+    return FileResponse(
+        request_runtime_config(request).web_dir / "index.html",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 async def health(_: Request) -> JSONResponse:

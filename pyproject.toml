@@ -77,6 +77,7 @@ py-modules = ["culvia_app"]
 "share/culvia/web" = [
   "web/index.html",
   "web/favicon.svg",
+  "web/main.js",
   "web/i18n_messages.js",
   "web/i18n.js",
   "web/filter_state.js",
@@ -99,6 +100,10 @@ py-modules = ["culvia_app"]
   "web/api_client.js",
   "web/distribution_model.js",
   "web/distribution_view.js",
+  "web/distribution_panel.js",
+  "web/export_panel.js",
+  "web/llm_config_panel.js",
+  "web/gallery_panel.js",
   "web/viewer_inspector.js",
   "web/app_config.js",
   "web/icons.js",
