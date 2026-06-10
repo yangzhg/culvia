@@ -1734,28 +1734,15 @@ h1 {
 }
 
 .view-tabs .view-tab.is-active {
-  color: var(--ink);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.72)),
-    linear-gradient(135deg, rgba(var(--accent-rgb), 0.18), rgba(var(--accent-rgb), 0.07));
-  box-shadow:
-    inset 0 0 0 1px rgba(var(--accent-rgb), 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.78),
-    0 10px 22px rgba(var(--accent-rgb), 0.12),
-    0 8px 18px rgba(31, 35, 43, 0.06);
+  color: #fff;
+  background: var(--ink);
+  box-shadow: 0 4px 12px rgba(31, 35, 43, 0.18);
 }
 
-.view-tabs .view-tab.is-active::after {
-  content: "";
-  position: absolute;
-  right: 14px;
-  bottom: 6px;
-  left: 14px;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent-strong), color-mix(in srgb, var(--accent) 68%, white));
-  opacity: 1;
-  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.24);
+.view-tabs .view-tab.is-active:hover,
+.view-tabs .view-tab.is-active:focus-visible {
+  color: #fff;
+  background: var(--ink);
 }
 
 .view-tab span[data-icon] {
@@ -1768,8 +1755,8 @@ h1 {
   opacity: 0.82;
 }
 
-.view-tab.is-active span[data-icon] {
-  color: var(--accent-strong);
+.view-tabs .view-tab.is-active span[data-icon] {
+  color: #fff;
   opacity: 1;
 }
 
@@ -1835,4 +1822,10 @@ h1 {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.5;
+}
+
+.stat-card strong.is-empty {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  font-weight: 640;
 }

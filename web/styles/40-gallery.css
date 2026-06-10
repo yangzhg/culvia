@@ -1298,3 +1298,41 @@ body.is-gallery-marquee-selecting * {
   font-size: 11px;
   font-weight: 760;
 }
+
+@media (hover: hover) and (pointer: fine) {
+  .gallery-quick-actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .photo-card:hover .gallery-quick-actions,
+  .photo-card:focus-within .gallery-quick-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .gallery-select-toggle {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .photo-card:hover .gallery-select-toggle,
+  .photo-card:focus-within .gallery-select-toggle,
+  .gallery-select-toggle.is-selected {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .gallery-rating > span:not(.rating-label),
+  .gallery-rating .rating-label {
+    opacity: 0;
+    transition: opacity 140ms ease;
+  }
+
+  .photo-card:hover .gallery-rating > span:not(.rating-label),
+  .photo-card:hover .gallery-rating .rating-label,
+  .photo-card:focus-within .gallery-rating > span:not(.rating-label),
+  .photo-card:focus-within .gallery-rating .rating-label {
+    opacity: 1;
+  }
+}

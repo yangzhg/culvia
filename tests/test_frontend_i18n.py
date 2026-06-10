@@ -210,8 +210,6 @@ class FrontendI18nTests(unittest.TestCase):
                 "settings.languageShort.en",
                 "settings.languageBadge.zh-CN",
                 "settings.languageBadge.en",
-                "settings.languageFlag.zh-CN",
-                "settings.languageFlag.en",
             ):
                 self.assertIn(key, dictionary, f"{locale} missing {key}")
 

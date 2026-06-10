@@ -64,8 +64,8 @@
     grid-template-areas:
       "image"
       "filmstrip"
-      "details"
-      "inspector";
+      "inspector"
+      "details";
   }
 
   .inspector {
@@ -157,6 +157,17 @@
 
   .app-shell {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "workspace"
+      "sidebar";
+  }
+
+  .app-shell > .sidebar {
+    grid-area: sidebar;
+  }
+
+  .app-shell > .workspace {
+    grid-area: workspace;
   }
 
   .app-shell::before {

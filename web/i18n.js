@@ -49,11 +49,6 @@
     return optionalT(`settings.languageBadge.${normalized}`, languageShortName(normalized));
   }
 
-  function languageFlag(language) {
-    const normalized = normalizeLanguage(language);
-    return optionalT(`settings.languageFlag.${normalized}`, "");
-  }
-
   function availableLanguages() {
     return supportedLanguages.length ? supportedLanguages : [DEFAULT_LANGUAGE];
   }
@@ -131,7 +126,7 @@
       option.setAttribute("aria-checked", active ? "true" : "false");
       const badge = document.createElement("span");
       badge.className = "language-option-badge";
-      badge.textContent = languageFlag(normalized) || languageShortName(normalized);
+      badge.textContent = languageShortName(normalized);
       const label = document.createElement("span");
       label.className = "language-option-label";
       label.textContent = languageName(normalized);
@@ -192,7 +187,6 @@
     apply,
     language: () => currentLanguage,
     languageBadge,
-    languageFlag,
     languageName,
     languageShortName,
     languages: () => supportedLanguages.slice(),

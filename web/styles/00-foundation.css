@@ -106,7 +106,10 @@ body {
   margin: 0;
   color: var(--ink);
   background: linear-gradient(180deg, var(--surface-page-start) 0%, var(--surface-page-mid) 44%, var(--surface-page-end) 100%);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue",
+    "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC", "Noto Sans CJK SC", "Microsoft YaHei",
+    Arial, sans-serif;
   letter-spacing: 0;
 }
 
