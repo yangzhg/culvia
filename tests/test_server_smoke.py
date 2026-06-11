@@ -31,6 +31,7 @@ class ServerSmokeTests(unittest.TestCase):
     def test_home_health_and_static_assets_are_served(self) -> None:
         home = self._client.get("/")
         self.assertEqual(home.status_code, 200)
+        self.assertEqual(home.headers["cache-control"], "no-cache")
         self.assertIn("Culvia", home.text)
 
         health = self._client.get("/health")

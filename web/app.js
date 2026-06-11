@@ -30,12 +30,8 @@ const {
 
 
 let appState = null;
-let sourceMode = "folders";
 let networkMode = "direct";
-let selectedIndex = 0;
 let pollTimer = null;
-let filterTimer = null;
-let filterUpdateInFlight = null;
 let commandNotice = null;
 let commandNoticeTimer = null;
 let llmReviewConfirmedForSession = false;
@@ -54,37 +50,14 @@ let activeView = normalizeViewName(localStorage.getItem(VIEW_STORAGE_KEY));
 const SIDEBAR_COLLAPSED_KEY = "culvia.sidebarCollapsed";
 let sidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
 let settingsDrawerOpen = false;
-let showMissingScoreDetails = false;
-let inspectorDetailTab = "overview";
-let filterRestoreAttempted = false;
 let uiTooltipAnchor = null;
 let uiTooltipRaf = 0;
 let curationHistory = [];
-let sourceInputsDirty = false;
-let sourcePreviewTimer = null;
-let sourcePreviewRequestId = 0;
-let sourcePreviewLoading = false;
-let sourcePreviewPending = false;
-let desktopDropHandledUntil = 0;
 let curationHistoryLoading = false;
 let curationHistoryError = "";
 let shortcutHelpOpen = false;
 let markUpdateQueue = Promise.resolve();
 
-const {
-  FILTER_STORAGE_KEY,
-  filterPayloadEquals,
-  filtersAreDefault,
-  normalizeFilterPayload,
-  savedFilterPayload,
-  persistFilterPayload,
-  savedFilterPresets,
-  saveFilterPreset,
-  deleteFilterPreset,
-  renameFilterPreset,
-  updateFilterPreset,
-} = window.CulviaFilterState;
-const filterPresetView = window.CulviaFilterPresets;
 const cullingFlow = window.CulviaCullingFlow;
 const clipboard = window.CulviaClipboard;
 const distributionModel = window.CulviaDistributionModel;
@@ -104,10 +77,6 @@ const {
   renderDimensionStack,
   renderMetricRadar,
 } = distributionView;
-let filterPresets = savedFilterPresets();
-let renamingFilterPresetId = "";
-const MARK_ADVANCE_STORAGE_KEY = "culvia.markAdvance.v1";
-let markAdvanceEnabled = localStorage.getItem(MARK_ADVANCE_STORAGE_KEY) === "true";
 
 function normalizeViewName(view) {
   return VIEW_NAMES.includes(view) ? view : "viewer";
@@ -305,49 +274,6 @@ function trapActiveDialogFocus(event) {
   return false;
 }
 
-function uniqueFolderList(items) {
-  const source = Array.isArray(items) ? items : items == null ? [] : [items];
-  const seen = new Set();
-  return source
-    .map((item) => String(item || "").trim())
-    .filter((item) => {
-      if (!item || seen.has(item)) return false;
-      seen.add(item);
-      return true;
-    });
-}
-
-function syncFolderInputFromList(folders) {
-  const input = $("#folderInput");
-  if (input) input.value = uniqueFolderList(folders).join("\n");
-}
-
-function folderEditorHasFocus() {
-  return Boolean(document.activeElement?.closest?.(".manual-path-edit"));
-}
-
-function foldersFromInput() {
-  const list = $("#folderList");
-  if (list) {
-    const values = Array.from(list.querySelectorAll("[data-folder-path]")).map((input) => input.value);
-    return uniqueFolderList(values);
-  }
-  const input = $("#folderInput");
-  return input ? uniqueFolderList(input.value.split("\n")) : [];
-}
-
-function folderListsEqual(left = [], right = []) {
-  const a = uniqueFolderList(left);
-  const b = uniqueFolderList(right);
-  return a.length === b.length && a.every((value, index) => value === b[index]);
-}
-
-function matchingSourcePreview(folders = foldersFromInput()) {
-  const preview = appState?.sourcePreview;
-  if (!preview || preview.mode !== "folders" || preview.ready !== true) return null;
-  return folderListsEqual(preview.folders || [], folders) && Number.isFinite(Number(preview.total)) ? preview : null;
-}
-
 function isScoringJob(job = appState?.job) {
   return Boolean(job?.running) && (job.kind || "scoring") === "scoring";
 }
@@ -360,98 +286,20 @@ function isCancellableJob(job = appState?.job) {
   return isScoringJob(job) || isLlmReviewJob(job);
 }
 
-function isSourcePreviewJob(job = appState?.job) {
-  return Boolean(job?.running) && job.kind === "source_preview";
+function matchingSourcePreview(folders) {
+  return sourcePanel.matchingPreview(folders);
 }
 
 function isSourcePreviewActive() {
-  return sourcePreviewLoading || isSourcePreviewJob();
+  return sourcePanel.isPreviewActive();
 }
 
 function sourceInputSnapshot() {
-  const cacheInput = $("#cacheInput");
-  return {
-    mode: sourceMode || appState?.source?.mode || "folders",
-    folders: foldersFromInput(),
-    cachePath: cacheInput ? cacheInput.value.trim() : appState?.source?.cachePath || "",
-  };
+  return sourcePanel.inputSnapshot();
 }
 
 function applySourceInputSnapshot(snapshot) {
-  if (!snapshot || !appState) return;
-  sourceMode = snapshot.mode || "folders";
-  appState.source = {
-    ...(appState.source || {}),
-    mode: sourceMode,
-    folders: uniqueFolderList(snapshot.folders || []),
-    cachePath: snapshot.cachePath || "",
-  };
-  syncFolderInputFromList(appState.source.folders || []);
-}
-
-function markSourceInputsDirty() {
-  sourceInputsDirty = true;
-  syncFolderInputFromList(foldersFromInput());
-  applySourceInputSnapshot(sourceInputSnapshot());
-  refreshSourceDependentControls();
-}
-
-function folderValuesFromText(text) {
-  return uniqueFolderList(String(text || "").split(/\r?\n/));
-}
-
-function setFolderList(folders, { dirty = true, previewDelay = 240 } = {}) {
-  const nextFolders = uniqueFolderList(folders);
-  syncFolderInputFromList(nextFolders);
-  renderSourceFolderList(nextFolders, Boolean(appState?.job?.running));
-  if (sourceMode !== "folders") setSourceMode("folders");
-  if (dirty) {
-    markSourceInputsDirty();
-    updatePathSummaries();
-    scheduleSourcePreview(previewDelay);
-  }
-}
-
-function addFolderEntries(values, { previewDelay = 120 } = {}) {
-  const additions = uniqueFolderList(values);
-  if (!additions.length || appState?.job?.running) return;
-  setFolderList([...foldersFromInput(), ...additions], { previewDelay });
-  const addInput = $("#folderAddInput");
-  if (addInput) addInput.value = "";
-}
-
-function renderSourceFolderList(folders = foldersFromInput(), busy = Boolean(appState?.job?.running)) {
-  const list = $("#folderList");
-  if (!list) return;
-  const normalized = uniqueFolderList(folders);
-  if (!normalized.length) {
-    list.innerHTML = `<div class="source-folder-empty">${escapeHtml(t("source.noFolders"))}</div>`;
-    return;
-  }
-  list.innerHTML = normalized
-    .map(
-      (folder, index) => `
-        <div class="source-folder-row" data-folder-row>
-          <input
-            class="text-input source-folder-input"
-            type="text"
-            value="${escapeHtml(folder)}"
-            data-folder-path
-            data-folder-index="${index}"
-            aria-label="${escapeHtml(t("source.folderPath"))}"
-            data-ui-tooltip="${escapeHtml(folder)}"
-            ${busy ? "disabled" : ""}
-          />
-          <button class="icon-button" type="button" data-copy-source-folder="${escapeHtml(folder)}" data-ui-tooltip="${escapeHtml(t("source.copyFolder"))}" aria-label="${escapeHtml(t("source.copyFolder"))}" ${busy ? "disabled" : ""}>
-            ${iconMarkup("copy")}
-          </button>
-          <button class="icon-button" type="button" data-remove-source-folder="${index}" data-ui-tooltip="${escapeHtml(t("source.removeFolder"))}" aria-label="${escapeHtml(t("source.removeFolder"))}" ${busy ? "disabled" : ""}>
-            ${iconMarkup("trash")}
-          </button>
-        </div>
-      `,
-    )
-    .join("");
+  return sourcePanel.applyInputSnapshot(snapshot);
 }
 
 function pathName(path) {
@@ -467,7 +315,7 @@ function parentPath(path) {
 }
 
 function hasSelectedSource() {
-  return Boolean(foldersFromInput().length || appState?.source?.uploadedPaths?.length);
+  return sourcePanel.hasSelectedSource();
 }
 
 function displayNetworkLabel(labelText) {
@@ -475,24 +323,7 @@ function displayNetworkLabel(labelText) {
 }
 
 function updatePathSummaries() {
-  $("#folderSummary")?.removeAttribute("data-i18n");
-  const folders = foldersFromInput();
-  const preview = matchingSourcePreview(folders);
-  const previewText = isSourcePreviewActive()
-    ? ` · ${t("source.previewScanningState")}`
-    : preview
-      ? ` · ${t("source.previewCount", { count: Number(preview.total) })}`
-      : "";
-  if (!folders.length) {
-    setText("#folderSummary", t("source.empty"));
-  } else if (folders.length === 1) {
-    setText("#folderSummary", `${pathName(folders[0])} · ${parentPath(folders[0])}${previewText}`);
-  } else {
-    setText(
-      "#folderSummary",
-      `${tr("source.folderCount", { count: folders.length }, `${folders.length} 个目录`)} · ${folders.slice(0, 2).map(pathName).join("、")}${previewText}`,
-    );
-  }
+  return sourcePanel.updatePathSummaries();
 }
 
 function scoreValue(value) {
@@ -580,31 +411,6 @@ function localizedListJoin(items = []) {
   return items.filter(Boolean).join(separator);
 }
 
-function localizedSortOption(option = {}) {
-  return tr(`sort.${option.value}`, {}, option.label || option.value || "");
-}
-
-function localizedWeightPreset(option = {}) {
-  return tr(`weight.${option.value}`, {}, option.label || option.value || "");
-}
-
-function localizedAgreementOption(option = {}) {
-  return tr(`agreement.${option.value}`, {}, option.label || option.value || "");
-}
-
-function localizedManualFilterOption(option = {}) {
-  const value = String(option.value || "");
-  if (value === "all") return t("manual.filter.all");
-  if (value === "pending") return t("manual.filter.pending");
-  return tr(`manual.status.${value}`, {}, option.label || manualStatusLabel(value));
-}
-
-function localizedColorFilterOption(option = {}) {
-  const value = String(option.value || "");
-  if (value === "all" || value === "labeled" || value === "none") return tr(`color.${value}`, {}, option.label || value);
-  return colorLabelMeta(value).label;
-}
-
 function localizedHistoryScope(scope) {
   if (scope === "selected") return t("history.scope.selected");
   if (scope === "filtered") return t("history.scope.filtered");
@@ -652,12 +458,6 @@ function localizedHistorySummary(record = {}, kindLabel = localizedHistoryKind(r
 
 function localizedMetricLabel(field, labels = {}) {
   return tr(metricLabelKeys[field] || `sort.${field}_0_10`, {}, labels[field] || field);
-}
-
-function colorLabelFromShortcut(key) {
-  const normalized = String(key || "").toLowerCase();
-  const match = manualColorLabels.find((item) => item.shortcut === normalized);
-  return match ? match.value : null;
 }
 
 function colorLabelTitle(item) {
@@ -724,43 +524,111 @@ function galleryColorBadgeMarkup(manual = {}) {
   `;
 }
 
-function preserveSelectedPhoto(previousFileId) {
-  if (!previousFileId || !appState?.photos?.length) {
-    selectedIndex = 0;
-    return;
-  }
-  selectedIndex = cullingFlow.nextIndexAfterMark(appState.photos, selectedIndex, previousFileId, false);
+const sourcePanel = window.CulviaSourcePanel.create({
+  $,
+  $$,
+  t,
+  tr,
+  escapeHtml,
+  iconMarkup,
+  pathName,
+  parentPath,
+  setText,
+  apiClient,
+  postJson,
+  errorMessage,
+  showCommandNotice,
+  supportedTypes,
+  copyFileFolderPath: (folderPath) => copyFileFolderPath(folderPath),
+  refreshSourceDependentControls: () => refreshSourceDependentControls(),
+  render: () => render(),
+  loadState: () => loadState(),
+  syncPollTimer: () => syncPollTimer(),
+  resetSelectedIndex: () => viewerPanel.resetSelectedIndex(),
+  getAppState: () => appState,
+  setAppState: (value) => {
+    appState = value;
+  },
+});
+
+const viewerPanel = window.CulviaViewerPanel.create({
+  $,
+  t,
+  clamp,
+  escapeHtml,
+  textHintAttributes,
+  pathName,
+  setText,
+  setButtonLabel,
+  cullingFlow,
+  viewerKeyboard,
+  viewerInspector,
+  manualColorLabels,
+  metricLabelKeys,
+  numericValue,
+  manualBadgeMarkup,
+  colorLabelMeta,
+  colorLabelTitle,
+  manualStatusLabel,
+  manualStatusClass,
+  localizedManualSource,
+  localizedMetricText,
+  localizedScoreLevel,
+  copyFileFolderPath: (folderPath) => copyFileFolderPath(folderPath),
+  updateManualMark: (changes, options) => updateManualMark(changes, options),
+  acceptPhotoResult: (basis, scope, target) => acceptPhotoResult(basis, scope, target),
+  revealPhoto: (photo) => revealPhoto(photo),
+  openPhotoPreview: (photo) => openPhotoPreview(photo),
+  getAppState: () => appState,
+  getActiveView: () => activeView,
+});
+
+const filterPanel = window.CulviaFilterPanel.create({
+  $,
+  t,
+  tr,
+  i18n,
+  escapeHtml,
+  iconMarkup,
+  percentValue,
+  setText,
+  colorLabelDot,
+  colorLabelMeta,
+  manualStatusLabel,
+  postJson,
+  errorMessage,
+  showCommandNotice,
+  render: () => render(),
+  getAppState: () => appState,
+  setAppState: (value) => {
+    appState = value;
+  },
+  getCommandNotice: () => commandNotice,
+  resetSelectedIndex: () => viewerPanel.resetSelectedIndex(),
+});
+
+function preserveSelectedPhoto(previousFileId, options = {}) {
+  return viewerPanel.preserveSelectedPhoto(previousFileId, options);
 }
 
-function persistMarkAdvanceMode() {
-  try {
-    if (markAdvanceEnabled) {
-      localStorage.setItem(MARK_ADVANCE_STORAGE_KEY, "true");
-    } else {
-      localStorage.removeItem(MARK_ADVANCE_STORAGE_KEY);
-    }
-  } catch (_error) {
-    // Convenience preference only; blocked storage should not interrupt culling.
-  }
+function selectedPhoto() {
+  return viewerPanel.selectedPhoto();
 }
 
-function toggleMarkAdvanceMode() {
-  markAdvanceEnabled = !markAdvanceEnabled;
-  persistMarkAdvanceMode();
-  renderManualControls(selectedPhoto());
+function renderViewer() {
+  return viewerPanel.render();
 }
 
-function setSourceMode(mode, { dirty = false } = {}) {
-  if (dirty && appState?.job?.running) return;
-  sourceMode = mode;
-  $$("[data-source]").forEach((button) => button.classList.toggle("is-active", button.dataset.source === mode));
-  $$("[data-source-view]").forEach((view) => {
-    view.classList.toggle("is-active", view.dataset.sourceView === mode);
-  });
-  if (dirty) {
-    markSourceInputsDirty();
-    scheduleSourcePreview();
-  }
+function renderFilterScope() {
+  return filterPanel.renderScope();
+}
+
+async function flushFilterUpdate() {
+  return filterPanel.flushUpdate();
+}
+
+async function applyFilterUpdate() {
+  return filterPanel.applyUpdate();
 }
 
 async function setNetworkMode(mode, sync = true) {
@@ -1087,58 +955,6 @@ function setStatValue(selector, value) {
   else el.setAttribute("data-i18n", "stats.empty");
 }
 
-function filterPresetContext() {
-  return {
-    options: {
-      manualStatusOptions: appState?.manualStatusOptions || [],
-      colorLabelOptions: appState?.colorLabelOptions || [],
-      modelAgreementOptions: appState?.modelAgreementOptions || [],
-      sortOptions: appState?.sortOptions || [],
-      weightPresets: appState?.weightPresets || [],
-    },
-    t,
-    language: () => i18n?.language?.() || "zh-CN",
-    manualStatusLabel,
-    colorLabelMeta,
-    optionLabel(group, option = {}) {
-      if (group === "manual") return localizedManualFilterOption(option);
-      if (group === "color") return localizedColorFilterOption(option);
-      if (group === "agreement") return localizedAgreementOption(option);
-      if (group === "sort") return localizedSortOption(option);
-      if (group === "weight") return localizedWeightPreset(option);
-      return option.label || option.value || "";
-    },
-  };
-}
-
-function activeFilterChips(filters = appState?.filters || {}) {
-  return filterPresetView.activeFilterChips(filters, filterPresetContext());
-}
-
-function renderFilterScope() {
-  const bar = $("#filterScopeBar");
-  const container = $("#filterScopeChips");
-  const clearButton = $("#clearFilterScopeBtn");
-  if (!bar || !container || !clearButton) return;
-
-  const chips = activeFilterChips(appState?.filters || {});
-  bar.classList.toggle("is-hidden", !chips.length);
-  container.innerHTML = chips.map((chip) => `<span>${escapeHtml(chip)}</span>`).join("");
-  clearButton.disabled = Boolean(appState?.job?.running) || Boolean(commandNotice?.loading);
-}
-
-function filterPresetSuggestedName(filters = appState?.filters || {}) {
-  return filterPresetView.suggestedName(filters, filterPresetContext());
-}
-
-function filterPresetSummary(filters = {}) {
-  return filterPresetView.summary(filters, filterPresetContext());
-}
-
-function filterPresetUpdatedText(updatedAt) {
-  return filterPresetView.updatedText(updatedAt);
-}
-
 function historyActionLabel(kind) {
   return localizedHistoryKind(kind);
 }
@@ -1205,430 +1021,6 @@ function renderCurationHistory() {
     .join("");
 }
 
-function filterPresetMetaText(preset) {
-  return filterPresetView.metaText(preset, filterPresetContext());
-}
-
-function renderFilterPresets() {
-  const list = $("#filterPresetList");
-  const input = $("#filterPresetNameInput");
-  const saveButton = $("#saveFilterPresetBtn");
-  const hint = $("#filterPresetHint");
-  if (!list || !input || !saveButton) return;
-
-  filterPresets = savedFilterPresets();
-  if (renamingFilterPresetId && !filterPresets.some((preset) => preset.id === renamingFilterPresetId)) {
-    renamingFilterPresetId = "";
-  }
-  const currentFilters = normalizeFilterPayload(appState?.filters || {});
-  input.placeholder = renamingFilterPresetId ? t("filters.renamePlaceholder") : filterPresetSuggestedName(currentFilters);
-  const saveIcon = renamingFilterPresetId ? "pencil" : "bookmark";
-  const saveLabel = renamingFilterPresetId ? t("filters.confirmRename") : t("filters.saveView");
-  saveButton.innerHTML = iconMarkup(saveIcon);
-  saveButton.removeAttribute("title");
-  saveButton.dataset.uiTooltip = saveLabel;
-  saveButton.setAttribute("aria-label", saveLabel);
-  saveButton.disabled = Boolean(appState?.job?.running) || Boolean(commandNotice?.loading);
-  if (hint) {
-    hint.textContent = renamingFilterPresetId ? t("filters.renaming") : t("filters.currentRange", { summary: filterPresetSummary(currentFilters) });
-  }
-  if (!filterPresets.length) {
-    list.innerHTML = `<div class="saved-filter-empty">${escapeHtml(t("filters.noViews"))}</div>`;
-    return;
-  }
-  list.innerHTML = filterPresets
-    .map((preset) => {
-      const active = filterPayloadEquals(preset.filters, currentFilters);
-      const renaming = preset.id === renamingFilterPresetId;
-      const summary = filterPresetSummary(preset.filters);
-      const meta = filterPresetMetaText(preset);
-      return `
-        <div class="saved-filter-item ${active ? "is-active" : ""} ${renaming ? "is-renaming" : ""}">
-          <button class="saved-filter-apply" type="button" data-filter-preset="${escapeHtml(preset.id)}" aria-label="${escapeHtml(`${preset.name} · ${summary}`)}" data-ui-tooltip="${escapeHtml(summary)}">
-            <span>${escapeHtml(preset.name)}</span>
-            <small>${escapeHtml(meta)}</small>
-          </button>
-          <button class="saved-filter-update" type="button" data-update-filter-preset="${escapeHtml(preset.id)}" aria-label="${escapeHtml(t("filters.updateView", { name: preset.name }))}" data-ui-tooltip="${escapeHtml(t("filters.updateConditions"))}">
-            ${iconMarkup("refreshCw")}
-          </button>
-          <button class="saved-filter-rename" type="button" data-rename-filter-preset="${escapeHtml(preset.id)}" aria-label="${escapeHtml(t("filters.renameView", { name: preset.name }))}" data-ui-tooltip="${escapeHtml(t("filters.rename"))}">
-            ${iconMarkup("pencil")}
-          </button>
-          <button class="saved-filter-delete" type="button" data-delete-filter-preset="${escapeHtml(preset.id)}" aria-label="${escapeHtml(t("filters.deleteView", { name: preset.name }))}" data-ui-tooltip="${escapeHtml(t("filters.deleteView", { name: preset.name }))}">
-            ${iconMarkup("x")}
-          </button>
-        </div>
-      `;
-    })
-    .join("");
-  list.querySelectorAll("[data-filter-preset]").forEach((button) => {
-    button.addEventListener("click", () => applyFilterPreset(button.dataset.filterPreset));
-  });
-  list.querySelectorAll("[data-update-filter-preset]").forEach((button) => {
-    button.addEventListener("click", () => refreshFilterPreset(button.dataset.updateFilterPreset));
-  });
-  list.querySelectorAll("[data-rename-filter-preset]").forEach((button) => {
-    button.addEventListener("click", () => beginRenameFilterPreset(button.dataset.renameFilterPreset));
-  });
-  list.querySelectorAll("[data-delete-filter-preset]").forEach((button) => {
-    button.addEventListener("click", () => removeFilterPreset(button.dataset.deleteFilterPreset));
-  });
-}
-
-function selectedPhoto() {
-  if (!appState?.photos?.length) return null;
-  selectedIndex = clamp(selectedIndex, 0, appState.photos.length - 1);
-  return appState.photos[selectedIndex];
-}
-
-function renderScoreRows(photo) {
-  const plan = viewerInspector.scoreRowsMarkup(photo, {
-    activeTab: inspectorDetailTab,
-    appState,
-    showMissingScoreDetails,
-  });
-  inspectorDetailTab = plan.activeTab;
-  const container = $("#scoreRows");
-  if (!container) return;
-  container.innerHTML = plan.html;
-  container.querySelectorAll("[data-score-detail-tab]").forEach((button) => {
-    button.addEventListener("click", () => {
-      inspectorDetailTab = button.dataset.scoreDetailTab || "overview";
-      renderScoreRows(photo);
-    });
-  });
-  container.querySelectorAll("[data-copy-file-folder]").forEach((button) => {
-    button.addEventListener("click", () => {
-      void copyFileFolderPath(button.dataset.copyFileFolder || "");
-    });
-  });
-  $("#toggleMissingScoreDetails")?.addEventListener("click", () => {
-    showMissingScoreDetails = !showMissingScoreDetails;
-    renderScoreRows(photo);
-  });
-}
-
-function fallbackScoreRowsMarkup(photo, error) {
-  const scoreTexts = photo?.scoreTexts || {};
-  const technicalTexts = photo?.technicalTexts || {};
-  const modelQualityTexts = photo?.modelQualityTexts || {};
-  const aestheticReferenceTexts = photo?.aestheticReferenceTexts || {};
-  const llmReviewTexts = photo?.llmReviewTexts || {};
-  const row = (field, text, missing = t("score.notCalculated")) => {
-    const label = t(metricLabelKeys[field] || `sort.${field}_0_10`);
-    const value = localizedMetricText(text, missing);
-    return `
-      <div class="score-row">
-        <span class="score-name"${textHintAttributes(label)}>${escapeHtml(label)}</span>
-        <span class="score-stars">☆☆☆☆☆</span>
-        <span class="score-num ${text ? "" : "is-missing"}"${textHintAttributes(value)}>${escapeHtml(value)}</span>
-      </div>
-    `;
-  };
-  const group = (title, rows) => {
-    const body = rows.filter(Boolean).join("");
-    return body
-      ? `
-        <div class="score-group">
-          <div class="score-group-title">
-            <div><span>${escapeHtml(title)}</span></div>
-          </div>
-          ${body}
-        </div>
-      `
-      : "";
-  };
-  const fileName = pathName(photo?.path || "");
-  const errorText = error?.message || String(error || "");
-  return `
-    <div class="score-detail-toolbar">
-      <span>${escapeHtml(t("score.detailTitle"))}</span>
-      ${errorText ? `<small class="score-render-error">${escapeHtml(errorText)}</small>` : ""}
-    </div>
-    <div class="score-detail-panel" role="tabpanel">
-      ${group(t("score.core.title"), [
-        row("overall", photo?.overallText),
-        row("quality", scoreTexts.quality),
-        row("composition", scoreTexts.composition),
-        row("lighting", scoreTexts.lighting),
-        row("color", scoreTexts.color),
-        row("depth_of_field", scoreTexts.depth_of_field),
-        row("content", scoreTexts.content),
-      ])}
-      ${group(t("score.aestheticReference.title"), [
-        row("clip_aesthetic", aestheticReferenceTexts.clip_aesthetic),
-        row("clip_relevance", aestheticReferenceTexts.clip_relevance),
-      ])}
-      ${group(t("score.technical.title"), [
-        row("clip_iqa_overall", modelQualityTexts.clip_iqa_overall),
-        row("technical_overall", technicalTexts.technical_overall),
-        row("exposure", technicalTexts.exposure),
-        row("sharpness", technicalTexts.sharpness),
-        row("noise", technicalTexts.noise),
-      ])}
-      ${group(t("score.llm.title"), [
-        row("llm_review_overall", llmReviewTexts.llm_review_overall, t("score.notReviewed")),
-        row("llm_aesthetic", llmReviewTexts.llm_aesthetic, t("score.notReviewed")),
-        row("llm_technical", llmReviewTexts.llm_technical, t("score.notReviewed")),
-      ])}
-      <div class="score-group">
-        <div class="score-group-title">
-          <div><span>${escapeHtml(t("score.file.title"))}</span></div>
-          <strong${textHintAttributes(fileName)}>${escapeHtml(fileName || t("score.noData"))}</strong>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderScoreRowsFallback(photo, error) {
-  const container = $("#scoreRows");
-  if (!container) return;
-  container.innerHTML = fallbackScoreRowsMarkup(photo, error);
-}
-
-function renderSignalChips(photo) {
-  const container = $("#signalChips");
-  if (!container) return;
-  container.innerHTML = viewerInspector.signalChipsMarkup(photo, {
-    llmModel: appState.llm?.model || "",
-  });
-}
-
-function renderFilmstrip(photos, activeIndex) {
-  const filmstrip = $("#filmstrip");
-  if (!filmstrip) return;
-  if (!photos.length) {
-    filmstrip.innerHTML = "";
-    return;
-  }
-  filmstrip.classList.remove("is-hidden");
-  const windowRange = filmstripWindow(photos, activeIndex);
-  const visibleThumbs = photos.slice(windowRange.start, windowRange.end);
-  const leadingCount = windowRange.start;
-  const trailingCount = photos.length - windowRange.end;
-  filmstrip.innerHTML = `
-    ${leadingCount ? `<div class="thumb-window-edge">${escapeHtml(t("viewer.beforeCount", { count: leadingCount }))}</div>` : ""}
-    ${visibleThumbs
-    .map(
-      (item, offset) => {
-        const index = windowRange.start + offset;
-        const itemLevel = localizedScoreLevel(item.level);
-        const thumbHint = `${itemLevel} · ${item.recommendationText || item.overallText}`;
-        return `
-        <button class="thumb ${index === activeIndex ? "is-active" : ""}" type="button" data-index="${index}" aria-label="${escapeHtml(thumbHint)}" data-ui-tooltip="${escapeHtml(thumbHint)}">
-          <img src="${item.thumb}" alt="${escapeHtml(t("viewer.thumbAlt"))}" loading="lazy" />
-          <span>${item.recommendationText || item.overallText}</span>
-          ${manualBadgeMarkup(item.manual, true)}
-        </button>
-      `;
-      },
-    )
-    .join("")}
-    ${trailingCount ? `<div class="thumb-window-edge">${escapeHtml(t("viewer.afterCount", { count: trailingCount }))}</div>` : ""}
-  `;
-  filmstrip.querySelectorAll(".thumb").forEach((button) => {
-    button.addEventListener("click", () => {
-      selectedIndex = Number(button.dataset.index);
-      renderViewer();
-    });
-  });
-  syncActiveThumbnail(filmstrip);
-}
-
-function renderViewerInspector(photo) {
-  try {
-    renderManualControls(photo);
-  } catch (error) {
-    console.error("Failed to render manual controls", error);
-  }
-  try {
-    renderSignalChips(photo);
-  } catch (error) {
-    console.error("Failed to render score signals", error);
-  }
-  try {
-    renderScoreRows(photo);
-  } catch (error) {
-    console.error("Failed to render score details", error);
-    renderScoreRowsFallback(photo, error);
-  }
-}
-
-function syncActiveThumbnail(filmstrip, behavior = "auto") {
-  const activeThumb = filmstrip?.querySelector(".thumb.is-active");
-  if (!activeThumb) return;
-  const targetLeft = activeThumb.offsetLeft - (filmstrip.clientWidth - activeThumb.offsetWidth) / 2;
-  const maxLeft = Math.max(0, filmstrip.scrollWidth - filmstrip.clientWidth);
-  filmstrip.scrollTo({
-    left: clamp(targetLeft, 0, maxLeft),
-    behavior,
-  });
-}
-
-function renderManualControls(photo) {
-  const manual = photo?.manual || {};
-  const busy = Boolean(appState?.job?.running);
-  const rating = Number(manual.rating || 0);
-  const status = manual.status || "";
-  const colorLabel = manual.colorLabel || "";
-  setText("#manualStatusText", manualStatusLabel(status));
-  $("#manualStatusText")?.classList.remove("is-picked", "is-rejected", "is-pending", "is-unreviewed");
-  $("#manualStatusText")?.classList.add(manualStatusClass(status));
-  $("#manualStars").innerHTML = [1, 2, 3, 4, 5]
-    .map(
-      (value) => `
-        <button
-          class="manual-star ${value <= rating ? "is-active" : ""}"
-          type="button"
-          data-manual-rating="${value}"
-          aria-label="${escapeHtml(t("manual.ratingStars", { count: value }))}"
-          ${busy ? "disabled" : ""}
-        >★</button>
-      `,
-    )
-    .join("");
-  $("#manualStars").querySelectorAll("[data-manual-rating]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const nextRating = Number(button.dataset.manualRating);
-      updateManualMark({ rating: nextRating === rating ? 0 : nextRating, source: "manual", acceptedScore: null }, { advance: markAdvanceEnabled });
-    });
-  });
-  $("#manualColorLabels").innerHTML = manualColorLabels
-    .map((item) => {
-      const meta = colorLabelMeta(item.value);
-      const title = colorLabelTitle(meta);
-      return `
-        <button
-          class="manual-color-choice ${meta.value ? `is-${meta.value}` : "is-clear"} ${colorLabel === meta.value ? "is-active" : ""}"
-          type="button"
-          data-color-label="${escapeHtml(meta.value)}"
-          aria-label="${escapeHtml(title)}"
-          data-ui-tooltip="${escapeHtml(title)}"
-          ${busy ? "disabled" : ""}
-        >
-          ${meta.value ? "" : "×"}
-        </button>
-      `;
-    })
-    .join("");
-  $("#manualColorLabels").querySelectorAll("[data-color-label]").forEach((button) => {
-    button.addEventListener("click", () => {
-      updateManualMark({ colorLabel: button.dataset.colorLabel || "", source: "manual", acceptedScore: null });
-    });
-  });
-  const statusButtons = [
-    ["#manualPickBtn", "pick", "check", t("manual.pick")],
-    ["#manualHoldBtn", "hold", "clock", t("manual.hold")],
-    ["#manualRejectBtn", "reject", "x", t("manual.reject")],
-  ];
-  statusButtons.forEach(([selector, value, icon, label]) => {
-    const button = $(selector);
-    setButtonLabel(button, icon, label);
-    button.classList.toggle("is-active", status === value);
-    button.disabled = busy;
-    button.classList.remove("is-picked", "is-rejected", "is-pending", "is-unreviewed");
-    button.classList.add(manualStatusClass(value));
-  });
-  const sourceText = manual.sourceLabel
-    ? `${localizedManualSource(manual)}${manual.acceptedScore != null ? ` · ${localizedMetricText(manual.acceptedScoreText, t("score.noData"))}` : ""}`
-    : t("manual.sourceEmpty");
-  setText("#manualSourceText", sourceText);
-  const advanceToggle = $("#markAdvanceToggle");
-  if (advanceToggle) {
-    advanceToggle.classList.toggle("is-active", markAdvanceEnabled);
-    advanceToggle.setAttribute("aria-pressed", markAdvanceEnabled ? "true" : "false");
-    advanceToggle.disabled = busy;
-  }
-  const modelScore = numericValue(photo?.recommendation);
-  const llmScore = numericValue(photo?.llmReviewScores?.llm_review_overall);
-  $("#acceptModelBtn").disabled = busy || modelScore == null;
-  $("#acceptLlmBtn").disabled = busy || llmScore == null;
-}
-
-function filmstripWindow(photos, index, maxItems = 84) {
-  if (photos.length <= maxItems) return { start: 0, end: photos.length };
-  const safeIndex = clamp(index, 0, photos.length - 1);
-  const radius = Math.floor(maxItems / 2);
-  let start = safeIndex - radius;
-  start = clamp(start, 0, Math.max(0, photos.length - maxItems));
-  return { start, end: Math.min(photos.length, start + maxItems) };
-}
-
-function renderViewer() {
-  const photos = appState?.photos || [];
-  const empty = $("#emptyState");
-  const stage = $("#viewerStage");
-  const filmstrip = $("#filmstrip");
-
-  if (!photos.length) {
-    empty.classList.remove("is-hidden");
-    stage.classList.add("is-hidden");
-    filmstrip.innerHTML = "";
-    $("#prevBtn").disabled = true;
-    $("#nextBtn").disabled = true;
-    return;
-  }
-
-  empty.classList.add("is-hidden");
-  stage.classList.remove("is-hidden");
-  filmstrip.classList.remove("is-hidden");
-  const photo = selectedPhoto();
-  const mainImage = $("#mainImage");
-  mainImage.onload = () => {
-    $(".image-stage")?.classList.toggle("is-portrait", mainImage.naturalHeight > mainImage.naturalWidth);
-  };
-  mainImage.src = photo.preview;
-  mainImage.alt = t("viewer.currentPhotoAlt");
-  if (mainImage.complete) mainImage.onload();
-  const currentLevel = localizedScoreLevel(photo.level);
-  const mainScoreText = photo.recommendationText || photo.overallText;
-  const mainScoreEmpty = !mainScoreText || mainScoreText === t("common.noData") || mainScoreText === t("score.noData");
-  setText("#mainScore", mainScoreText);
-  const mainScoreEl = $("#mainScore");
-  if (mainScoreEl) {
-    mainScoreEl.classList.toggle("is-empty", mainScoreEmpty);
-    // applyI18n() would otherwise overwrite real values with the empty placeholder.
-    if (mainScoreEmpty) mainScoreEl.setAttribute("data-i18n", "score.noData");
-    else mainScoreEl.removeAttribute("data-i18n");
-  }
-  setText("#mainStars", photo.recommendationStars || photo.stars);
-  setText("#mainLevel", `${currentLevel} · ${selectedIndex + 1} / ${photos.length}`);
-  $("#mainLevel").dataset.uiTooltip = `${currentLevel} · ${selectedIndex + 1} / ${photos.length}`;
-  $("#mainLevel").removeAttribute("title");
-  setText("#viewerCounter", `${selectedIndex + 1} / ${photos.length}`);
-  setText("#viewerLevel", currentLevel);
-  $("#viewerLevel").dataset.uiTooltip = currentLevel;
-  $("#viewerLevel").removeAttribute("title");
-  const previewLink = $("#previewLink");
-  const nativePreviewSupported = appState?.capabilities?.nativeFilePreview === true;
-  previewLink.href = photo.preview;
-  previewLink.dataset.nativePreview = nativePreviewSupported ? "true" : "false";
-  const previewTitle = nativePreviewSupported ? t("viewer.previewNativeSupported") : t("viewer.previewWebSupported");
-  previewLink.setAttribute("aria-label", previewTitle);
-  previewLink.dataset.uiTooltip = previewTitle;
-  previewLink.removeAttribute("title");
-  const revealSupported = appState?.capabilities?.revealInFileManager !== false;
-  $("#revealBtn").disabled = !revealSupported;
-  const revealTitle = revealSupported ? t("viewer.revealSupported") : t("viewer.revealUnsupported");
-  $("#revealBtn").setAttribute("aria-label", revealTitle);
-  $("#revealBtn").dataset.uiTooltip = revealTitle;
-  $("#revealBtn").removeAttribute("title");
-  $("#prevBtn").disabled = selectedIndex <= 0;
-  $("#nextBtn").disabled = selectedIndex >= photos.length - 1;
-  renderFilmstrip(photos, selectedIndex);
-  renderViewerInspector(photo);
-}
-
-function moveSelection(delta) {
-  const photos = appState?.photos || [];
-  if (!photos.length) return;
-  const nextIndex = cullingFlow.nextIndexByDelta(photos, selectedIndex, delta);
-  if (nextIndex === selectedIndex) return;
-  selectedIndex = nextIndex;
-  renderViewer();
-}
-
 const galleryPanel = window.CulviaGalleryPanel.create({
   $,
   $$,
@@ -1658,10 +1050,8 @@ const galleryPanel = window.CulviaGalleryPanel.create({
   renderViewer: () => renderViewer(),
   getAppState: () => appState,
   getActiveView: () => activeView,
-  getSourceMode: () => sourceMode,
-  setSelectedIndex: (index) => {
-    selectedIndex = index;
-  },
+  getSourceMode: () => sourcePanel.mode(),
+  setSelectedIndex: (index) => viewerPanel.setSelectedIndex(index),
 });
 
 function visibleGallerySelection(photos = appState?.photos || []) {
@@ -1727,7 +1117,7 @@ const distributionPanel = window.CulviaDistributionPanel.create({
   photos: () => appState?.photos || [],
   switchView: (view) => switchView(view),
   openViewerAt: (index) => {
-    selectedIndex = index;
+    viewerPanel.setSelectedIndex(index);
     switchView("viewer");
     renderViewer();
   },
@@ -1803,174 +1193,12 @@ function handleExportPreflightClick(event) {
 
 function renderControls() {
   if (!appState) return;
-  const capabilities = appState.capabilities || {};
-  const busy = Boolean(appState.job?.running);
   $("#devicePill").innerHTML = `${iconMarkup("cpu")}${escapeHtml(appState.app.device)}`;
-  const nativeFolderButton = $("#pickNativeFolderBtn");
-  const nativeFolderSupported = capabilities.nativeFolderPicker !== false;
-  const nativeFolderLabel = nativeFolderSupported ? t("source.pickFolder") : t("source.pathOnly");
-  nativeFolderButton.disabled = !nativeFolderSupported || busy;
-  nativeFolderButton.dataset.uiTooltip = nativeFolderLabel;
-  nativeFolderButton.removeAttribute("title");
-  nativeFolderButton.setAttribute("aria-label", nativeFolderLabel);
-  nativeFolderButton.classList.toggle("is-unavailable", !nativeFolderSupported);
-  const folderInput = $("#folderInput");
-  if (folderInput) folderInput.disabled = busy;
-  const folderAddInput = $("#folderAddInput");
-  if (folderAddInput) folderAddInput.disabled = busy;
-  $("#folderAddBtn").disabled = busy;
-  $("#clearFoldersBtn").disabled = busy || !foldersFromInput().length;
-  const cacheInput = $("#cacheInput");
-  if (cacheInput) cacheInput.disabled = busy;
-  ["#pickFilesBtn", "#pickFolderBtn", "#fileInput", "#folderPicker"].forEach((selector) => {
-    const control = $(selector);
-    if (control) control.disabled = busy;
-  });
-  $$("[data-source]").forEach((button) => {
-    button.disabled = busy;
-  });
-  if (!sourceInputsDirty && !folderEditorHasFocus()) {
-    syncFolderInputFromList(appState.source.folders || []);
-    renderSourceFolderList(appState.source.folders || [], busy);
-  } else {
-    renderSourceFolderList(foldersFromInput(), busy);
-  }
-  if (!sourceInputsDirty && document.activeElement !== $("#cacheInput")) {
-    $("#cacheInput").value = appState.source.cachePath || "";
-  }
-  updatePathSummaries();
+  sourcePanel.renderControls();
   renderLlmConfig();
-  const selectedSort = appState.filters.sortField || "recommendation_0_10";
-  $("#sortField").value = selectedSort;
-  $("#sortOptions").innerHTML = (appState.sortOptions || [])
-    .map(
-      (option) => `
-        <button
-          class="sort-option ${option.value === selectedSort ? "is-active" : ""}"
-          type="button"
-          role="radio"
-          aria-checked="${option.value === selectedSort ? "true" : "false"}"
-          data-sort="${option.value}"
-        >${escapeHtml(localizedSortOption(option))}</button>
-      `,
-    )
-    .join("");
-  $("#sortOptions").querySelectorAll("[data-sort]").forEach((button) => {
-    button.addEventListener("click", () => {
-      $("#sortField").value = button.dataset.sort;
-      scheduleFilterUpdate();
-    });
-  });
-  const selectedPreset = appState.filters.weightPreset || "balanced";
-  $("#weightPreset").value = selectedPreset;
-  $("#weightPresetOptions").innerHTML = (appState.weightPresets || [])
-    .map(
-      (option) => `
-        <button
-          class="preference-option ${option.value === selectedPreset ? "is-active" : ""}"
-          type="button"
-          role="radio"
-          aria-checked="${option.value === selectedPreset ? "true" : "false"}"
-          data-preset="${option.value}"
-        >${escapeHtml(localizedWeightPreset(option))}</button>
-      `,
-    )
-    .join("");
-  $("#weightPresetOptions").querySelectorAll("[data-preset]").forEach((button) => {
-    button.addEventListener("click", () => {
-      $("#weightPreset").value = button.dataset.preset;
-      scheduleFilterUpdate();
-    });
-  });
-  const customWeights = appState.filters.customWeights || {};
-  $("#aestheticWeight").value = customWeights.aesthetic ?? 0.6;
-  $("#technicalWeight").value = customWeights.technical ?? 0.25;
-  $("#compositionLightWeight").value = customWeights.compositionLight ?? 0.15;
-  setText("#aestheticWeightText", percentValue($("#aestheticWeight").value));
-  setText("#technicalWeightText", percentValue($("#technicalWeight").value));
-  setText("#compositionLightWeightText", percentValue($("#compositionLightWeight").value));
-  $("#customWeights").classList.toggle("is-hidden", selectedPreset !== "custom");
-  $("#minScore").value = appState.filters.minScore ?? 0;
-  setText("#minScoreText", Number(appState.filters.minScore ?? 0).toFixed(1));
-  $("#minModelQuality").value = appState.filters.minModelQuality ?? 0;
-  setText("#minModelQualityText", Number(appState.filters.minModelQuality ?? 0).toFixed(1));
-  $("#minAestheticReference").value = appState.filters.minAestheticReference ?? 0;
-  setText("#minAestheticReferenceText", Number(appState.filters.minAestheticReference ?? 0).toFixed(1));
-  $("#minTechnical").value = appState.filters.minTechnical ?? 0;
-  setText("#minTechnicalText", Number(appState.filters.minTechnical ?? 0).toFixed(1));
-  $("#minLlmReview").value = appState.filters.minLlmReview ?? 0;
-  setText("#minLlmReviewText", Number(appState.filters.minLlmReview ?? 0).toFixed(1));
-  const selectedAgreement = appState.filters.modelAgreement || "all";
-  $("#modelAgreement").value = selectedAgreement;
-  $("#modelAgreementOptions").innerHTML = (appState.modelAgreementOptions || [])
-    .map(
-      (option) => `
-        <button
-          class="filter-option ${option.value === selectedAgreement ? "is-active" : ""}"
-          type="button"
-          role="radio"
-          aria-checked="${option.value === selectedAgreement ? "true" : "false"}"
-          data-agreement="${option.value}"
-        >${escapeHtml(localizedAgreementOption(option))}</button>
-      `,
-    )
-    .join("");
-  $("#modelAgreementOptions").querySelectorAll("[data-agreement]").forEach((button) => {
-    button.addEventListener("click", () => {
-      $("#modelAgreement").value = button.dataset.agreement;
-      scheduleFilterUpdate();
-    });
-  });
-  const selectedManualStatus = appState.filters.manualStatus || "all";
-  $("#manualStatusFilter").value = selectedManualStatus;
-  $("#manualStatusOptions").innerHTML = (appState.manualStatusOptions || [])
-    .map(
-      (option) => `
-        <button
-          class="filter-option ${option.value === selectedManualStatus ? "is-active" : ""}"
-          type="button"
-          role="radio"
-          aria-checked="${option.value === selectedManualStatus ? "true" : "false"}"
-          data-manual-status="${option.value}"
-        >${escapeHtml(localizedManualFilterOption(option))}</button>
-      `,
-    )
-    .join("");
-  $("#manualStatusOptions").querySelectorAll("[data-manual-status]").forEach((button) => {
-    button.addEventListener("click", () => {
-      $("#manualStatusFilter").value = button.dataset.manualStatus;
-      scheduleFilterUpdate();
-    });
-  });
-  const selectedColorLabel = appState.filters.colorLabel || "all";
-  $("#colorLabelFilter").value = selectedColorLabel;
-  $("#colorLabelOptions").innerHTML = (appState.colorLabelOptions || [])
-    .map(
-      (option) => `
-        <button
-          class="filter-option color-filter-option ${option.value === selectedColorLabel ? "is-active" : ""}"
-          type="button"
-          role="radio"
-          aria-checked="${option.value === selectedColorLabel ? "true" : "false"}"
-          data-color-filter="${escapeHtml(option.value)}"
-        >
-          ${colorLabelDot(option.value)}
-          <span>${escapeHtml(localizedColorFilterOption(option))}</span>
-        </button>
-      `,
-    )
-    .join("");
-  $("#colorLabelOptions").querySelectorAll("[data-color-filter]").forEach((button) => {
-    button.addEventListener("click", () => {
-      $("#colorLabelFilter").value = button.dataset.colorFilter;
-      scheduleFilterUpdate();
-    });
-  });
-  $("#limitInput").value = appState.filters.limit ?? 80;
-  setSourceMode(sourceInputsDirty ? sourceMode : appState.source.mode || sourceMode);
+  filterPanel.renderControls();
   setNetworkMode(appState.network?.mode || "direct", false);
   renderModelOptions();
-  renderFilterPresets();
 }
 
 function render() {
@@ -2146,26 +1374,14 @@ function refreshCurationHistoryIfOpen() {
 }
 
 async function loadState() {
-  const sourceSnapshot = sourceInputsDirty ? sourceInputSnapshot() : null;
+  const sourceSnapshot = sourcePanel.dirty() ? sourceInputSnapshot() : null;
   appState = await getJson("/api/state");
-  if (!filterRestoreAttempted && !appState.job?.running) {
-    filterRestoreAttempted = true;
-    const savedFilters = savedFilterPayload();
-    if (savedFilters && !filtersAreDefault(savedFilters) && filtersAreDefault(appState.filters)) {
-      try {
-        appState = await postJson("/api/filter", savedFilters);
-      } catch (_error) {
-        localStorage.removeItem(FILTER_STORAGE_KEY);
-      }
-    }
-  }
+  await filterPanel.restoreSavedFiltersIfNeeded();
   if (sourceSnapshot) applySourceInputSnapshot(sourceSnapshot);
-  persistFilterPayload(appState.filters);
-  if (selectedIndex >= (appState.photos || []).length) selectedIndex = 0;
+  filterPanel.persistCurrentFilters();
+  viewerPanel.ensureSelectedIndex();
   render();
-  if (sourcePreviewPending && sourceMode === "folders" && !appState.job?.running) {
-    scheduleSourcePreview(80);
-  }
+  sourcePanel.resumePendingPreviewIfReady();
   syncPollTimer();
 }
 
@@ -2180,228 +1396,14 @@ function syncPollTimer() {
   }
 }
 
-function uploadFileName(file) {
-  return file?.webkitRelativePath || file?.relativePath || file?.name || "upload";
-}
-
-function hasRelativeUploadPath(file) {
-  return Boolean(file?.webkitRelativePath || file?.relativePath);
-}
-
-function annotateDroppedFile(file, relativePath) {
-  if (!relativePath || file.webkitRelativePath) return file;
-  try {
-    Object.defineProperty(file, "relativePath", { value: relativePath, configurable: true });
-  } catch (_error) {
-    // A plain file name is still safe if the browser does not allow annotation.
-  }
-  return file;
-}
-
-function readEntryFile(entry, relativePath = "") {
-  return new Promise((resolve) => {
-    entry.file(
-      (file) => resolve([annotateDroppedFile(file, relativePath || entry.fullPath?.replace(/^\/+/, "") || file.name)]),
-      () => resolve([]),
-    );
-  });
-}
-
-async function readDirectoryEntry(entry, prefix = "") {
-  const reader = entry.createReader();
-  const files = [];
-  const readBatch = () =>
-    new Promise((resolve) => {
-      reader.readEntries(resolve, () => resolve([]));
-    });
-  while (true) {
-    const entries = await readBatch();
-    if (!entries.length) break;
-    for (const child of entries) {
-      const childPath = `${prefix}${entry.name}/${child.name}`;
-      if (child.isFile) {
-        files.push(...(await readEntryFile(child, childPath)));
-      } else if (child.isDirectory) {
-        files.push(...(await readDirectoryEntry(child, `${prefix}${entry.name}/`)));
-      }
-    }
-  }
-  return files;
-}
-
-async function filesFromDataTransfer(dataTransfer) {
-  const items = Array.from(dataTransfer?.items || []);
-  if (!items.length) return Array.from(dataTransfer?.files || []);
-  const files = [];
-  for (const item of items) {
-    const entry = item.webkitGetAsEntry?.();
-    if (entry?.isFile) {
-      files.push(...(await readEntryFile(entry)));
-    } else if (entry?.isDirectory) {
-      files.push(...(await readDirectoryEntry(entry)));
-    } else {
-      const file = item.getAsFile?.();
-      if (file) files.push(file);
-    }
-  }
-  return files.length ? files : Array.from(dataTransfer?.files || []);
-}
-
-async function loadUploadedSourcePreview(savedPaths) {
-  const uploadedPaths = uniqueFolderList(savedPaths || []);
-  if (!uploadedPaths.length || appState?.job?.running) return;
-  sourcePreviewRequestId += 1;
-  sourcePreviewLoading = true;
-  sourcePreviewPending = false;
-  sourceMode = "uploads";
-  if (appState?.source) {
-    appState.source = {
-      ...(appState.source || {}),
-      mode: "uploads",
-      uploadedPaths,
-    };
-  }
-  render();
-  try {
-    appState = await postJson("/api/source/preview", {
-      mode: "uploads",
-      folders: foldersFromInput(),
-      cachePath: $("#cacheInput").value.trim(),
-      uploadedPaths,
-    });
-    sourceInputsDirty = false;
-    selectedIndex = 0;
-    syncPollTimer();
-    await loadState();
-  } catch (error) {
-    showCommandNotice(
-      {
-        tone: "danger",
-        state: t("source.previewFailedState"),
-        title: t("source.previewFailedTitle"),
-        detail: errorMessage(error),
-      },
-      4200,
-    );
-  } finally {
-    sourcePreviewLoading = false;
-    render();
-    syncPollTimer();
-  }
-}
-
-async function uploadFiles(fileList) {
-  if (appState?.job?.running) return;
-  const files = Array.from(fileList || []);
-  if (!files.length) return;
-  const containsDirectoryUpload = files.some(hasRelativeUploadPath);
-  const form = new FormData();
-  files.forEach((file) => form.append("files", file, uploadFileName(file)));
-  $("#uploadHint").textContent = containsDirectoryUpload ? t("source.uploadingFolder") : t("source.uploading");
-  const result = await apiClient.uploadForm("/api/upload", form);
-  $("#uploadHint").textContent = t("source.uploadedCount", { count: Number(result.count || 0) });
-  if ((result.saved || []).length) {
-    await loadUploadedSourcePreview(result.saved || []);
-  } else {
-    await loadState();
-  }
-}
-
-function handleDesktopDroppedPaths(paths) {
-  const droppedPaths = uniqueFolderList(paths || []);
-  if (!droppedPaths.length || appState?.job?.running) return;
-  desktopDropHandledUntil = Date.now() + 1500;
-  addFolderEntries(droppedPaths, { previewDelay: 80 });
-  showCommandNotice(
-    {
-      tone: "ready",
-      state: t("source.desktopDropState"),
-      title: t("source.desktopDropTitle"),
-      detail: t("source.desktopDropDetail", { count: droppedPaths.length }),
-    },
-    2600,
-  );
-}
-
-function sourcePreviewPayload() {
-  return {
-    mode: sourceMode,
-    folders: foldersFromInput(),
-    cachePath: $("#cacheInput").value.trim(),
-    uploadedPaths: appState?.source?.uploadedPaths || [],
-  };
-}
-
-function scheduleSourcePreview(delay = 240) {
-  window.clearTimeout(sourcePreviewTimer);
-  const requestId = ++sourcePreviewRequestId;
-  if (!appState) {
-    sourcePreviewPending = true;
-    sourcePreviewLoading = false;
-    return;
-  }
-  if (appState.job?.running || sourceMode !== "folders") {
-    sourcePreviewLoading = false;
-    return;
-  }
-  sourcePreviewPending = false;
-  const payload = sourcePreviewPayload();
-  const hasFolders = Boolean((payload.folders || []).length);
-  sourcePreviewTimer = window.setTimeout(() => {
-    void loadSourcePreview(payload, requestId, { showLoading: hasFolders });
-  }, hasFolders ? delay : 0);
-}
-
-async function loadSourcePreview(payload = sourcePreviewPayload(), requestId = ++sourcePreviewRequestId, options = {}) {
-  const mode = payload.mode || "folders";
-  if (!appState || appState.job?.running || !["folders", "uploads"].includes(mode)) return;
-  const hasSource = mode === "uploads" ? Boolean((payload.uploadedPaths || []).length) : Boolean((payload.folders || []).length);
-  const sourceSnapshot = mode === "folders" ? sourceInputSnapshot() : null;
-  const showLoading = options.showLoading !== false && hasSource;
-  sourcePreviewLoading = showLoading;
-  if (showLoading) {
-    render();
-  }
-  try {
-    const response = await postJson("/api/source/preview", payload);
-    if (requestId !== sourcePreviewRequestId) return;
-    appState = response;
-    if (sourceSnapshot) applySourceInputSnapshot(sourceSnapshot);
-    selectedIndex = 0;
-    sourcePreviewLoading = false;
-    syncPollTimer();
-  } catch (error) {
-    if (requestId !== sourcePreviewRequestId) return;
-    showCommandNotice(
-      {
-        tone: "danger",
-        state: t("source.previewFailedState"),
-        title: t("source.previewFailedTitle"),
-        detail: errorMessage(error),
-      },
-      4200,
-    );
-  } finally {
-    if (requestId === sourcePreviewRequestId) {
-      sourcePreviewLoading = false;
-      render();
-      syncPollTimer();
-    }
-  }
-}
-
 function selectedScoringModels() {
   return $$("#modelOptions [data-model-key]:checked").map((input) => input.dataset.modelKey);
 }
 
 function buildScoringPayload(selectedModels = selectedScoringModels()) {
   return {
-    mode: sourceMode,
-    folders: foldersFromInput(),
-    cachePath: $("#cacheInput").value.trim(),
-    uploadedPaths: appState?.source?.uploadedPaths || [],
+    ...sourcePanel.buildScoringPayload(selectedModels),
     networkMode,
-    selectedModels,
   };
 }
 
@@ -2438,26 +1440,22 @@ function closeLlmConfirm({ restoreFocus = true } = {}) {
 }
 
 async function submitScoringPayload(payload) {
-  sourcePreviewRequestId += 1;
-  sourcePreviewLoading = false;
-  window.clearTimeout(sourcePreviewTimer);
+  sourcePanel.stopPreview();
   commandNotice = null;
   window.clearTimeout(commandNoticeTimer);
   await postJson("/api/score", payload);
-  sourceInputsDirty = false;
+  sourcePanel.markClean();
   await loadState();
 }
 
 async function startLlmReview() {
   if (!appState || appState.job?.running || !appState?.llm?.configured) return;
   const payload = buildScoringPayload(["llm_review"]);
-  sourcePreviewRequestId += 1;
-  sourcePreviewLoading = false;
-  window.clearTimeout(sourcePreviewTimer);
+  sourcePanel.stopPreview();
   commandNotice = null;
   window.clearTimeout(commandNoticeTimer);
   await postJson("/api/llm-review", payload);
-  sourceInputsDirty = false;
+  sourcePanel.markClean();
   await loadState();
 }
 
@@ -2578,7 +1576,7 @@ async function cancelJob() {
 
 async function clearHistoryCache() {
   if (!appState || appState.job?.running) return;
-  const cachePath = $("#cacheInput").value.trim();
+  const cachePath = sourcePanel.cachePath();
   const ok = await requestDangerConfirm({
     confirmIcon: "trash",
     confirmLabel: t("maintenance.clearScores"),
@@ -2590,7 +1588,7 @@ async function clearHistoryCache() {
     appState = await postJson("/api/cache/clear", { cachePath });
     curationHistory = [];
     curationHistoryError = "";
-    selectedIndex = 0;
+    viewerPanel.resetSelectedIndex();
     showCommandNotice({
       tone: "ready",
       state: t("maintenance.clearScoresState"),
@@ -2613,7 +1611,7 @@ async function clearHistoryCache() {
 
 async function clearLocalData() {
   if (!appState || appState.job?.running) return;
-  const cachePath = $("#cacheInput").value.trim();
+  const cachePath = sourcePanel.cachePath();
   const ok = await requestDangerConfirm({
     confirmIcon: "trash",
     confirmLabel: t("maintenance.clearLocalData"),
@@ -2627,13 +1625,13 @@ async function clearLocalData() {
     curationHistoryError = "";
     galleryPanel.selectedGalleryIds().clear();
     galleryPanel.setGallerySelectionAnchorId("");
-    selectedIndex = 0;
+    viewerPanel.resetSelectedIndex();
     llmConfigPanel.setLlmModelOptions([]);
     llmConfigPanel.setLlmModelListMessage("");
     llmConfigPanel.setLlmSelectedModel(appState?.llm?.model || "");
     llmConfigPanel.setLlmConfigEditing(false);
     llmConfigPanel.setLlmModelMenuOpen(false);
-    sourceInputsDirty = false;
+    sourcePanel.markClean();
     showCommandNotice({
       tone: "ready",
       state: t("maintenance.clearLocalDataState"),
@@ -2685,241 +1683,6 @@ async function clearModelCache() {
   }
 }
 
-function filterPayloadFromInputs() {
-  return {
-    sortField: $("#sortField").value,
-    minScore: Number($("#minScore").value),
-    minModelQuality: Number($("#minModelQuality").value),
-    minAestheticReference: Number($("#minAestheticReference").value),
-    minTechnical: Number($("#minTechnical").value),
-    minLlmReview: Number($("#minLlmReview").value),
-    modelAgreement: $("#modelAgreement").value,
-    manualStatus: $("#manualStatusFilter").value,
-    colorLabel: $("#colorLabelFilter").value,
-    limit: Number($("#limitInput").value),
-    weightPreset: $("#weightPreset").value,
-    customWeights: {
-      aesthetic: Number($("#aestheticWeight").value),
-      technical: Number($("#technicalWeight").value),
-      compositionLight: Number($("#compositionLightWeight").value),
-    },
-  };
-}
-
-function applyFilterPayloadToInputs(filters = {}) {
-  const payload = normalizeFilterPayload(filters);
-  $("#sortField").value = payload.sortField;
-  $("#minScore").value = payload.minScore;
-  $("#minModelQuality").value = payload.minModelQuality;
-  $("#minAestheticReference").value = payload.minAestheticReference;
-  $("#minTechnical").value = payload.minTechnical;
-  $("#minLlmReview").value = payload.minLlmReview;
-  $("#modelAgreement").value = payload.modelAgreement;
-  $("#manualStatusFilter").value = payload.manualStatus;
-  $("#colorLabelFilter").value = payload.colorLabel;
-  $("#limitInput").value = payload.limit;
-  $("#weightPreset").value = payload.weightPreset;
-  $("#aestheticWeight").value = payload.customWeights.aesthetic;
-  $("#technicalWeight").value = payload.customWeights.technical;
-  $("#compositionLightWeight").value = payload.customWeights.compositionLight;
-}
-
-async function applyFilterUpdate() {
-  window.clearTimeout(filterTimer);
-  filterTimer = null;
-  filterUpdateInFlight = (async () => {
-    appState = await postJson("/api/filter", filterPayloadFromInputs());
-    persistFilterPayload(appState.filters);
-    selectedIndex = 0;
-    render();
-    return appState;
-  })();
-  try {
-    return await filterUpdateInFlight;
-  } finally {
-    filterUpdateInFlight = null;
-  }
-}
-
-async function clearFilterScope() {
-  applyFilterPayloadToInputs();
-  try {
-    await applyFilterUpdate();
-  } catch (error) {
-    showCommandNotice(
-      {
-        tone: "danger",
-        state: t("filters.clearFailureState"),
-        title: t("filters.clearFailureTitle"),
-        detail: errorMessage(error),
-      },
-      4200,
-    );
-  }
-}
-
-async function saveCurrentFilterPreset() {
-  if (!appState) return;
-  const input = $("#filterPresetNameInput");
-  if (renamingFilterPresetId) {
-    const preset = savedFilterPresets().find((item) => item.id === renamingFilterPresetId);
-    const presetName = input.value.trim();
-    if (!preset || !presetName) {
-      renamingFilterPresetId = "";
-      input.value = "";
-      renderFilterPresets();
-      return;
-    }
-    filterPresets = renameFilterPreset(renamingFilterPresetId, presetName);
-    renamingFilterPresetId = "";
-    input.value = "";
-    renderFilterPresets();
-    showCommandNotice({
-      tone: "ready",
-      state: t("filters.renameState"),
-      title: t("filters.renameTitle", { name: presetName }),
-      detail: filterPresetSummary(preset.filters),
-    }, 2400);
-    return;
-  }
-  try {
-    await flushFilterUpdate();
-  } catch (error) {
-    showCommandNotice(
-      {
-        tone: "danger",
-        state: t("filters.saveFailureState"),
-        title: t("filters.saveFailureTitle"),
-        detail: errorMessage(error),
-      },
-      3600,
-    );
-    return;
-  }
-  const presetName = input.value.trim() || filterPresetSuggestedName(appState.filters);
-  filterPresets = saveFilterPreset(presetName, appState.filters);
-  input.value = "";
-  renderFilterPresets();
-  showCommandNotice({
-    tone: "ready",
-    state: t("filters.saveState"),
-    title: t("filters.saveTitle", { name: presetName }),
-    detail: filterPresetSummary(appState.filters),
-  }, 2600);
-}
-
-function beginRenameFilterPreset(presetId) {
-  const preset = savedFilterPresets().find((item) => item.id === presetId);
-  if (!preset) return;
-  renamingFilterPresetId = preset.id;
-  const input = $("#filterPresetNameInput");
-  input.value = preset.name;
-  renderFilterPresets();
-  window.setTimeout(() => {
-    input.focus();
-    input.select();
-  }, 0);
-}
-
-function cancelRenameFilterPreset() {
-  if (!renamingFilterPresetId) return;
-  renamingFilterPresetId = "";
-  $("#filterPresetNameInput").value = "";
-  renderFilterPresets();
-}
-
-async function refreshFilterPreset(presetId) {
-  const preset = savedFilterPresets().find((item) => item.id === presetId);
-  if (!preset) return;
-  cancelRenameFilterPreset();
-  try {
-    await flushFilterUpdate();
-  } catch (error) {
-    showCommandNotice(
-      {
-        tone: "danger",
-        state: t("filters.updateFailureState"),
-        title: t("filters.updateFailureTitle"),
-        detail: errorMessage(error),
-      },
-      3600,
-    );
-    return;
-  }
-  filterPresets = updateFilterPreset(presetId, appState.filters);
-  renderFilterPresets();
-  showCommandNotice({
-    tone: "ready",
-    state: t("filters.updateState"),
-    title: t("filters.updateTitle", { name: preset.name }),
-    detail: filterPresetSummary(appState.filters),
-  }, 2600);
-}
-
-async function applyFilterPreset(presetId) {
-  const preset = savedFilterPresets().find((item) => item.id === presetId);
-  if (!preset) return;
-  cancelRenameFilterPreset();
-  applyFilterPayloadToInputs(preset.filters);
-  try {
-    await applyFilterUpdate();
-    showCommandNotice({
-      tone: "ready",
-      state: t("filters.applyState"),
-      title: t("filters.applyTitle", { name: preset.name }),
-      detail: filterPresetSummary(preset.filters),
-    }, 2600);
-  } catch (error) {
-    showCommandNotice(
-      {
-        tone: "danger",
-        state: t("filters.applyFailureState"),
-        title: t("filters.applyFailureTitle"),
-        detail: errorMessage(error),
-      },
-      3600,
-    );
-  }
-}
-
-function removeFilterPreset(presetId) {
-  const preset = savedFilterPresets().find((item) => item.id === presetId);
-  if (renamingFilterPresetId === presetId) renamingFilterPresetId = "";
-  filterPresets = deleteFilterPreset(presetId);
-  renderFilterPresets();
-  if (preset) {
-    showCommandNotice({
-      tone: "partial",
-      state: t("filters.deleteState"),
-      title: t("filters.deleteTitle", { name: preset.name }),
-      detail: t("filters.remainingViews", { count: filterPresets.length }),
-    }, 2200);
-  }
-}
-
-function scheduleFilterUpdate() {
-  window.clearTimeout(filterTimer);
-  filterTimer = window.setTimeout(() => {
-    applyFilterUpdate().catch((error) => {
-      showCommandNotice(
-        {
-          tone: "danger",
-          state: t("filters.updateFilterFailureState"),
-          title: t("filters.updateFilterFailureTitle"),
-          detail: errorMessage(error),
-        },
-        3600,
-      );
-    });
-  }, 140);
-}
-
-async function flushFilterUpdate() {
-  if (filterTimer) return applyFilterUpdate();
-  if (filterUpdateInFlight) return filterUpdateInFlight;
-  return appState;
-}
-
 function applyActiveViewState() {
   const nextView = normalizeViewName(activeView);
   activeView = nextView;
@@ -2941,7 +1704,7 @@ function switchView(view) {
 
 async function openManualStatusView(status, view = "gallery") {
   if (appState?.job?.running) return;
-  $("#manualStatusFilter").value = status;
+  filterPanel.setManualStatus(status);
   try {
     await applyFilterUpdate();
   } catch (_error) {
@@ -2955,17 +1718,13 @@ async function performPhotoMarkUpdate(fileId, changes, options = {}) {
   const photo = (appState?.photos || []).find((item) => item.fileId === fileId);
   if (!photo?.fileId) return;
   const previousFileId = photo.fileId;
-  const previousIndex = selectedIndex;
+  const previousIndex = viewerPanel.selectedIndex();
   try {
     appState = await postJson("/api/mark", {
       fileId: photo.fileId,
       ...changes,
     });
-    if (options.advance) {
-      selectedIndex = cullingFlow.nextIndexAfterMark(appState.photos || [], previousIndex, previousFileId, true);
-    } else {
-      preserveSelectedPhoto(previousFileId);
-    }
+    preserveSelectedPhoto(previousFileId, { advance: options.advance, previousIndex });
     refreshCurationHistoryIfOpen();
     render();
   } catch (error) {
@@ -3241,30 +2000,7 @@ function isShortcutHelpKey(event) {
 }
 
 function handleViewerShortcut(event) {
-  const shortcut = viewerKeyboard.shortcutActionFromEvent(event, {
-    activeView,
-    hasSelectedPhoto: Boolean(selectedPhoto()),
-  });
-  if (shortcut.action === viewerKeyboard.actions.none) return false;
-  event.preventDefault();
-  if (shortcut.action === viewerKeyboard.actions.navigate) {
-    if (shortcut.direction < 0) $("#prevBtn").click();
-    if (shortcut.direction > 0) $("#nextBtn").click();
-    return true;
-  }
-  if (shortcut.action === viewerKeyboard.actions.rating) {
-    updateManualMark({ rating: shortcut.rating, source: "manual", acceptedScore: null }, { advance: markAdvanceEnabled });
-    return true;
-  }
-  if (shortcut.action === viewerKeyboard.actions.status) {
-    updateManualMark({ status: shortcut.status, source: "manual", acceptedScore: null }, { advance: markAdvanceEnabled });
-    return true;
-  }
-  if (shortcut.action === viewerKeyboard.actions.color) {
-    updateManualMark({ colorLabel: shortcut.colorLabel, source: "manual" });
-    return true;
-  }
-  return false;
+  return viewerPanel.handleShortcut(event);
 }
 
 async function applyBatchStatus(status, target = galleryBatchTarget(appState?.photos || [])) {
@@ -3356,12 +2092,10 @@ async function copyFileFolderPath(folderPath) {
 }
 
 function bindEvents() {
-  $("#fileInput").setAttribute("accept", supportedTypes.join(","));
-  $("#folderPicker").setAttribute("accept", supportedTypes.join(","));
+  sourcePanel.bindEvents();
+  filterPanel.bindEvents();
+  viewerPanel.bindEvents();
 
-  $$("[data-source]").forEach((button) =>
-    button.addEventListener("click", () => setSourceMode(button.dataset.source, { dirty: true })),
-  );
   $$("[data-network]").forEach((button) => button.addEventListener("click", () => setNetworkMode(button.dataset.network)));
   $$(".view-tab").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
   $("#sidebarToggleBtn").addEventListener("click", toggleSidebarMode);
@@ -3371,49 +2105,6 @@ function bindEvents() {
   $("#openShortcutHelpBtn").addEventListener("click", openShortcutHelp);
   $("#closeShortcutHelpBtn").addEventListener("click", closeShortcutHelp);
   $("#shortcutHelpScrim").addEventListener("click", closeShortcutHelp);
-
-  $("#pickFilesBtn").addEventListener("click", () => {
-    if (!appState?.job?.running) $("#fileInput").click();
-  });
-  $("#pickFolderBtn").addEventListener("click", () => {
-    if (!appState?.job?.running) $("#folderPicker").click();
-  });
-  $("#fileInput").addEventListener("change", (event) => uploadFiles(event.target.files));
-  $("#folderPicker").addEventListener("change", (event) => uploadFiles(event.target.files));
-
-  $("#pickNativeFolderBtn").addEventListener("click", async () => {
-    if (appState?.job?.running) return;
-    try {
-      const result = await postJson("/api/pick-folders", {});
-      const picked = uniqueFolderList(result.folders || [result.folder]);
-      if (!picked.length) return;
-      addFolderEntries(picked, { previewDelay: 80 });
-    } catch (_error) {
-      // User cancellation should stay quiet.
-    }
-  });
-
-  const dropzone = $("#dropzone");
-  ["dragenter", "dragover"].forEach((eventName) => {
-    dropzone.addEventListener(eventName, (event) => {
-      event.preventDefault();
-      dropzone.classList.add("is-dragging");
-    });
-  });
-  ["dragleave", "drop"].forEach((eventName) => {
-    dropzone.addEventListener(eventName, (event) => {
-      event.preventDefault();
-      dropzone.classList.remove("is-dragging");
-    });
-  });
-  dropzone.addEventListener("drop", (event) => {
-    if (!appState?.job?.running && Date.now() > desktopDropHandledUntil) {
-      void filesFromDataTransfer(event.dataTransfer).then((files) => uploadFiles(files));
-    }
-  });
-  window.addEventListener("culvia-desktop-drop", (event) => {
-    handleDesktopDroppedPaths(event.detail?.paths || []);
-  });
 
   $("#mainScoreBtn").addEventListener("click", startScoring);
   $("#llmReviewBtn").addEventListener("click", startLlmReview);
@@ -3434,17 +2125,6 @@ function bindEvents() {
   $("#clearLocalDataBtn").addEventListener("click", clearLocalData);
   $("#clearHistoryBtn").addEventListener("click", clearHistoryCache);
   $("#clearModelBtn").addEventListener("click", clearModelCache);
-  $("#clearFilterScopeBtn").addEventListener("click", clearFilterScope);
-  $("#saveFilterPresetBtn").addEventListener("click", saveCurrentFilterPreset);
-  $("#filterPresetNameInput").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      saveCurrentFilterPreset();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      cancelRenameFilterPreset();
-    }
-  });
   $("#editLlmConfigBtn").addEventListener("click", openLlmConfigEditor);
   $("#cancelLlmConfigBtn").addEventListener("click", cancelLlmConfigEdit);
   $("#llmModelButton").addEventListener("click", toggleLlmModelMenu);
@@ -3463,92 +2143,6 @@ function bindEvents() {
   ["mouseleave", "blur"].forEach((eventName) => {
     modelStatusPill.addEventListener(eventName, () => modelStatusPill.classList.remove("is-tooltip-visible"));
   });
-  [
-    ["#minScore", "#minScoreText"],
-    ["#minModelQuality", "#minModelQualityText"],
-    ["#minAestheticReference", "#minAestheticReferenceText"],
-    ["#minTechnical", "#minTechnicalText"],
-    ["#minLlmReview", "#minLlmReviewText"],
-  ].forEach(([inputSelector, textSelector]) => {
-    $(inputSelector).addEventListener("input", () => {
-      setText(textSelector, Number($(inputSelector).value).toFixed(1));
-      scheduleFilterUpdate();
-    });
-  });
-  const handleFolderSourceChange = () => {
-    if (appState?.job?.running) return;
-    if (sourceMode !== "folders") setSourceMode("folders");
-    markSourceInputsDirty();
-    updatePathSummaries();
-    scheduleSourcePreview();
-  };
-  $("#folderList").addEventListener("input", (event) => {
-    if (!event.target?.matches?.("[data-folder-path]")) return;
-    event.target.dataset.uiTooltip = event.target.value;
-    handleFolderSourceChange();
-  });
-  $("#folderList").addEventListener("change", (event) => {
-    if (!event.target?.matches?.("[data-folder-path]")) return;
-    setFolderList(foldersFromInput(), { previewDelay: 120 });
-  });
-  $("#folderList").addEventListener("click", (event) => {
-    const removeButton = event.target?.closest?.("[data-remove-source-folder]");
-    if (removeButton) {
-      const index = Number(removeButton.dataset.removeSourceFolder);
-      setFolderList(foldersFromInput().filter((_folder, folderIndex) => folderIndex !== index), { previewDelay: 80 });
-      return;
-    }
-    const copyButton = event.target?.closest?.("[data-copy-source-folder]");
-    if (copyButton) {
-      void copyFileFolderPath(copyButton.dataset.copySourceFolder || "");
-    }
-  });
-  $("#folderAddBtn").addEventListener("click", () => addFolderEntries(folderValuesFromText($("#folderAddInput").value)));
-  $("#folderAddInput").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      addFolderEntries(folderValuesFromText(event.target.value));
-    }
-  });
-  $("#folderAddInput").addEventListener("paste", (event) => {
-    const text = event.clipboardData?.getData("text") || "";
-    if (!text.includes("\n")) return;
-    event.preventDefault();
-    addFolderEntries(folderValuesFromText(text));
-  });
-  $("#clearFoldersBtn").addEventListener("click", () => setFolderList([], { previewDelay: 0 }));
-  $("#cacheInput").addEventListener("change", () => {
-    if (appState?.job?.running) return;
-    markSourceInputsDirty();
-    scheduleSourcePreview(120);
-  });
-  [
-    ["#aestheticWeight", "#aestheticWeightText"],
-    ["#technicalWeight", "#technicalWeightText"],
-    ["#compositionLightWeight", "#compositionLightWeightText"],
-  ].forEach(([inputSelector, textSelector]) => {
-    $(inputSelector).addEventListener("input", () => {
-      $("#weightPreset").value = "custom";
-      $(textSelector).textContent = percentValue($(inputSelector).value);
-      $("#customWeights").classList.remove("is-hidden");
-      scheduleFilterUpdate();
-    });
-  });
-  $("#limitInput").addEventListener("input", scheduleFilterUpdate);
-  $("#limitInput").addEventListener("change", scheduleFilterUpdate);
-
-  $("#prevBtn").addEventListener("click", () => {
-    moveSelection(-1);
-  });
-  $("#nextBtn").addEventListener("click", () => {
-    moveSelection(1);
-  });
-  $("#manualPickBtn").addEventListener("click", () => updateManualMark({ status: "pick", source: "manual", acceptedScore: null }, { advance: markAdvanceEnabled }));
-  $("#manualHoldBtn").addEventListener("click", () => updateManualMark({ status: "hold", source: "manual", acceptedScore: null }, { advance: markAdvanceEnabled }));
-  $("#manualRejectBtn").addEventListener("click", () => updateManualMark({ status: "reject", source: "manual", acceptedScore: null }, { advance: markAdvanceEnabled }));
-  $("#markAdvanceToggle").addEventListener("click", toggleMarkAdvanceMode);
-  $("#acceptModelBtn").addEventListener("click", () => acceptPhotoResult("model"));
-  $("#acceptLlmBtn").addEventListener("click", () => acceptPhotoResult("llm"));
   $("#acceptFilteredModelBtn").addEventListener("click", () => acceptPhotoResult("model", "filtered", galleryBatchTarget(appState?.photos || [])));
   $("#acceptFilteredLlmBtn").addEventListener("click", () => acceptPhotoResult("llm", "filtered", galleryBatchTarget(appState?.photos || [])));
   $("#deliveryReviewBtn").addEventListener("click", () => openManualStatusView("pending"));
@@ -3574,12 +2168,6 @@ function bindEvents() {
   $("#exportPreflight").addEventListener("click", handleExportPreflightClick);
   $("#exportResult").addEventListener("click", handleExportResultClick);
   $("#exportSelectedBtn").addEventListener("click", exportSelectedPhotos);
-  $("#previewLink").addEventListener("click", (event) => {
-    if (appState?.capabilities?.nativeFilePreview !== true) return;
-    event.preventDefault();
-    void openPhotoPreview(selectedPhoto());
-  });
-  $("#revealBtn").addEventListener("click", () => revealPhoto(selectedPhoto()));
   window.addEventListener("culvia:languagechange", () => render());
 
   window.addEventListener("keydown", (event) => {

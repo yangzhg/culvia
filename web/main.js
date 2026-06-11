@@ -38,6 +38,9 @@ import "./distribution_panel.js";
 import "./export_panel.js";
 import "./llm_config_panel.js";
 import "./gallery_panel.js";
+import "./viewer_panel.js";
+import "./source_panel.js";
+import "./filter_panel.js";
 import "./viewer_inspector.js";
 
 // Orchestrator: wires state, rendering, and events together.
