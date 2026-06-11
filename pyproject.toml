@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "culvia"
 version = "0.1.0"
-description = "Photo curation and review application for photographers."
+description = "Local-first photo curation, scoring, review, and delivery workbench for photographers."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [
   { name = "Culvia contributors" },
 ]
-keywords = ["photography", "photo-culling", "aesthetic-scoring", "local-first", "desktop-app"]
+keywords = ["photography", "photo-curation", "photo-culling", "aesthetic-scoring", "local-first", "desktop-app"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Web Environment",
@@ -65,7 +65,7 @@ culvia-supervisor = "culvia.supervisor:main"
 
 [project.urls]
 Homepage = "https://github.com/yangzhg/culvia"
-Documentation = "https://github.com/yangzhg/culvia#readme"
+Documentation = "https://github.com/yangzhg/culvia/tree/main/docs/en"
 Issues = "https://github.com/yangzhg/culvia/issues"
 Source = "https://github.com/yangzhg/culvia"
 

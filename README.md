@@ -2,11 +2,29 @@
 
 Simplified Chinese: [README.zh-CN.md](README.zh-CN.md)
 
-Culvia is a local-first photo curation workbench for photographers. It helps you move from a full shoot to a smaller, more intentional set of images by combining local scoring, optional vision-model critique, manual decisions, and export tools.
+Culvia is a local-first photo curation, scoring, review, and delivery workbench for photographers. It helps you move from a full shoot to a smaller, more intentional set of images by combining local scoring, optional vision-model critique, manual decisions, and export tools.
 
 It is designed for reviewing a folder of photos, finding the stronger frames, marking final decisions, and handing selected images into the next stage of editing or delivery.
 
 > Culvia is currently an early-stage open-source project. Expect rapid changes while the workflow, desktop packaging, and model integrations mature.
+
+## Install
+
+```bash
+pip install culvia
+```
+
+Then start the local Web app:
+
+```bash
+culvia-supervisor
+```
+
+Open the local address shown in the terminal. You can also run the direct server entrypoint:
+
+```bash
+culvia-web --host 127.0.0.1 --port 8501
+```
 
 ## What You Can Do
 
@@ -35,7 +53,7 @@ It is designed for reviewing a folder of photos, finding the stronger frames, ma
 
 Manual decisions remain the final culling layer. Model scores are guidance for sorting, comparison, and explanation; they should not replace your own edit.
 
-## Install And Start
+## Development Setup
 
 ### From A Source Checkout
 
@@ -57,7 +75,7 @@ make web PORT=8501
 bin/culvia-web --host 127.0.0.1 --port 8501
 ```
 
-### After Pip Installation
+### Installed Console Commands
 
 When installed as a Python package, Culvia exposes console commands:
 
