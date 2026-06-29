@@ -115,11 +115,16 @@ This note applies to users who download desktop binaries from GitHub Releases: m
 
 Current desktop binaries are not Developer ID signed, notarized, or Windows code signed. macOS Gatekeeper and Windows SmartScreen may warn that the app is from an unidentified developer or block first launch.
 
-Download desktop packages only from the project GitHub Releases page and compare the published `.sha256` file before running them. If you trust the build:
+Download desktop packages only from the project GitHub Releases page and compare the published `.sha256` file before running them. If the checksum does not match, do not run the package.
 
-- macOS: open the app with Control-click or right-click, choose **Open**, then confirm **Open** again. If macOS still blocks it, use **System Settings > Privacy & Security > Open Anyway** for Culvia. For a quarantined extracted app you can also run `xattr -dr com.apple.quarantine /path/to/Culvia.app`.
-- Windows: extract the portable zip, run `culvia-desktop.exe`, choose **More info**, then **Run anyway** when SmartScreen appears.
-- Linux: extract the `.tar.gz` package and run the launcher from the extracted directory. The current Linux package is not additionally signed.
+If you trust the build and hit an OS warning:
+
+- macOS says the app is from an unidentified developer: open the app with Control-click or right-click, choose **Open**, then confirm **Open** again.
+- macOS still blocks the app after extraction: open **System Settings > Privacy & Security**, find the Culvia warning, and choose **Open Anyway**.
+- macOS says the app is damaged or quarantined: run `xattr -dr com.apple.quarantine /path/to/Culvia.app`, then open the app again.
+- Windows SmartScreen blocks first launch: extract the portable zip, run `culvia-desktop.exe`, choose **More info**, then **Run anyway**.
+- Windows marks the downloaded zip as blocked: right-click the zip or extracted `culvia-desktop.exe`, open **Properties**, check **Unblock** if it appears, then apply the change.
+- Linux reports permission denied: from the extracted package directory, run `chmod +x bin/culvia bin/culvia-desktop`, then start `bin/culvia`.
 
 These workarounds are for early public builds. A future release lane can add Developer ID signing, notarization, and Windows Authenticode signing when project certificates are configured.
 
