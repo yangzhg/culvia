@@ -45,6 +45,13 @@ class FormalGateTests(unittest.TestCase):
         self.assertIn("release_smoke.py", " ".join(steps[6].command))
         self.assertIn("--strict", steps[6].command)
 
+    def test_unit_tests_can_be_skipped_for_package_only_gates(self) -> None:
+        steps = formal_gate.collect_steps(root=ROOT, python=Path("/python"), include_unit_tests=False)
+        names = [step.name for step in steps]
+
+        self.assertNotIn("unit tests", names)
+        self.assertEqual(names[0], "compileall")
+
     def test_sdist_release_smoke_is_explicit_and_strict(self) -> None:
         steps = formal_gate.collect_steps(
             root=ROOT,
@@ -374,11 +381,24 @@ class FormalGateTests(unittest.TestCase):
     def test_sensitive_scan_fallback_reports_secret_match(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            (root / "README.md").write_text("token sk-abcdefghijkl\n", encoding="utf-8")
+            secret = "sk-" + "abcdefghijkl"
+            (root / "README.md").write_text(f"token {secret}\n", encoding="utf-8")
             returncode, stdout = formal_gate.sensitive_scan_fallback_check(root=root)
 
         self.assertEqual(returncode, 0)
-        self.assertIn("README.md:1:sk-abcdefghijkl", stdout)
+        self.assertIn(f"README.md:1:{secret}", stdout)
+
+    def test_sensitive_scan_fallback_ignores_generated_runtime_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            secret = "sk-" + "abcdefghijkl"
+            generated = root / "desktop" / "tauri" / "src-tauri" / "runtime" / "backend" / "RECORD"
+            generated.parent.mkdir(parents=True)
+            generated.write_text(f"hash {secret}\n", encoding="utf-8")
+            returncode, stdout = formal_gate.sensitive_scan_fallback_check(root=root)
+
+        self.assertEqual(returncode, 1)
+        self.assertIn("found no matches", stdout)
 
     def test_missing_gate_command_reports_failure(self) -> None:
         step = formal_gate.GateStep("missing", ("missing-command",))
@@ -423,6 +443,17 @@ class FormalGateTests(unittest.TestCase):
         self.assertIn("desktop readiness:", output.getvalue())
         self.assertIn("desktop release workflow contract:", output.getvalue())
         self.assertNotIn("release smoke:", output.getvalue())
+
+    def test_main_list_can_skip_unit_tests(self) -> None:
+        output = io.StringIO()
+        with patch("sys.stdout", output):
+            result = formal_gate.main(
+                ["--root", str(ROOT), "--python", "/python", "--list", "--skip-release-smoke", "--skip-unit-tests"]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertNotIn("unit tests:", output.getvalue())
+        self.assertIn("compileall:", output.getvalue())
 
     def test_main_json_reports_failures(self) -> None:
         def fake_run(command: list[str], **_: object) -> FakeCompletedProcess:

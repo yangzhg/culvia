@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -21,10 +22,17 @@ if str(ROOT) not in sys.path:
 
 SECRET_PATTERN = "sk-[A-Za-z0-9]{12,}"
 SECRET_SCAN_EXCLUDES = (
+    "!build/**",
+    "!dist/**",
     "!model_cache/**",
+    "!node_modules/**",
+    "!target/**",
     "!thumbnail_cache/**",
     "!upload_cache/**",
     "!culvia_uploads/**",
+    "!desktop/tauri/src-tauri/runtime/**",
+    "!desktop/tauri/src-tauri/target/**",
+    "!culvia.egg-info/**",
     "!__pycache__/**",
 )
 XCODE_LICENSE_ERROR = "You have not agreed to the Xcode license"
@@ -160,14 +168,28 @@ def whitespace_fallback_check(*, root: Path = ROOT) -> tuple[int, str]:
     return 0, "git diff --check unavailable because Xcode license is not accepted; Python whitespace fallback passed."
 
 
+def secret_scan_glob_excludes(relative: Path) -> bool:
+    posix_path = relative.as_posix()
+    for glob in SECRET_SCAN_EXCLUDES:
+        if not glob.startswith("!"):
+            continue
+        pattern = glob.removeprefix("!")
+        directory_pattern = pattern.removesuffix("/**")
+        if fnmatch.fnmatch(posix_path, pattern) or posix_path == directory_pattern:
+            return True
+        if pattern.endswith("/**") and posix_path.startswith(directory_pattern + "/"):
+            return True
+    return False
+
+
 def should_secret_scan_file(path: Path, *, root: Path) -> bool:
     try:
         relative = path.relative_to(root)
     except ValueError:
         return False
-    excluded_dirs = WHITESPACE_EXCLUDED_DIRS | {
-        glob.removeprefix("!").removesuffix("/**") for glob in SECRET_SCAN_EXCLUDES if glob.startswith("!")
-    }
+    if secret_scan_glob_excludes(relative):
+        return False
+    excluded_dirs = WHITESPACE_EXCLUDED_DIRS
     return not any(part in excluded_dirs for part in relative.parts[:-1])
 
 
@@ -208,6 +230,7 @@ def collect_steps(
     include_sdist_smoke: bool = False,
     sdist_artifact: Path | None = None,
     include_release_preflight: bool = False,
+    include_unit_tests: bool = True,
     strict_signing: bool = False,
     include_backend_smoke: bool = False,
     include_backend_workflow_smoke: bool = False,
@@ -225,52 +248,56 @@ def collect_steps(
     wheelhouse = wheelhouse or temp_path("culvia-wheelhouse")
     install_venv = install_venv or temp_path("culvia-install-check")
     dist_dir = dist_dir or temp_path("culvia-dist")
-    steps = [
-        GateStep("unit tests", (str(python), "-m", "unittest", "discover", "-s", "tests")),
-        GateStep(
-            "compileall",
-            (
-                str(python),
-                "-m",
+    steps: list[GateStep] = []
+    if include_unit_tests:
+        steps.append(GateStep("unit tests", (str(python), "-m", "unittest", "discover", "-s", "tests")))
+    steps.extend(
+        [
+            GateStep(
                 "compileall",
-                "-q",
-                "culvia_app.py",
-                "culvia",
-                "tests",
-                "tools",
+                (
+                    str(python),
+                    "-m",
+                    "compileall",
+                    "-q",
+                    "culvia_app.py",
+                    "culvia",
+                    "tests",
+                    "tools",
+                ),
+                env=compile_env,
             ),
-            env=compile_env,
-        ),
-        GateStep("whitespace", ("git", "diff", "--check")),
-        GateStep(
-            "sensitive information scan",
-            (
-                "rg",
-                "-n",
-                SECRET_PATTERN,
-                ".",
-                *tuple(arg for glob in SECRET_SCAN_EXCLUDES for arg in ("--glob", glob)),
+            GateStep("whitespace", ("git", "diff", "--check")),
+            GateStep(
+                "sensitive information scan",
+                (
+                    "rg",
+                    "-n",
+                    SECRET_PATTERN,
+                    ".",
+                    *tuple(arg for glob in SECRET_SCAN_EXCLUDES for arg in ("--glob", glob)),
+                ),
+                ok_returncodes=(1,),
             ),
-            ok_returncodes=(1,),
-        ),
-        GateStep(
-            "desktop readiness",
-            (
-                str(python),
-                str(root / "tools" / "check_desktop_readiness.py"),
-                "--json",
-                *(("--strict-toolchain",) if strict_desktop else ()),
+            GateStep(
+                "desktop readiness",
+                (
+                    str(python),
+                    str(root / "tools" / "check_desktop_readiness.py"),
+                    "--json",
+                    *(("--strict-toolchain",) if strict_desktop else ()),
+                ),
             ),
-        ),
-        GateStep(
-            "desktop release workflow contract",
-            (
-                str(python),
-                str(root / "tools" / "check_desktop_release_workflow.py"),
-                "--json",
+            GateStep(
+                "desktop release workflow contract",
+                (
+                    str(python),
+                    str(root / "tools" / "check_desktop_release_workflow.py"),
+                    "--json",
+                ),
             ),
-        ),
-    ]
+        ]
+    )
 
     if include_release_smoke:
         steps.append(
@@ -604,6 +631,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wheelhouse", type=Path, default=temp_path("culvia-wheelhouse"))
     parser.add_argument("--venv", type=Path, default=temp_path("culvia-install-check"))
     parser.add_argument("--dist-dir", type=Path, default=temp_path("culvia-dist"))
+    parser.add_argument("--skip-unit-tests", action="store_true", help="Skip full unit test discovery.")
     parser.add_argument("--skip-release-smoke", action="store_true", help="Skip wheel build/install smoke.")
     sdist_group = parser.add_mutually_exclusive_group()
     sdist_group.add_argument(
@@ -672,6 +700,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         include_sdist_smoke=args.build_sdist,
         sdist_artifact=args.sdist_artifact,
         include_release_preflight=args.release_preflight or args.strict_signing,
+        include_unit_tests=not args.skip_unit_tests,
         strict_signing=args.strict_signing,
         include_backend_smoke=args.backend_smoke,
         include_backend_workflow_smoke=args.backend_workflow_smoke,

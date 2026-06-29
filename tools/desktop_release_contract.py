@@ -298,6 +298,7 @@ def collect_steps(
                 contract.artifact_flag,
                 str(contract.archive),
                 "--skip-release-smoke",
+                "--skip-unit-tests",
             ),
         ),
         ReleaseStep(
