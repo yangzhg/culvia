@@ -1,0 +1,62 @@
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build and packaging output
+build/
+dist/
+node_modules/
+target/
+desktop/tauri/src-tauri/gen/
+desktop/tauri/src-tauri/tauri.*.generated.conf.json
+desktop/tauri/src-tauri/runtime/*
+!desktop/tauri/src-tauri/runtime/backend/
+desktop/tauri/src-tauri/runtime/backend/*
+!desktop/tauri/src-tauri/runtime/backend/.gitkeep
+*.egg-info/
+.eggs/
+*.egg
+
+# Local runtime data
+model_cache/
+analysis_cache/
+thumbnail_cache/
+upload_cache/
+culvia_uploads/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.csv
+*.tmp
+*.part
+*.log
+
+# Secrets and machine-local config
+.env
+.env.*
+.codex/
+.agents/
+*.pem
+*.key
+*.token
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local agent tooling
+.claude/
+.codegraph/

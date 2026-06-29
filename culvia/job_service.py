@@ -1,0 +1,189 @@
+from __future__ import annotations
+
+import threading
+import time
+import uuid
+from pathlib import Path
+from typing import Any
+
+from culvia.app_state import AppStateStore
+from culvia.job_text import text_ref
+
+
+class JobCancelled(Exception):
+    """Raised inside a scoring worker after the user requests cancellation."""
+
+
+class ScoringJobService:
+    def __init__(
+        self,
+        state_store: AppStateStore,
+        *,
+        condition: threading.Condition | None = None,
+        context: threading.local | None = None,
+    ) -> None:
+        self.state_store = state_store
+        self.condition = condition or threading.Condition()
+        self.context = context or threading.local()
+        self.control: dict[str, Any] = {"pauseRequested": False, "cancelRequested": False, "jobId": ""}
+
+    def active_thread_job_id(self) -> str:
+        return str(getattr(self.context, "job_id", "") or "")
+
+    def bind_thread_job(self, job_id: str) -> None:
+        self.context.job_id = job_id
+
+    def clear_thread_job(self) -> None:
+        if hasattr(self.context, "job_id"):
+            delattr(self.context, "job_id")
+
+    def is_running(self) -> bool:
+        with self.state_store.lock:
+            return bool(self.state_store.data["job"].get("running"))
+
+    def update(self, **changes: Any) -> None:
+        job_id = self.active_thread_job_id()
+        with self.state_store.lock:
+            if job_id and str(self.state_store.data["job"].get("jobId") or "") != job_id:
+                return
+            self.state_store.data["job"].update(changes)
+            self.state_store.data["job"]["updatedAt"] = time.time()
+
+    def reserve(
+        self,
+        *,
+        kind: str = "scoring",
+        phase: str = "queued",
+        title_text: dict[str, Any] | None = None,
+        detail_text: dict[str, Any] | None = None,
+    ) -> str | None:
+        job_id = uuid.uuid4().hex
+        with self.state_store.lock:
+            job = self.state_store.data["job"]
+            if job.get("running"):
+                return None
+            job.update(
+                {
+                    "jobId": job_id,
+                    "kind": kind,
+                    "running": True,
+                    "phase": phase,
+                    "title": "",
+                    "detail": "",
+                    "titleText": title_text or text_ref("jobText.scoringQueued"),
+                    "detailText": detail_text or text_ref("jobText.startingBackgroundTask"),
+                    "progress": 0.0,
+                    "done": 0,
+                    "total": 0,
+                    "warnings": [],
+                    "error": "",
+                    "errorText": None,
+                    "modelProgress": None,
+                    "currentFile": "",
+                    "currentPath": "",
+                    "currentThumb": "",
+                    "activeEvaluation": "",
+                    "completedEvaluations": [],
+                    "paused": False,
+                    "updatedAt": time.time(),
+                }
+            )
+        with self.condition:
+            self.control["jobId"] = job_id
+            self.control["pauseRequested"] = False
+            self.control["cancelRequested"] = False
+            self.condition.notify_all()
+        return job_id
+
+    def reset_control(self, job_id: str | None = None) -> None:
+        with self.condition:
+            active_job_id = str(self.control.get("jobId") or "")
+            if job_id is not None and active_job_id and active_job_id != job_id:
+                return
+            self.control["pauseRequested"] = False
+            self.control["cancelRequested"] = False
+            self.control["jobId"] = ""
+            self.condition.notify_all()
+
+    def request_pause(self) -> bool:
+        with self.state_store.lock:
+            job = self.state_store.data["job"]
+            if not job.get("running") or job.get("kind") != "scoring":
+                return False
+            job_id = str(job.get("jobId") or "")
+        if not job_id:
+            return False
+        with self.condition:
+            if str(self.control.get("jobId") or "") != job_id:
+                return False
+            self.control["pauseRequested"] = True
+        self.update(
+            paused=True,
+            phase="pausing",
+            titleText=text_ref("jobText.pausePending"),
+            detailText=text_ref("jobText.pauseAfterStage"),
+        )
+        return True
+
+    def request_resume(self) -> bool:
+        with self.state_store.lock:
+            job = self.state_store.data["job"]
+            if not job.get("running") or job.get("kind") != "scoring":
+                return False
+            job_id = str(job.get("jobId") or "")
+        if not job_id:
+            return False
+        with self.condition:
+            if str(self.control.get("jobId") or "") != job_id:
+                return False
+            self.control["pauseRequested"] = False
+            self.condition.notify_all()
+        self.update(
+            paused=False,
+            phase="scoring",
+            titleText=text_ref("jobText.resuming"),
+            detailText=text_ref("jobText.resumingDetail"),
+        )
+        return True
+
+    def request_cancel(self) -> bool:
+        with self.state_store.lock:
+            job = self.state_store.data["job"]
+            if not job.get("running") or job.get("kind") not in {"scoring", "llm_review"}:
+                return False
+            job_id = str(job.get("jobId") or "")
+        if not job_id:
+            return False
+        with self.condition:
+            if str(self.control.get("jobId") or "") != job_id:
+                return False
+            self.control["pauseRequested"] = False
+            self.control["cancelRequested"] = True
+            self.condition.notify_all()
+        self.update(
+            paused=False,
+            phase="cancelling",
+            titleText=text_ref("jobText.cancelPending"),
+            detailText=text_ref("jobText.cancelAfterStage"),
+        )
+        return True
+
+    def raise_if_cancelled(self) -> None:
+        job_id = self.active_thread_job_id()
+        with self.condition:
+            active_job_id = str(self.control.get("jobId") or "")
+            if self.control.get("cancelRequested") and (not job_id or active_job_id == job_id):
+                raise JobCancelled()
+
+    def wait_if_paused(self, path: Path | None = None) -> None:
+        job_id = self.active_thread_job_id()
+        with self.condition:
+            while self.control["pauseRequested"] and (not job_id or str(self.control.get("jobId") or "") == job_id):
+                if self.control.get("cancelRequested"):
+                    raise JobCancelled()
+                detail_text = (
+                    text_ref("jobText.pausedAtFile", file=path.name) if path is not None else text_ref("jobText.paused")
+                )
+                self.update(paused=True, phase="paused", titleText=text_ref("jobText.paused"), detailText=detail_text)
+                self.condition.wait(timeout=0.5)
+        self.update(paused=False)

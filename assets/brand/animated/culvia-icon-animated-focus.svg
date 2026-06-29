@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Culvia animated focus icon">
+  <title>Culvia animated focus icon</title>
+  <defs>
+    <linearGradient id="focus-bg" x1="10" y1="58" x2="56" y2="8" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111317"/>
+      <stop offset=".58" stop-color="#1d2127"/>
+      <stop offset="1" stop-color="#2b3036"/>
+    </linearGradient>
+    <linearGradient id="focus-ring" x1="14" y1="50" x2="50" y2="14" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#65d8c9"/>
+      <stop offset="1" stop-color="#4da7ff"/>
+    </linearGradient>
+    <filter id="focus-glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .iris { transform-origin: 32px 32px; animation: iris-turn 3.2s ease-in-out infinite; }
+      .iris path { animation: blade-fade 3.2s ease-in-out infinite; }
+      .iris path:nth-child(2) { animation-delay: .1s; }
+      .iris path:nth-child(3) { animation-delay: .2s; }
+      .iris path:nth-child(4) { animation-delay: .3s; }
+      .check { stroke-dasharray: 28; stroke-dashoffset: 28; animation: focus-check 3.2s ease-in-out infinite; }
+      @keyframes iris-turn {
+        0%, 100% { transform: rotate(0deg) scale(.98); }
+        45%, 65% { transform: rotate(42deg) scale(1.02); }
+      }
+      @keyframes blade-fade {
+        0%, 100% { opacity: .16; }
+        45%, 65% { opacity: .34; }
+      }
+      @keyframes focus-check {
+        0%, 24% { stroke-dashoffset: 28; }
+        44%, 76% { stroke-dashoffset: 0; }
+        100% { stroke-dashoffset: -28; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * { animation: none !important; }
+        .check { stroke-dashoffset: 0; }
+      }
+    </style>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#focus-bg)"/>
+  <g class="iris" fill="#65d8c9">
+    <path d="M32 14 39.5 26.5 32 32 24.5 26.5Z"/>
+    <path d="M50 32 37.5 39.5 32 32 37.5 24.5Z"/>
+    <path d="M32 50 24.5 37.5 32 32 39.5 37.5Z"/>
+    <path d="M14 32 26.5 24.5 32 32 26.5 39.5Z"/>
+  </g>
+  <circle cx="32" cy="32" r="20.5" fill="none" stroke="url(#focus-ring)" stroke-width="4.2" filter="url(#focus-glow)"/>
+  <path d="M20.1 25 A14 14 0 0 1 27.2 18.8" fill="none" stroke="#dff6f4" stroke-width="2.8" stroke-linecap="round" opacity=".8"/>
+  <path class="check" d="M22.5 32 30 39.5 42 25" fill="none" stroke="#ffb23e" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#focus-glow)"/>
+</svg>

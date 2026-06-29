@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Culvia animated camera focus icon">
+  <title>Culvia animated camera focus icon</title>
+  <defs>
+    <linearGradient id="orbit-bg" x1="10" y1="58" x2="56" y2="8" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111317"/>
+      <stop offset=".58" stop-color="#1d2127"/>
+      <stop offset="1" stop-color="#2b3036"/>
+    </linearGradient>
+    <linearGradient id="orbit-ring" x1="14" y1="50" x2="50" y2="14" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#65d8c9"/>
+      <stop offset="1" stop-color="#4da7ff"/>
+    </linearGradient>
+    <linearGradient id="scatter-cyan" x1="16" y1="18" x2="52" y2="42" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#65d8c9" stop-opacity="0"/>
+      <stop offset=".32" stop-color="#65d8c9" stop-opacity=".28"/>
+      <stop offset=".58" stop-color="#ffffff" stop-opacity=".58"/>
+      <stop offset="1" stop-color="#4da7ff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="scatter-warm" x1="14" y1="40" x2="45" y2="52" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffb23e" stop-opacity="0"/>
+      <stop offset=".52" stop-color="#ffd6a1" stop-opacity=".34"/>
+      <stop offset="1" stop-color="#65d8c9" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="scatter-violet" x1="22" y1="15" x2="45" y2="24" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7bdff2" stop-opacity="0"/>
+      <stop offset=".48" stop-color="#b7a7ff" stop-opacity=".25"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="orbit-glow" x="-35%" y="-35%" width="170%" height="170%">
+      <feGaussianBlur stdDeviation="1.8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="orbit-scatter" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation=".38" result="soft"/>
+      <feMerge>
+        <feMergeNode in="soft"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="orbit-scatter-haze" x="-45%" y="-45%" width="190%" height="190%">
+      <feGaussianBlur stdDeviation="1.15"/>
+    </filter>
+    <style>
+      .ring { transform-origin: 32px 32px; animation: ring-breathe 2.8s ease-in-out infinite; }
+      .lens-highlight-base { opacity: .34; }
+      .lens-scatter {
+        transform-origin: 32px 32px;
+        animation: scatter-drift 4.2s ease-in-out infinite;
+      }
+      .lens-scatter-haze { opacity: .2; }
+      .lens-scatter-detail { opacity: .72; }
+      .scatter-haze { stroke: url(#scatter-cyan); stroke-width: 5px; opacity: .52; }
+      .scatter-a { stroke: url(#scatter-cyan); stroke-width: 1.7px; opacity: .82; }
+      .scatter-a-rim { stroke: rgba(255, 255, 255, .7); stroke-width: .72px; opacity: .52; }
+      .scatter-b { stroke: url(#scatter-warm); stroke-width: 1.35px; opacity: .58; }
+      .scatter-c { stroke: url(#scatter-violet); stroke-width: 1.05px; opacity: .48; }
+      .scatter-prism { stroke: rgba(116, 232, 255, .58); stroke-width: .68px; stroke-dasharray: 2 8; opacity: .46; }
+      .scatter-sheen {
+        stroke: rgba(255, 255, 255, .46);
+        stroke-width: .82px;
+        stroke-dasharray: 4 13;
+        opacity: .42;
+      }
+      .focus-bracket {
+        opacity: .64;
+        stroke: #dff6f4;
+        stroke-width: 1.8px;
+        vector-effect: non-scaling-stroke;
+        animation: focus-confirm 2.8s ease-in-out infinite;
+      }
+      .check { stroke-dasharray: 28; stroke-dashoffset: 28; animation: check-draw 2.8s ease-in-out infinite; }
+      @keyframes ring-breathe {
+        0%, 100% { opacity: .86; transform: scale(1); }
+        50% { opacity: 1; transform: scale(1.035); }
+      }
+      @keyframes scatter-drift {
+        0% {
+          transform: rotate(-18deg) translate(.2px, -.1px);
+        }
+        36% {
+          transform: rotate(4deg) translate(-.15px, .2px);
+        }
+        68% {
+          transform: rotate(18deg) translate(.1px, .15px);
+        }
+        100% {
+          transform: rotate(34deg) translate(.25px, -.05px);
+        }
+      }
+      @keyframes focus-confirm {
+        0%, 20% {
+          opacity: .5;
+          stroke: #dff6f4;
+          stroke-width: 1.8px;
+        }
+        30% {
+          opacity: 1;
+          stroke: #65d8c9;
+          stroke-width: 2.35px;
+        }
+        40% {
+          opacity: .72;
+          stroke: #dff6f4;
+          stroke-width: 1.8px;
+        }
+        50% {
+          opacity: .98;
+          stroke: #65d8c9;
+          stroke-width: 2.18px;
+        }
+        64%, 100% {
+          opacity: .7;
+          stroke: #dff6f4;
+          stroke-width: 1.8px;
+        }
+      }
+      @keyframes check-draw {
+        0% { stroke-dashoffset: 28; }
+        32%, 72% { stroke-dashoffset: 0; }
+        100% { stroke-dashoffset: -28; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * { animation: none !important; }
+        .check { stroke-dashoffset: 0; }
+        .lens-scatter { transform: rotate(8deg); }
+        .focus-bracket { opacity: .8; stroke: #dff6f4; }
+      }
+    </style>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#orbit-bg)"/>
+  <circle class="ring" cx="32" cy="32" r="20.5" fill="none" stroke="url(#orbit-ring)" stroke-width="4.2" filter="url(#orbit-glow)"/>
+  <path class="lens-highlight-base" d="M20.1 25 A14 14 0 0 1 27.2 18.8" fill="none" stroke="#dff6f4" stroke-width="2.8" stroke-linecap="round"/>
+  <g class="lens-scatter lens-scatter-haze" fill="none" stroke-linecap="round" filter="url(#orbit-scatter-haze)">
+    <path class="scatter-haze" d="M42.8 17.1 A18.7 18.7 0 0 1 50.6 34.2"/>
+  </g>
+  <g class="lens-scatter lens-scatter-detail" fill="none" stroke-linecap="round" filter="url(#orbit-scatter)">
+    <path class="scatter-a" d="M44.4 17.3 A19.2 19.2 0 0 1 51 33.4"/>
+    <path class="scatter-a-rim" d="M43.1 18.7 A17.7 17.7 0 0 1 49.1 31.8"/>
+    <path class="scatter-b" d="M18.6 37.8 A17.8 17.8 0 0 0 31.8 49.8"/>
+    <path class="scatter-c" d="M25.4 16.8 A16.8 16.8 0 0 1 39 18.8"/>
+    <path class="scatter-prism" d="M20.4 41.3 A15.4 15.4 0 0 0 29.7 48.3"/>
+    <path class="scatter-sheen" d="M42.2 20.3 A16.4 16.4 0 0 1 47.3 30.4"/>
+  </g>
+  <g fill="none" stroke="#dff6f4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" filter="url(#orbit-glow)">
+    <path class="focus-bracket" d="M25 21h-9v7"/>
+    <path class="focus-bracket two" d="M39 21h9v7"/>
+    <path class="focus-bracket three" d="M48 36v7h-9"/>
+    <path class="focus-bracket four" d="M16 36v7h9"/>
+  </g>
+  <path class="check" d="M22.5 32 30 39.5 42 25" fill="none" stroke="#ffb23e" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

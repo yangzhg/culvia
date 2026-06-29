@@ -1,0 +1,32 @@
+{
+  "name": "culvia-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "backend:dev": "python3 scripts/start-dev-backend.py",
+    "backend:plan": "python3 scripts/build-backend.py --check-plan",
+    "backend:placeholder": "python3 scripts/build-backend.py --ensure-placeholder",
+    "backend:build": "python3 scripts/build-backend.py --build",
+    "linux:tgz:plan": "python3 ../../tools/build_linux_tgz.py --check-plan",
+    "linux:tgz:build": "python3 ../../tools/build_linux_tgz.py --build",
+    "linux:lite:tgz:plan": "python3 ../../tools/build_linux_tgz.py --runtime-profile lite --check-plan",
+    "linux:lite:tgz:build": "python3 ../../tools/build_linux_tgz.py --runtime-profile lite --build",
+    "linux:tgz:preflight": "python3 ../../tools/check_portable_package_preflight.py --linux-tgz",
+    "linux:lite:tgz:preflight": "python3 ../../tools/check_portable_package_preflight.py --linux-lite-tgz",
+    "windows:zip:plan": "python3 ../../tools/build_windows_zip.py --check-plan",
+    "windows:zip:build": "python3 ../../tools/build_windows_zip.py --build",
+    "windows:lite:zip:plan": "python3 ../../tools/build_windows_zip.py --runtime-profile lite --check-plan",
+    "windows:lite:zip:build": "python3 ../../tools/build_windows_zip.py --runtime-profile lite --build",
+    "windows:zip:preflight": "python3 ../../tools/check_portable_package_preflight.py --windows-zip",
+    "windows:lite:zip:preflight": "python3 ../../tools/check_portable_package_preflight.py --windows-lite-zip",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:headless": "python3 scripts/build-headless.py",
+    "tauri:build:lite:headless": "python3 scripts/build-lite-headless.py",
+    "tauri:info": "tauri info"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

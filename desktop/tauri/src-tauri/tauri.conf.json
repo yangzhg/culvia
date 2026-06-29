@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Culvia",
+  "version": "0.1.0",
+  "identifier": "io.github.culvia.culvia",
+  "build": {
+    "beforeDevCommand": "npm run backend:dev",
+    "devUrl": "http://127.0.0.1:8501",
+    "frontendDist": "http://127.0.0.1:8501"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Culvia",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1100,
+        "minHeight": 760,
+        "resizable": true,
+        "fullscreen": false,
+        "create": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": {
+      "runtime/backend": "runtime/backend"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "macOS": {
+      "signingIdentity": "-",
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.mac.plist"
+    }
+  }
+}

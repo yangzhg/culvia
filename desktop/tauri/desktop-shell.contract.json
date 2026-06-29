@@ -1,0 +1,465 @@
+{
+  "schemaVersion": 1,
+  "kind": "culvia-desktop-shell-contract",
+  "appName": "Culvia",
+  "preferredShell": "tauri",
+  "frontendMode": "local-http",
+  "sameOriginApiRequired": true,
+  "devUrl": "http://127.0.0.1:8501",
+  "developmentShell": {
+    "status": "implemented",
+    "package": "desktop/tauri/package.json",
+    "config": "desktop/tauri/src-tauri/tauri.conf.json",
+    "rustManifest": "desktop/tauri/src-tauri/Cargo.toml",
+    "checkCommand": "cargo check --manifest-path desktop/tauri/src-tauri/Cargo.toml",
+    "infoCommand": "npm --prefix desktop/tauri run tauri:info",
+    "headlessBuildCommand": "npm --prefix desktop/tauri run tauri:build:headless",
+    "liteHeadlessBuildCommand": "python desktop/tauri/scripts/build-lite-headless.py"
+  },
+  "healthPath": "/health",
+  "backendEntrypoint": "culvia-supervisor",
+  "developmentBackendArgs": [
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "8501",
+    "--no-open",
+    "--print-json"
+  ],
+  "productionBackendArgs": [
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "random",
+    "--no-open",
+    "--print-json"
+  ],
+  "readyEvent": {
+    "format": "json-lines",
+    "event": "ready",
+    "baseUrlField": "baseUrl",
+    "healthUrlField": "healthUrl"
+  },
+  "staticAssetModeSupported": false,
+  "staticAssetModeReason": "The current frontend intentionally uses same-origin /api and /static paths served by the Python backend.",
+  "productionBackend": {
+    "status": "runtime-lifecycle-implemented",
+    "strategy": "python-backend-server",
+    "sourceEntrypoint": "culvia.server:main",
+    "entryFile": "desktop/tauri/backend/server_entry.py",
+    "buildScript": "desktop/tauri/scripts/build-backend.py",
+    "planCommand": "python3 desktop/tauri/scripts/build-backend.py --check-plan --json",
+    "placeholderCommand": "python3 desktop/tauri/scripts/build-backend.py --ensure-placeholder --json",
+    "buildCommand": "python3 desktop/tauri/scripts/build-backend.py --build",
+    "macosCodesignIdentityEnv": "CULVIA_MACOS_BACKEND_CODESIGN_IDENTITY",
+    "macosEntitlements": "desktop/tauri/src-tauri/entitlements.mac.plist",
+    "backendName": "culvia-server",
+    "desktopResourceRoot": "runtime/backend",
+    "targetRuntimePattern": "desktop/tauri/src-tauri/runtime/backend/{target-triple}/culvia-server",
+    "targetBinaryPattern": "desktop/tauri/src-tauri/runtime/backend/{target-triple}/culvia-server/culvia-server",
+    "runtimeLifecycle": "implemented",
+    "runtimeOwner": "desktop/tauri/src-tauri/src/main.rs",
+    "runtimeResponsibilities": [
+      "resolve bundled backend path",
+      "search runtime/backend target directories in packaged resources, portable package roots, environment overrides, and development paths",
+      "spawn backend with --port random --no-open --print-json",
+      "parse ready JSON from stdout",
+      "wait for /health",
+      "create the main window after backend readiness",
+      "terminate the backend process on app exit"
+    ],
+    "candidatePackagers": [
+      "PyInstaller"
+    ],
+    "binaryRole": "start the local Starlette API and static web server",
+    "mustNotRequireUserPython": true
+  },
+  "runtimeProfiles": {
+    "status": "implemented",
+    "selectorEnv": "CULVIA_DESKTOP_RUNTIME_MODE",
+    "configFile": "user data dir/runtime/runtime.json",
+    "configPriority": [
+      "environment variables",
+      "runtime.json",
+      "built-in defaults"
+    ],
+    "defaultReleaseMode": "full",
+    "liteReleaseDefaultMode": "lite",
+    "defaultDevelopmentMode": "dev",
+    "modes": {
+      "full": {
+        "role": "self-contained desktop package",
+        "backend": "bundled culvia-server runtime",
+        "mustNotRequireUserPython": true,
+        "startup": "desktop shell resolves runtime/backend and starts culvia-server"
+      },
+      "lite": {
+        "role": "desktop shell plus app-managed Python environment",
+        "backend": "venv python -m culvia.server",
+        "mustNotRequireUserPython": false,
+        "pythonMinimum": "3.11",
+        "venvEnv": "CULVIA_RUNTIME_VENV",
+        "pythonEnv": "CULVIA_RUNTIME_PYTHON",
+        "packageEnv": "CULVIA_RUNTIME_PACKAGE",
+        "skipInstallEnv": "CULVIA_RUNTIME_SKIP_INSTALL",
+        "configCommand": "culvia runtime configure --mode lite --python <python> --venv <venv>",
+        "defaultVenv": "user data dir/runtime/venv",
+        "dependencyRule": "detect modules with importlib.util.find_spec, create an app-managed venv when missing, and install culvia[desktop-runtime] into that venv"
+      },
+      "auto": {
+        "role": "prefer bundled backend, fall back to lite when no bundled backend exists",
+        "mustNotRequireUserPython": false
+      },
+      "dev": {
+        "role": "development shell against http://127.0.0.1:8501",
+        "mustNotRequireUserPython": false
+      }
+    },
+    "pythonRuntimeManager": {
+      "module": "culvia.runtime_manager",
+      "cli": "culvia runtime",
+      "commands": [
+        "culvia runtime config",
+        "culvia runtime configure",
+        "culvia runtime reset-config",
+        "culvia runtime doctor",
+        "culvia runtime create",
+        "culvia runtime install",
+        "culvia runtime ensure"
+      ],
+      "profiles": [
+        "desktop-lite",
+        "web"
+      ],
+      "globalPythonPolicy": "Never install Culvia dependencies into a system/global Python environment; use an explicit virtualenv."
+    }
+  },
+  "macosRuntimeSigning": {
+    "status": "implemented",
+    "config": "desktop/tauri/src-tauri/tauri.conf.json",
+    "entitlements": "desktop/tauri/src-tauri/entitlements.mac.plist",
+    "hardenedRuntime": true,
+    "requiredEntitlements": [
+      "com.apple.security.cs.disable-library-validation"
+    ],
+    "reason": "The bundled PyInstaller backend loads its unpacked Python runtime at process startup, so hardened runtime builds must disable library validation for that executable path.",
+    "verification": "tools/check_macos_app_launch_smoke.py"
+  },
+  "releasePreflight": {
+    "status": "implemented",
+    "tool": "tools/check_desktop_release_preflight.py",
+    "strictSigningFlag": "--strict-signing",
+    "checks": [
+      "bundle.active and targets",
+      "bundle.resources includes runtime/backend",
+      "bundle.icon includes existing PNG, ICNS, and ICO platform outputs",
+      "main window create=false",
+      "optional backend binary executable",
+      "macOS Developer ID Application signing inputs",
+      "macOS notarization inputs"
+    ],
+    "credentialStorageRule": "Use environment variables, keychain profiles, or CI secrets; never store Apple certificates, passwords, API keys, or notarization credentials in the repository."
+  },
+  "macosAppPreflight": {
+    "status": "implemented",
+    "tool": "tools/check_macos_app_preflight.py",
+    "appleDevelopmentFlag": "--require-apple-development",
+    "scope": "local macOS app build only; strict Developer ID and notarization checks live in the notarized release lane",
+    "checks": [
+      "macOS host",
+      "Xcode license accepted",
+      "cargo and npm available",
+      "desktop shell config parseable",
+      "ad-hoc, Apple Development, or Developer ID local signing identity",
+      "optional Apple Development identity visibility",
+      "macOS app artifact cleanup state is clean"
+    ]
+  },
+  "macosAppCleanup": {
+    "status": "implemented",
+    "tool": "tools/clean_macos_app_artifacts.py",
+    "scope": "local macOS app build outputs only",
+    "keeps": [
+      "root SQLite and CSV files",
+      "pip build artifacts",
+      "desktop/tauri/node_modules"
+    ],
+    "removes": [
+      "desktop/tauri/src-tauri/runtime/backend/<target>",
+      "desktop/tauri/src-tauri/gen",
+      "desktop/tauri/src-tauri/target"
+    ]
+  },
+  "macosAppBuild": {
+    "status": "implemented",
+    "tool": "tools/build_macos_app.py",
+    "defaultCommand": "python tools/build_macos_app.py --clean-first --json",
+    "liteCommand": "python tools/build_macos_app.py --runtime-profile lite --clean-first --json",
+    "planCommand": "python tools/build_macos_app.py --check-plan --json",
+    "defaultOutputDir": "dist/macos",
+    "liteOutputDir": "dist/macos-lite",
+    "appleDevelopmentFlag": "--require-apple-development",
+    "scope": "local macOS app/dmg build and smoke; strict notarized release uses --strict-release-signing and --strict-artifacts",
+    "steps": [
+      "optional cleanup of generated macOS app artifacts",
+      "macOS app preflight",
+      "desktop npm dependency install through project-local CLI",
+      "PyInstaller backend build",
+      "headless macOS app and .dmg build",
+      "macOS artifact preflight",
+      "macOS app launch smoke",
+      "stage verified .app, .dmg, checksum, and evidence manifest under dist/macos"
+    ]
+  },
+  "macosArtifactPreflight": {
+    "status": "implemented",
+    "tool": "tools/check_macos_artifact_preflight.py",
+    "formalGateFlag": "--macos-artifacts",
+    "strictFlag": "--strict-macos-artifacts",
+    "checks": [
+      "unique .app and .dmg discovery",
+      "Info.plist matches desktop identifier and version",
+      "main executable and bundled backend in Contents/MacOS or Resources are executable Mach-O files",
+      "codesign verification for app, executable, and backend",
+      "Developer ID and hardened runtime signature detail checks",
+      "Gatekeeper assessment for app and DMG",
+      "hdiutil DMG verification",
+      "stapler validation for DMG",
+      "lipo architecture reporting for executable and backend"
+    ]
+  },
+  "macosAppLaunchSmoke": {
+    "status": "implemented",
+    "tool": "tools/check_macos_app_launch_smoke.py",
+    "formalGateFlag": "--macos-app-launch-smoke",
+    "checks": [
+      "launch the built .app Contents/MacOS executable",
+      "force the desktop shell to use the bundled backend",
+      "inject isolated fixture photo/cache environment",
+      "extend CULVIA_DESKTOP_READY_TIMEOUT_SECS for frozen backend startup",
+      "extend CULVIA_DESKTOP_BACKEND_HEALTH_TIMEOUT_SECS for frozen backend self-health",
+      "extend CULVIA_DESKTOP_FRONTEND_READY_TIMEOUT_SECS for webview DOM readiness",
+      "wait for backendReady smoke event after backend health passes",
+      "wait for windowCreated smoke event after the main desktop window is created",
+      "wait for frontendReady smoke event after the webview loads the workbench DOM",
+      "verify runtime API state, web asset, thumbnail, manual mark, export preflight, selected export, and curation history through the .app-started backend",
+      "auto-exit the app only after frontendReady or frontendReadyTimeout has been emitted"
+    ]
+  },
+  "nativeFileActions": {
+    "status": "implemented-through-backend-api",
+    "owner": "culvia.desktop_files",
+    "apiRoutes": [
+      "/api/pick-folder",
+      "/api/pick-folders",
+      "/api/pick-export-folder",
+      "/api/reveal"
+    ],
+    "capabilities": [
+      "nativeFolderPicker",
+      "revealInFileManager"
+    ],
+    "platforms": {
+      "macOS": {
+        "folderPicker": "osascript choose folder",
+        "multiFolderPicker": "osascript choose folder with multiple selections allowed",
+        "reveal": "open -R"
+      },
+      "Windows": {
+        "folderPicker": "PowerShell System.Windows.Forms.FolderBrowserDialog",
+        "reveal": "explorer /select,<path>"
+      },
+      "Linux": {
+        "folderPicker": "zenity or kdialog directory picker when installed",
+        "reveal": "xdg-open or gio open parent directory"
+      }
+    },
+    "fallbackRule": "If the platform command is unavailable, /api/capabilities disables the native action and the web UI keeps manual path input or directory upload available.",
+    "securityBoundary": "Reveal requests are still authorized by the Python app against the current source/cache state before invoking the platform file manager."
+  },
+  "secureCredentialStorage": {
+    "status": "implemented-through-python-keyring",
+    "owner": "culvia.secret_store",
+    "optionalDependency": "keyring>=25",
+    "serviceName": "culvia",
+    "storedSecrets": [
+      "llm-review-api-key"
+    ],
+    "configPriority": [
+      "environment",
+      "current session",
+      "system keychain",
+      "SQLite non-secret settings"
+    ],
+    "sqlitePolicy": "SQLite may persist LLM base URL, endpoint, model, input mode, prompt preset, and custom prompt, but must never persist the full API key.",
+    "automationSafety": "CULVIA_DISABLE_KEYCHAIN=1 disables keychain reads/writes for smoke tests and CI fixtures.",
+    "runtimeSmokeTool": "tools/check_secret_store_keychain_smoke.py",
+    "runtimeSmokeCommand": "python tools/check_secret_store_keychain_smoke.py --allow-write --preserve-existing --json",
+    "runtimeSmokePolicy": "Must be run explicitly in a real desktop user session; default release gates must not write to system keychain without --allow-write."
+  },
+  "portablePackageArtifactPreflight": {
+    "status": "implemented",
+    "tool": "tools/check_portable_package_preflight.py",
+    "formalGateFlags": [
+      "--windows-zip-artifact",
+      "--linux-tgz-artifact"
+    ],
+    "checks": [
+      "safe archive paths with exactly one top-level directory",
+      "no runtime cache, database, CSV, upload, thumbnail, model cache, or build artifacts",
+      "Windows zip layout and PE machine validation",
+      "Linux tar.gz layout, ELF validation, executable bits, and launcher runtime wiring",
+      "manifest kind, launcher, backend, web entry, relative paths, and mustNotRequireUserPython"
+    ]
+  },
+  "portablePackageRuntimeCheck": {
+    "status": "implemented",
+    "tool": "tools/check_portable_package_runtime.py",
+    "workflowTool": "tools/check_backend_workflow_smoke.py",
+    "checks": [
+      "reuse portable package artifact preflight",
+      "extract the final archive into a temporary directory",
+      "resolve launcher, bundled backend, and web entry from manifest relative paths",
+      "start the packaged launcher with CULVIA_DESKTOP_SMOKE=1",
+      "wait for backendReady, windowCreated, and frontendReady smoke events",
+      "run fixture curation/export workflow through the launcher-started backend",
+      "require native Windows/Linux runners for launch smoke"
+    ]
+  },
+  "desktopReleaseWorkflow": {
+    "status": "workflow-contract-implemented",
+    "workflow": ".github/workflows/desktop-release.yml",
+    "contractTool": "tools/desktop_release_contract.py",
+    "workflowCheckTool": "tools/check_desktop_release_workflow.py",
+    "platforms": [
+      {
+        "os": "windows-latest",
+        "target": "x86_64-pc-windows-msvc",
+        "artifact": "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip",
+        "checksum": "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.sha256",
+        "evidenceManifest": "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.evidence.json"
+      },
+      {
+        "os": "ubuntu-latest",
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact": "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz",
+        "checksum": "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.sha256",
+        "evidenceManifest": "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.evidence.json"
+      }
+    ],
+    "requiredSteps": [
+      "install Python desktop extras",
+      "install desktop npm dependencies",
+      "install xvfb on Linux runners for headless desktop launcher smoke",
+      "build frozen PyInstaller backend on the target runner",
+      "smoke the frozen backend through ready JSON and /health",
+      "run desktop shell build on the target runner",
+      "build the portable package",
+      "run portable package artifact preflight",
+      "extract the final package and smoke the packaged desktop launcher",
+      "run formal package gate with the verified archive",
+      "write a SHA-256 checksum next to the verified archive",
+      "write a release evidence manifest after every required step has passed"
+    ],
+    "checksumTool": "tools/write_release_checksum.py",
+    "evidenceManifestTool": "tools/write_release_evidence_manifest.py",
+    "artifactUploadRule": "Upload only the final zip/tar.gz archive, its .sha256 checksum, and its .evidence.json manifest after artifact preflight, runtime verification, formal package gate, checksum, and evidence manifest pass; never upload target, dist directories, backend binaries, caches, runtime state, credentials, or user data.",
+    "credentialRule": "Windows/Linux portable package jobs use no secrets and only require read-only repository permissions."
+  },
+  "releaseStatusReport": {
+    "status": "implemented",
+    "tool": "tools/release_status_report.py",
+    "strictFlag": "--strict",
+    "keychainSmokeFlag": "--keychain-smoke",
+    "releaseSmokeFlag": "--release-smoke",
+    "sdistBuildFlag": "--build-sdist",
+    "sdistArtifactFlag": "--sdist-artifact",
+    "redactLocalPathsFlag": "--redact-local-paths",
+    "jsonOutputFlag": "--json-output",
+    "publicJsonOutputFlag": "--public-json-output",
+    "checks": [
+      "aggregate Desktop readiness and desktop release workflow contract",
+      "summarize explicit pip wheel/install and sdist release smoke evidence",
+      "summarize macOS app/dmg artifact preflight evidence",
+      "summarize Windows zip and Linux tar.gz artifact status",
+      "summarize release checksum and evidence manifest status for Windows/Linux artifacts",
+      "summarize explicit system keychain smoke evidence",
+      "list formal release blockers and next commands",
+      "split blockerSummary into localActionable, externalRequired, and environment groups",
+      "split estimatedRemaining into localActionable and externalRelease so external release evidence is not counted as local development rounds",
+      "split nextCommandsByCategory so release owners can run local smoke before external runner work",
+      "write public-redacted JSON release status evidence for release archival",
+      "return non-zero in strict mode when formalReady is false"
+    ]
+  },
+  "firstStageReleaseArtifacts": {
+    "goal": "Self-contained desktop packages that do not require a system Python installation.",
+    "pythonRuntimePolicy": "Build one PyInstaller onedir backend runtime per target OS/architecture and bundle it inside the desktop package. Model weights remain cache/download data, not bundled executable payload.",
+    "windows": {
+      "status": "zip-tool-implemented",
+      "artifact": "zip",
+      "tool": "tools/build_windows_zip.py",
+      "artifactPreflightTool": "tools/check_portable_package_preflight.py",
+      "artifactPreflightCommand": "python3 tools/check_portable_package_preflight.py --windows-zip <artifact.zip> --json",
+      "runtimeSmokeTool": "tools/check_portable_package_runtime.py",
+      "runtimeSmokeCommand": "python3 tools/check_portable_package_runtime.py --windows-zip <artifact.zip> --exit-after-ms 20000 --json",
+      "checksumTool": "tools/write_release_checksum.py",
+      "checksumCommand": "python3 tools/write_release_checksum.py <artifact.zip> --json",
+      "formalGateFlag": "--windows-zip-artifact",
+      "planCommand": "python3 tools/build_windows_zip.py --check-plan --json",
+      "buildCommand": "python3 tools/build_windows_zip.py --build --json",
+      "shape": "zip with culvia-desktop.exe, runtime/backend/<target>/culvia-server/, share/culvia/web, and manifest.json",
+      "installerRequiredForFirstStage": false
+    },
+    "macOS": {
+      "status": "implemented",
+      "artifact": ".app, distributed via .dmg for normal release",
+      "tool": "tools/build_macos_app.py",
+      "artifactDir": "dist/macos",
+      "app": "dist/macos/Culvia.app",
+      "dmg": "dist/macos/Culvia_*.dmg",
+      "checksum": "dist/macos/Culvia_*.dmg.sha256",
+      "evidenceManifest": "dist/macos/Culvia_*.dmg.evidence.json",
+      "shape": "macOS .app containing the bundled runtime/backend/<target>/culvia-server directory",
+      "installerRequiredForFirstStage": false
+    },
+    "linux": {
+      "status": "tgz-tool-implemented",
+      "artifact": ".tar.gz",
+      "tool": "tools/build_linux_tgz.py",
+      "artifactPreflightTool": "tools/check_portable_package_preflight.py",
+      "artifactPreflightCommand": "python3 tools/check_portable_package_preflight.py --linux-tgz <artifact.tar.gz> --json",
+      "runtimeSmokeTool": "tools/check_portable_package_runtime.py",
+      "runtimeSmokeCommand": "python3 tools/check_portable_package_runtime.py --linux-tgz <artifact.tar.gz> --exit-after-ms 20000 --json",
+      "checksumTool": "tools/write_release_checksum.py",
+      "checksumCommand": "python3 tools/write_release_checksum.py <artifact.tar.gz> --json",
+      "formalGateFlag": "--linux-tgz-artifact",
+      "planCommand": "python3 tools/build_linux_tgz.py --check-plan --json",
+      "buildCommand": "python3 tools/build_linux_tgz.py --build --json",
+      "shape": "tar.gz with bin/culvia launcher, bin/culvia-desktop, runtime/backend/<target>/culvia-server/, share/culvia/web, and manifest.json",
+      "installerRequiredForFirstStage": false
+    }
+  },
+  "desktopResponsibilities": [
+    "window lifecycle",
+    "native file and folder picking",
+    "system keychain integration",
+    "backend process lifecycle",
+    "cross-platform app packaging"
+  ],
+  "businessLogicOwners": [
+    "culvia_app.py",
+    "culvia/",
+    "culvia/scoring.py",
+    "web/"
+  ],
+  "forbidden": [
+    "Do not duplicate scoring, filtering, LLM review, curation, cache, or export logic in the desktop shell layer.",
+    "Do not store API keys in source-controlled desktop shell config, JSON contract files, or SQLite plaintext.",
+    "Do not switch to bundled static frontend assets until /api and /static base URLs are explicitly abstracted and tested."
+  ],
+  "openBuildBlockers": [
+    "The PyInstaller backend binary has been smoke-tested on the current macOS ARM64 development machine; every release target OS still needs its own build and smoke test.",
+    "Platform signing/notarization and installer verification still need real release-environment execution."
+  ]
+}

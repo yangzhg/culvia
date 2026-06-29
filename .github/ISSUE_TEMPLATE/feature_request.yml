@@ -1,0 +1,54 @@
+name: Feature request
+description: Propose an improvement or new capability.
+title: "[Feature]: "
+labels:
+  - enhancement
+  - needs triage
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow, limitation, or user need does this address?
+      placeholder: When reviewing a large shoot, I need...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the product behavior or technical direction you have in mind.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: App surface
+      multiple: true
+      options:
+        - Web app
+        - Desktop app
+        - CLI
+        - Local scoring
+        - LLM review
+        - Export workflow
+        - Packaging or release tooling
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Mention workarounds, comparable tools, or rejected approaches.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Optional. Add mockups, screenshots, links, or constraints.
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am interested in working on this.

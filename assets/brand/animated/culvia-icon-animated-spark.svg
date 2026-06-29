@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Culvia animated spark icon">
+  <title>Culvia animated spark icon</title>
+  <defs>
+    <linearGradient id="spark-bg" x1="10" y1="58" x2="56" y2="8" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111317"/>
+      <stop offset=".58" stop-color="#1d2127"/>
+      <stop offset="1" stop-color="#2b3036"/>
+    </linearGradient>
+    <linearGradient id="spark-ring" x1="14" y1="50" x2="50" y2="14" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#65d8c9"/>
+      <stop offset="1" stop-color="#4da7ff"/>
+    </linearGradient>
+    <filter id="spark-glow" x="-45%" y="-45%" width="190%" height="190%">
+      <feGaussianBlur stdDeviation="1.7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .ring { stroke-dasharray: 5 5; animation: ring-march 1.4s linear infinite; }
+      .check { animation: check-pop 2.4s ease-in-out infinite; transform-origin: 32px 32px; }
+      .spark { opacity: 0; transform-box: fill-box; transform-origin: center; animation: spark-burst 2.4s ease-out infinite; }
+      .spark.two { animation-delay: .18s; }
+      .spark.three { animation-delay: .34s; }
+      @keyframes ring-march {
+        to { stroke-dashoffset: -20; }
+      }
+      @keyframes check-pop {
+        0%, 100% { transform: scale(1); }
+        44% { transform: scale(1.04); }
+        55% { transform: scale(.99); }
+      }
+      @keyframes spark-burst {
+        0%, 38% { opacity: 0; transform: scale(.2); }
+        48% { opacity: 1; transform: scale(1); }
+        72%, 100% { opacity: 0; transform: scale(1.7); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * { animation: none !important; }
+        .spark { opacity: .85; transform: scale(1); }
+      }
+    </style>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#spark-bg)"/>
+  <circle class="ring" cx="32" cy="32" r="20.5" fill="none" stroke="url(#spark-ring)" stroke-width="4.2" stroke-linecap="round" filter="url(#spark-glow)"/>
+  <path d="M20.1 25 A14 14 0 0 1 27.2 18.8" fill="none" stroke="#dff6f4" stroke-width="2.8" stroke-linecap="round" opacity=".8"/>
+  <path class="check" d="M22.5 32 30 39.5 42 25" fill="none" stroke="#ffb23e" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round" filter="url(#spark-glow)"/>
+  <g stroke="#fff0c7" stroke-width="2" stroke-linecap="round" filter="url(#spark-glow)">
+    <path class="spark" d="M46 20v-4M46 24v4M42 22h-4M50 22h4"/>
+    <path class="spark two" d="M18 42v-3M18 46v3M15 44h-3M21 44h3"/>
+    <path class="spark three" d="M48 40v-2.5M48 44v2.5M45.5 42h-2.5M50.5 42H53"/>
+  </g>
+</svg>

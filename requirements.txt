@@ -1,0 +1,12 @@
+starlette
+uvicorn
+python-multipart
+pandas
+requests
+torch
+torchvision
+transformers
+pillow
+pillow-heif
+huggingface_hub
+tqdm

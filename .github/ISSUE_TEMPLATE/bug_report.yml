@@ -1,0 +1,87 @@
+name: Bug report
+description: Report a reproducible problem in Culvia.
+title: "[Bug]: "
+labels:
+  - bug
+  - needs triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a problem. Please include enough detail for someone else to reproduce it.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+      placeholder: Culvia crashes when...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact actions that trigger the issue.
+      placeholder: |
+        1. Open...
+        2. Select...
+        3. Click...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include error messages when relevant.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: App surface
+      multiple: true
+      options:
+        - Web app
+        - Desktop app
+        - CLI
+        - Packaging or release tooling
+        - Documentation
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Culvia version, commit SHA, or release artifact name.
+      placeholder: "0.1.0 / commit SHA / local checkout"
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste relevant logs. Do not include API keys, private photo paths, or other sensitive information.
+      render: text
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed API keys, private photo paths, and other sensitive information from this report.
+          required: true
