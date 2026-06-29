@@ -111,6 +111,8 @@ Culvia is built so the same backend and interface can run as a browser app or in
 
 ### Unsigned Early Desktop Builds
 
+This note applies to users who download desktop binaries from GitHub Releases: macOS `.dmg` packages for Apple Silicon or Intel Macs, Windows portable `.zip` packages, and Linux `.tar.gz` packages. It does not apply to `pip install culvia` or source-checkout users running the local Web app.
+
 Current desktop binaries are not Developer ID signed, notarized, or Windows code signed. macOS Gatekeeper and Windows SmartScreen may warn that the app is from an unidentified developer or block first launch.
 
 Download desktop packages only from the project GitHub Releases page and compare the published `.sha256` file before running them. If you trust the build:
