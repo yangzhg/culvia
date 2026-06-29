@@ -84,6 +84,12 @@ SECRET_TEXT_PATTERNS = (
     re.compile(rb"APPLE_(CERTIFICATE|PASSWORD|API_KEY|API_ISSUER|ID|TEAM_ID)"),
     re.compile(rb"(ALIYUN|DASHSCOPE|DEEPSEEK|OPENAI)[A-Z0-9_]{0,32}(API)?_?KEY", re.IGNORECASE),
 )
+ALLOWED_FORBIDDEN_SUFFIX_PATTERNS = (
+    re.compile(r"/_internal/certifi/cacert\.pem$", re.IGNORECASE),
+)
+SECRET_SCAN_SKIP_PATTERNS = (
+    re.compile(r"/[^/]+\.dist-info/record$", re.IGNORECASE),
+)
 TEXT_SCAN_MAX_BYTES = 2_000_000
 
 
@@ -160,9 +166,14 @@ def forbidden_artifact_issues(names: Iterable[str]) -> list[str]:
             issues.append(f"{name} contains forbidden credential filename")
         if any(pattern.fullmatch(lower_filename) for pattern in FORBIDDEN_NAME_PATTERNS):
             issues.append(f"{name} contains forbidden credential-like filename")
-        if lower_name.endswith(FORBIDDEN_SUFFIXES):
+        if lower_name.endswith(FORBIDDEN_SUFFIXES) and not allowed_forbidden_suffix_name(name):
             issues.append(f"{name} contains forbidden runtime artifact suffix")
     return issues
+
+
+def allowed_forbidden_suffix_name(name: str) -> bool:
+    normalized = name.replace("\\", "/")
+    return any(pattern.search(normalized) for pattern in ALLOWED_FORBIDDEN_SUFFIX_PATTERNS)
 
 
 def zip_member_mode(info: zipfile.ZipInfo) -> int:
@@ -176,12 +187,19 @@ def looks_binary(payload: bytes) -> bool:
 def secret_content_issues(payload_by_name: Iterable[tuple[str, bytes]]) -> list[str]:
     issues: list[str] = []
     for name, payload in payload_by_name:
+        if secret_scan_skip_name(name):
+            continue
         if not payload or looks_binary(payload):
             continue
         sample = payload[:TEXT_SCAN_MAX_BYTES]
         if any(pattern.search(sample) for pattern in SECRET_TEXT_PATTERNS):
             issues.append(f"{name} contains credential-like text")
     return issues
+
+
+def secret_scan_skip_name(name: str) -> bool:
+    normalized = name.replace("\\", "/")
+    return any(pattern.search(normalized) for pattern in SECRET_SCAN_SKIP_PATTERNS)
 
 
 def member_lookup(members: Sequence[ArchiveMember]) -> dict[str, ArchiveMember]:

@@ -221,6 +221,82 @@ class PortablePackagePreflightTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("windows portable zip excludes secrets and credentials", payload["failed"])
 
+    def test_windows_zip_allows_bundled_certifi_ca_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            desktop = write_fake_pe(temp / "culvia-desktop.exe")
+            backend = write_fake_pe(fake_windows_backend_path(temp))
+            package_root, _manifest = build_windows_zip.stage_package(
+                desktop_binary=desktop,
+                backend_binary=backend,
+                target=WINDOWS_TARGET,
+                output_dir=temp / "dist",
+                root=ROOT,
+                config={"productName": "Culvia", "version": "0.1.0"},
+            )
+            ca_bundle = (
+                package_root
+                / "runtime"
+                / "backend"
+                / WINDOWS_TARGET
+                / "culvia-server"
+                / "_internal"
+                / "certifi"
+                / "cacert.pem"
+            )
+            ca_bundle.parent.mkdir(parents=True)
+            ca_bundle.write_text("-----BEGIN CERTIFICATE-----\nplaceholder\n-----END CERTIFICATE-----\n", encoding="utf-8")
+            archive = build_windows_zip.build_archive(
+                package_root=package_root,
+                output_dir=temp / "dist",
+                version="0.1.0",
+                target=WINDOWS_TARGET,
+            )
+
+            payload = check_portable_package_preflight.result_payload(
+                check_portable_package_preflight.collect_checks(windows_zip=archive)
+            )
+
+        self.assertTrue(payload["ok"], payload["failed"])
+
+    def test_windows_zip_allows_dist_info_record_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            desktop = write_fake_pe(temp / "culvia-desktop.exe")
+            backend = write_fake_pe(fake_windows_backend_path(temp))
+            package_root, _manifest = build_windows_zip.stage_package(
+                desktop_binary=desktop,
+                backend_binary=backend,
+                target=WINDOWS_TARGET,
+                output_dir=temp / "dist",
+                root=ROOT,
+                config={"productName": "Culvia", "version": "0.1.0"},
+            )
+            record = (
+                package_root
+                / "runtime"
+                / "backend"
+                / WINDOWS_TARGET
+                / "culvia-server"
+                / "_internal"
+                / "torch-2.12.1.dist-info"
+                / "RECORD"
+            )
+            record.parent.mkdir(parents=True)
+            record.write_text("torch/testing/path_mentions_OPENAI_API_KEY.py,,\n", encoding="utf-8")
+            archive = build_windows_zip.build_archive(
+                package_root=package_root,
+                output_dir=temp / "dist",
+                version="0.1.0",
+                target=WINDOWS_TARGET,
+            )
+
+            payload = check_portable_package_preflight.result_payload(
+                check_portable_package_preflight.collect_checks(windows_zip=archive)
+            )
+
+        self.assertTrue(payload["ok"], payload["failed"])
+
     def test_windows_zip_rejects_symlink_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp) / "bad.zip"
