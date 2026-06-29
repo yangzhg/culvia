@@ -296,6 +296,21 @@ class DesktopReleaseContractTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("workflow generates GitHub artifact attestations", payload["failed"])
 
+    def test_workflow_checker_rejects_release_publish_without_explicit_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(' --repo "${GITHUB_REPOSITORY}"', ""),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow publishes release with explicit repository", payload["failed"])
+
     def test_workflow_checker_rejects_raw_actions_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

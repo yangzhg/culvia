@@ -316,6 +316,19 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
             "release packages, checksums, evidence manifests, wheels, and sdists must have GitHub Artifact Attestations",
         ),
         check(
+            "workflow publishes release with explicit repository",
+            all(
+                text in workflow
+                for text in (
+                    'gh release view --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}"',
+                    'gh release edit --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}"',
+                    'gh release create --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}"',
+                    'gh release upload --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}"',
+                )
+            ),
+            "publish job must pass --repo because it does not check out the git repository",
+        ),
+        check(
             "workflow avoids raw cache artifacts",
             not raw_cache_blocks,
             "use setup-* dependency caches only; raw actions/cache can accidentally cache runtime state or workspace files",
