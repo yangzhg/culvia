@@ -91,6 +91,18 @@ bin\culvia-web.cmd --host 127.0.0.1 --port 8501
 
 Culvia 的设计目标是让同一套后端和界面既能在浏览器里运行，也能放进桌面应用壳里运行。桌面应用会提供原生窗口、本地文件能力、安全凭据存储和打包运行时。
 
+### 早期桌面包未签名
+
+当前桌面二进制还没有 Developer ID 签名、公证，也没有 Windows 代码签名。macOS Gatekeeper 和 Windows SmartScreen 可能提示“无法验证开发者”“来自未知发布者”，或者阻止首次启动。
+
+只从项目 GitHub Releases 页面下载桌面包，并在运行前核对同页发布的 `.sha256` 文件。如果你信任该构建，可以按下面方式打开：
+
+- macOS：按住 Control 点击或右键点击应用，选择“打开”，然后再次确认“打开”。如果仍被拦截，在“系统设置 > 隐私与安全性”里对 Culvia 选择“仍要打开”。如果解压后的 app 被隔离，也可以执行 `xattr -dr com.apple.quarantine /path/to/Culvia.app`。
+- Windows：解压便携 zip，运行 `culvia-desktop.exe`；如果出现 SmartScreen，选择“更多信息”，再选择“仍要运行”。
+- Linux：解压 `.tar.gz` 包，在解压目录中运行启动脚本。当前 Linux 包没有额外签名。
+
+这些处理方式只针对早期公开构建。后续发布线可以在配置项目证书后加入 Developer ID 签名、公证和 Windows Authenticode 签名。
+
 桌面打包仍在迭代中。构建说明见 [docs/zh-CN/developer/desktop-build.md](docs/zh-CN/developer/desktop-build.md)。
 
 ## 隐私

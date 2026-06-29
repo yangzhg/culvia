@@ -30,6 +30,8 @@ LINUX_LABEL = "linux portable tgz runtime"
 REQUIRED_LAUNCHER_EVENTS = ("backendReady", "windowCreated", "frontendReady")
 DEFAULT_EXIT_AFTER_MS = 20000
 DEFAULT_FIXTURE_COUNT = 4
+TEMP_CLEANUP_ATTEMPTS = 30
+TEMP_CLEANUP_DELAY_SECS = 0.5
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,26 @@ def compact_output(stdout: str, stderr: str, *, max_chars: int = 1600) -> str:
 
 def compact_lines(lines: Sequence[str], *, max_chars: int = 1600) -> str:
     return compact_output("\n".join(lines), "", max_chars=max_chars)
+
+
+def remove_tree_with_retries(
+    path: Path,
+    *,
+    attempts: int = TEMP_CLEANUP_ATTEMPTS,
+    delay: float = TEMP_CLEANUP_DELAY_SECS,
+) -> str:
+    last_error: OSError | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            shutil.rmtree(path)
+            return ""
+        except FileNotFoundError:
+            return ""
+        except OSError as exc:
+            last_error = exc
+            if attempt < max(1, attempts) - 1:
+                time.sleep(max(0.0, delay))
+    return f"could not remove temporary directory {path}: {last_error}"
 
 
 def safe_join(package_root: Path, relative: Any) -> Path | None:
@@ -325,14 +347,16 @@ def run_launcher_workflow_smoke(
 
     from tools import prepare_runtime_fixture
 
-    with tempfile.TemporaryDirectory(prefix="culvia-portable-launcher-fixture-") as tmp:
-        fixture = prepare_runtime_fixture.write_fixture(Path(tmp), count=DEFAULT_FIXTURE_COUNT, force=False)
-        stdout_tail: deque[str] = deque(maxlen=80)
-        stderr_tail: deque[str] = deque(maxlen=80)
-        process: subprocess.Popen[str] | None = None
-        checks: list[CheckResult] = []
-        events: list[dict[str, Any]] = []
-        returncode: int | None = None
+    tmp_path = Path(tempfile.mkdtemp(prefix="culvia-portable-launcher-fixture-"))
+    fixture = prepare_runtime_fixture.write_fixture(tmp_path, count=DEFAULT_FIXTURE_COUNT, force=False)
+    stdout_tail: deque[str] = deque(maxlen=80)
+    stderr_tail: deque[str] = deque(maxlen=80)
+    process: subprocess.Popen[str] | None = None
+    checks: list[CheckResult] = []
+    events: list[dict[str, Any]] = []
+    returncode: int | None = None
+    cleanup_error = ""
+    try:
         try:
             process = subprocess.Popen(
                 command,
@@ -395,6 +419,11 @@ def run_launcher_workflow_smoke(
         except Exception as exc:  # noqa: BLE001 - release smoke reports the exact launch failure.
             checks.append(check(f"{spec.label} launcher starts", False, repr(exc)))
             returncode = terminate_process(process) if process is not None else None
+    finally:
+        cleanup_error = remove_tree_with_retries(tmp_path)
+
+    if cleanup_error:
+        checks.append(check(f"{spec.label} launcher fixture cleanup releases temporary files", False, cleanup_error))
 
     payload = result_payload(checks)
     detail = {

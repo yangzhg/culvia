@@ -109,6 +109,18 @@ bin\culvia-web.cmd --host 127.0.0.1 --port 8501
 
 Culvia is built so the same backend and interface can run as a browser app or inside a desktop shell. The desktop app is intended to provide native windowing, local file access, secure credential storage, and packaged runtime options.
 
+### Unsigned Early Desktop Builds
+
+Current desktop binaries are not Developer ID signed, notarized, or Windows code signed. macOS Gatekeeper and Windows SmartScreen may warn that the app is from an unidentified developer or block first launch.
+
+Download desktop packages only from the project GitHub Releases page and compare the published `.sha256` file before running them. If you trust the build:
+
+- macOS: open the app with Control-click or right-click, choose **Open**, then confirm **Open** again. If macOS still blocks it, use **System Settings > Privacy & Security > Open Anyway** for Culvia. For a quarantined extracted app you can also run `xattr -dr com.apple.quarantine /path/to/Culvia.app`.
+- Windows: extract the portable zip, run `culvia-desktop.exe`, choose **More info**, then **Run anyway** when SmartScreen appears.
+- Linux: extract the `.tar.gz` package and run the launcher from the extracted directory. The current Linux package is not additionally signed.
+
+These workarounds are for early public builds. A future release lane can add Developer ID signing, notarization, and Windows Authenticode signing when project certificates are configured.
+
 Desktop packaging is still evolving. For build instructions, see [docs/en/developer/desktop-build.md](docs/en/developer/desktop-build.md).
 
 ## Privacy
