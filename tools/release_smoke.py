@@ -368,10 +368,21 @@ def check_installed_web_dir(web_dir: Path, *, source_root: Path = ROOT) -> list[
     return issues
 
 
+def outside_source_tree_cwd(root: Path = ROOT) -> Path:
+    root = root.resolve()
+    for candidate in (Path("/private/tmp"), Path(tempfile.gettempdir())):
+        if not candidate.is_dir():
+            continue
+        resolved = candidate.resolve()
+        if resolved != root and root not in resolved.parents:
+            return resolved
+    return root.parent
+
+
 def module_available(python: Path, module: str, probe_args: Sequence[str]) -> bool:
     result = subprocess.run(
         [str(python), "-m", module, *probe_args],
-        cwd="/private/tmp" if Path("/private/tmp").exists() else None,
+        cwd=outside_source_tree_cwd(),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
@@ -443,7 +454,7 @@ def build_sdist(
     ]
     result = subprocess.run(
         command,
-        cwd="/private/tmp" if Path("/private/tmp").exists() else None,
+        cwd=outside_source_tree_cwd(root),
         text=True,
         capture_output=True,
         check=False,
@@ -520,7 +531,7 @@ def install_and_check_wheel(wheel_path: Path, venv_dir: Path, root: Path = ROOT)
     )
     web_check = subprocess.run(
         [str(python), "-c", check_code],
-        cwd="/private/tmp" if Path("/private/tmp").exists() else None,
+        cwd=outside_source_tree_cwd(root),
         text=True,
         capture_output=True,
         check=False,
