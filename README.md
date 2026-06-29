@@ -115,7 +115,11 @@ This note applies to users who download desktop binaries from GitHub Releases: m
 
 Current desktop binaries are not Developer ID signed, notarized, or Windows code signed. macOS Gatekeeper and Windows SmartScreen may warn that the app is from an unidentified developer or block first launch.
 
-Download desktop packages only from the project GitHub Releases page and compare the published `.sha256` file before running them. If the checksum does not match, do not run the package.
+Download desktop packages only from the project GitHub Releases page and compare the published `.sha256` file before running them. If the checksum does not match, do not run the package. Release assets also include GitHub Artifact Attestations; after downloading an asset, you can verify provenance with:
+
+```bash
+gh attestation verify <downloaded-asset> --repo yangzhg/culvia
+```
 
 If you trust the build and hit an OS warning:
 

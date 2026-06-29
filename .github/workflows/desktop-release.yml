@@ -201,6 +201,11 @@ jobs:
     needs: select
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
@@ -268,6 +273,15 @@ jobs:
         if: matrix.platform != 'macos'
         run: python tools/desktop_release_contract.py --platform ${{ matrix.platform }} --profile ${{ matrix.profile }} --run --json
 
+      - name: Generate desktop package attestations
+        if: needs.select.outputs.upload_artifacts == 'true'
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            ${{ matrix.artifact_path }}
+            ${{ matrix.checksum_path }}
+            ${{ matrix.evidence_path }}
+
       - name: Upload verified desktop package
         if: needs.select.outputs.upload_artifacts == 'true'
         uses: actions/upload-artifact@v4
@@ -285,6 +299,11 @@ jobs:
     needs: select
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout
@@ -304,6 +323,14 @@ jobs:
 
       - name: Build and verify Python distributions
         run: python tools/release_smoke.py --build --wheelhouse dist/python --build-sdist --dist-dir dist/python --install --twine-check --strict
+
+      - name: Generate Python distribution attestations
+        if: needs.select.outputs.upload_artifacts == 'true'
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/python/culvia-*.whl
+            dist/python/culvia-*.tar.gz
 
       - name: Upload verified Python distributions
         if: needs.select.outputs.upload_artifacts == 'true'
@@ -350,6 +377,12 @@ jobs:
           Automated Culvia desktop and source release for ${RELEASE_TAG}.
 
           Assets include verified desktop packages, SHA-256 checksum files, release evidence manifests, a Python wheel, and a Python source distribution.
+
+          GitHub Artifact Attestations are generated for release assets. After downloading an asset, verify its provenance with:
+
+          \`\`\`bash
+          gh attestation verify <downloaded-asset> --repo ${GITHUB_REPOSITORY}
+          \`\`\`
           EOF
 
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then

@@ -332,16 +332,21 @@ fn frontend_ready_payload(result: Value, base_url: &str) -> Value {
     Value::Object(payload)
 }
 
-fn schedule_exit_after_delay(handle: tauri::AppHandle, delay: Duration) {
+fn schedule_exit_after_delay(
+    handle: tauri::AppHandle,
+    backend_slot: SharedBackend,
+    delay: Duration,
+) {
     thread::spawn(move || {
         thread::sleep(delay);
+        stop_backend(&backend_slot);
         handle.exit(0);
     });
 }
 
-fn maybe_schedule_smoke_exit(handle: &tauri::AppHandle) {
+fn maybe_schedule_smoke_exit(handle: &tauri::AppHandle, backend_slot: &SharedBackend) {
     if let Some(delay) = smoke_exit_delay_from_env() {
-        schedule_exit_after_delay(handle.clone(), delay);
+        schedule_exit_after_delay(handle.clone(), Arc::clone(backend_slot), delay);
     }
 }
 
@@ -357,6 +362,7 @@ fn show_main_and_close_splash(window: &WebviewWindow, app_handle: &tauri::AppHan
 fn schedule_frontend_ready_probe(
     window: WebviewWindow,
     app_handle: tauri::AppHandle,
+    backend_slot: SharedBackend,
     base_url: String,
 ) {
     thread::spawn(move || {
@@ -383,7 +389,7 @@ fn schedule_frontend_ready_probe(
                             frontend_ready_payload(payload, &base_url),
                         );
                         show_main_and_close_splash(&window, &app_handle, "Interface ready");
-                        maybe_schedule_smoke_exit(&app_handle);
+                        maybe_schedule_smoke_exit(&app_handle, &backend_slot);
                         return;
                     }
                 }
@@ -395,7 +401,7 @@ fn schedule_frontend_ready_probe(
             json!({"baseUrl": base_url, "timeoutSeconds": timeout.as_secs()}),
         );
         show_main_and_close_splash(&window, &app_handle, "Interface opened after a slow load");
-        maybe_schedule_smoke_exit(&app_handle);
+        maybe_schedule_smoke_exit(&app_handle, &backend_slot);
     });
 }
 
@@ -1041,6 +1047,7 @@ fn setup_desktop(app: &tauri::App, backend_slot: &SharedBackend) {
                         schedule_frontend_ready_probe(
                             window,
                             app_handle.clone(),
+                            Arc::clone(&backend_slot),
                             startup.base_url.clone(),
                         );
                         if let Some(child) = startup.child.take() {

@@ -272,6 +272,24 @@ class DesktopReleaseContractTests(unittest.TestCase):
             "workflow uploads only verified final archives, checksums, and evidence manifests", payload["failed"]
         )
 
+    def test_workflow_checker_rejects_missing_artifact_attestations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            text = workflow.read_text(encoding="utf-8")
+            start = text.index("      - name: Generate desktop package attestations")
+            end = text.index("      - name: Upload verified desktop package")
+            text = text[:start] + text[end:]
+            start = text.index("      - name: Generate Python distribution attestations")
+            end = text.index("      - name: Upload verified Python distributions")
+            workflow.write_text(text[:start] + text[end:], encoding="utf-8")
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow generates GitHub artifact attestations", payload["failed"])
+
     def test_workflow_checker_rejects_raw_actions_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

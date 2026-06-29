@@ -13,18 +13,24 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ".github/workflows/desktop-release.yml"
 CONTRACT_TOOL_PATH = "tools/desktop_release_contract.py"
 ALLOWED_ARTIFACT_PATHS = (
+    "dist/macos/*.dmg",
+    "dist/macos-lite/*.dmg",
     "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip",
     "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip",
     "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz",
     "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz",
 )
 ALLOWED_CHECKSUM_PATHS = (
+    "dist/macos/*.dmg.sha256",
+    "dist/macos-lite/*.dmg.sha256",
     "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.sha256",
     "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip.sha256",
     "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.sha256",
     "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz.sha256",
 )
 ALLOWED_EVIDENCE_PATHS = (
+    "dist/macos/*.dmg.evidence.json",
+    "dist/macos-lite/*.dmg.evidence.json",
     "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.evidence.json",
     "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip.evidence.json",
     "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.evidence.json",
@@ -62,7 +68,9 @@ FORBIDDEN_UPLOAD_PATHS = (
 REQUIRED_UPLOAD_PATH_REFERENCE = "${{ matrix.artifact_path }}"
 REQUIRED_UPLOAD_CHECKSUM_REFERENCE = "${{ matrix.checksum_path }}"
 REQUIRED_UPLOAD_EVIDENCE_REFERENCE = "${{ matrix.evidence_path }}"
+SOURCE_UPLOAD_PATHS = ("dist/python/culvia-*.whl", "dist/python/culvia-*.tar.gz")
 RAW_CACHE_ACTION = "actions/cache"
+ATTEST_ACTION = "actions/attest"
 
 
 @dataclass(frozen=True)
@@ -194,6 +202,7 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
     checksum_paths = matrix_checksum_paths(workflow)
     evidence_paths = matrix_evidence_paths(workflow)
     upload_artifact_blocks = action_blocks(workflow, "actions/upload-artifact")
+    attest_blocks = action_blocks(workflow, ATTEST_ACTION)
     raw_cache_blocks = action_blocks(workflow, RAW_CACHE_ACTION)
     forbidden_uploads = forbidden_upload_path_values([*upload_paths, *artifact_paths, *checksum_paths, *evidence_paths])
     bypasses = forbidden_bypass_matches(workflow)
@@ -272,18 +281,38 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
         check(
             "workflow uploads only verified final archives, checksums, and evidence manifests",
             bool(upload_artifact_blocks)
-            and sorted(artifact_paths) == sorted(ALLOWED_ARTIFACT_PATHS)
-            and sorted(checksum_paths) == sorted(ALLOWED_CHECKSUM_PATHS)
-            and sorted(evidence_paths) == sorted(ALLOWED_EVIDENCE_PATHS)
+            and sorted(set(artifact_paths)) == sorted(ALLOWED_ARTIFACT_PATHS)
+            and sorted(set(checksum_paths)) == sorted(ALLOWED_CHECKSUM_PATHS)
+            and sorted(set(evidence_paths)) == sorted(ALLOWED_EVIDENCE_PATHS)
             and upload_paths
             and sorted(upload_paths)
             == sorted(
-                (REQUIRED_UPLOAD_PATH_REFERENCE, REQUIRED_UPLOAD_CHECKSUM_REFERENCE, REQUIRED_UPLOAD_EVIDENCE_REFERENCE)
+                (
+                    REQUIRED_UPLOAD_PATH_REFERENCE,
+                    REQUIRED_UPLOAD_CHECKSUM_REFERENCE,
+                    REQUIRED_UPLOAD_EVIDENCE_REFERENCE,
+                    *SOURCE_UPLOAD_PATHS,
+                )
             )
             and not forbidden_uploads
             and "actions/upload-artifact@v4" in workflow
             and "if-no-files-found: error" in workflow,
-            "upload-artifact must use matrix artifact/checksum/evidence paths, and matrix paths must be final zip/tar.gz plus .sha256 and .evidence.json allowlist entries",
+            "upload-artifact must use matrix artifact/checksum/evidence paths and Python distribution paths, and matrix paths must be final zip/tar.gz plus .sha256 and .evidence.json allowlist entries",
+        ),
+        check(
+            "workflow generates GitHub artifact attestations",
+            len(attest_blocks) >= 2
+            and "actions/attest@v4" in workflow
+            and "artifact-metadata: write" in workflow
+            and "attestations: write" in workflow
+            and "id-token: write" in workflow
+            and "subject-path: |" in workflow
+            and REQUIRED_UPLOAD_PATH_REFERENCE in workflow
+            and REQUIRED_UPLOAD_CHECKSUM_REFERENCE in workflow
+            and REQUIRED_UPLOAD_EVIDENCE_REFERENCE in workflow
+            and "dist/python/culvia-*.whl" in workflow
+            and "dist/python/culvia-*.tar.gz" in workflow,
+            "release packages, checksums, evidence manifests, wheels, and sdists must have GitHub Artifact Attestations",
         ),
         check(
             "workflow avoids raw cache artifacts",

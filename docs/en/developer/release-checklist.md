@@ -84,11 +84,17 @@ upload_cache/
 
 ## GitHub Release Workflow
 
-Pushing a `v<version>` tag triggers `.github/workflows/desktop-release.yml`. The tag workflow builds full macOS arm64, macOS x64, Windows x64, and Linux x64 desktop packages, builds the Python wheel and source distribution, uploads verified workflow artifacts, and creates or updates the matching GitHub Release.
+Pushing a `v<version>` tag triggers `.github/workflows/desktop-release.yml`. The tag workflow builds full macOS arm64, macOS x64, Windows x64, and Linux x64 desktop packages, builds the Python wheel and source distribution, generates GitHub Artifact Attestations for published assets, uploads verified workflow artifacts, and creates or updates the matching GitHub Release.
 
 For manual validation, run the same workflow from GitHub Actions with `publish_release` disabled. Manual runs can narrow `platform` and `profile`; enabling `publish_release` requires running on a tag ref or passing an existing `release_tag`.
 
 The default macOS CI lane uses the normal non-strict app/dmg release path, so it may produce ad-hoc signed or Apple Development signed artifacts. Developer ID signing, notarization, and strict Gatekeeper validation remain explicit release-operator concerns.
+
+After downloading a release asset, provenance can be checked with:
+
+```bash
+gh attestation verify <downloaded-asset> --repo yangzhg/culvia
+```
 
 ## Desktop Readiness
 
