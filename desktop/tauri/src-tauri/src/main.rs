@@ -1038,6 +1038,11 @@ fn setup_desktop(app: &tauri::App, backend_slot: &SharedBackend) {
                     "backendReady",
                     json!({"baseUrl": startup.base_url, "runtimeMode": startup.runtime_mode}),
                 );
+                if let Some(child) = startup.child.take() {
+                    if let Ok(mut guard) = backend_slot.lock() {
+                        *guard = Some(child);
+                    }
+                }
                 match create_main_window(&app_handle, &startup.base_url) {
                     Ok(window) => {
                         emit_smoke_event(
@@ -1050,13 +1055,9 @@ fn setup_desktop(app: &tauri::App, backend_slot: &SharedBackend) {
                             Arc::clone(&backend_slot),
                             startup.base_url.clone(),
                         );
-                        if let Some(child) = startup.child.take() {
-                            if let Ok(mut guard) = backend_slot.lock() {
-                                *guard = Some(child);
-                            }
-                        }
                     }
                     Err(error) => {
+                        stop_backend(&backend_slot);
                         eprintln!("Culvia desktop failed to create main window: {error}");
                         emit_smoke_event("windowCreateError", json!({"error": error.to_string()}));
                         update_splash_error_from_handle(&app_handle, "Main window failed to open");
