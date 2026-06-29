@@ -91,6 +91,46 @@ class PortablePackageRuntimeTests(unittest.TestCase):
         self.assertIn("backend still answered http://127.0.0.1:12345/health after 1.0s", detail)
         self.assertEqual(sleep.call_count, 2)
 
+    def test_windows_sqlite_cleanup_lock_is_nonblocking_after_successful_shutdown(self) -> None:
+        cleanup_error = (
+            "could not remove temporary directory C:\\Temp\\fixture: [WinError 32] "
+            "The process cannot access the file because it is being used by another process: "
+            "'C:\\Temp\\fixture\\basic-technical-smoke\\state\\culvia_scores.sqlite'"
+        )
+
+        self.assertTrue(
+            check_portable_package_runtime.cleanup_error_is_nonblocking(
+                spec=check_portable_package_runtime.WINDOWS_SPEC,
+                cleanup_error=cleanup_error,
+                backend_shutdown_error="",
+                returncode=0,
+            )
+        )
+
+    def test_cleanup_lock_still_blocks_when_backend_shutdown_failed(self) -> None:
+        cleanup_error = "[WinError 32] culvia_scores.sqlite"
+
+        self.assertFalse(
+            check_portable_package_runtime.cleanup_error_is_nonblocking(
+                spec=check_portable_package_runtime.WINDOWS_SPEC,
+                cleanup_error=cleanup_error,
+                backend_shutdown_error="backend still answered /health",
+                returncode=0,
+            )
+        )
+
+    def test_cleanup_lock_still_blocks_for_linux_runtime(self) -> None:
+        cleanup_error = "[WinError 32] culvia_scores.sqlite"
+
+        self.assertFalse(
+            check_portable_package_runtime.cleanup_error_is_nonblocking(
+                spec=check_portable_package_runtime.LINUX_SPEC,
+                cleanup_error=cleanup_error,
+                backend_shutdown_error="",
+                returncode=0,
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

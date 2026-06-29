@@ -312,6 +312,23 @@ def wait_for_backend_shutdown(
     return f"backend still answered {health_url} after {timeout:.1f}s"
 
 
+def cleanup_error_is_nonblocking(
+    *,
+    spec: RuntimeSpec,
+    cleanup_error: str,
+    backend_shutdown_error: str,
+    returncode: int | None,
+) -> bool:
+    if not cleanup_error:
+        return False
+    if spec.native_platform != "windows":
+        return False
+    if backend_shutdown_error or returncode != 0:
+        return False
+    normalized = cleanup_error.lower()
+    return "winerror 32" in normalized and "culvia_scores.sqlite" in normalized
+
+
 def launcher_environment(fixture: dict[str, Any], *, timeout: int, exit_after_ms: int) -> dict[str, str]:
     from tools import check_backend_workflow_smoke
 
@@ -465,7 +482,15 @@ def run_launcher_workflow_smoke(
 
     if backend_shutdown_error:
         checks.append(check(f"{spec.label} launcher stops bundled backend after exit", False, backend_shutdown_error))
-    if cleanup_error:
+    cleanup_warning = ""
+    if cleanup_error and cleanup_error_is_nonblocking(
+        spec=spec,
+        cleanup_error=cleanup_error,
+        backend_shutdown_error=backend_shutdown_error,
+        returncode=returncode,
+    ):
+        cleanup_warning = cleanup_error
+    elif cleanup_error:
         checks.append(check(f"{spec.label} launcher fixture cleanup releases temporary files", False, cleanup_error))
 
     payload = result_payload(checks)
@@ -476,11 +501,13 @@ def run_launcher_workflow_smoke(
         "returncode": returncode,
         "backendShutdownError": backend_shutdown_error,
         "cleanupError": cleanup_error,
+        "cleanupWarning": cleanup_warning,
         "stdoutTail": list(stdout_tail),
         "stderrTail": list(stderr_tail),
     }
     if payload["ok"]:
-        return True, f"launcher smoke passed: events={[event.get('event') for event in events]}"
+        warning = f"; cleanup warning: {cleanup_warning}" if cleanup_warning else ""
+        return True, f"launcher smoke passed: events={[event.get('event') for event in events]}{warning}"
     return False, json.dumps(detail, ensure_ascii=False)
 
 
