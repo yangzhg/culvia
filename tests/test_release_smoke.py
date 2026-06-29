@@ -16,6 +16,17 @@ class ReleaseSmokeTests(unittest.TestCase):
         self.assertNotEqual(probe_cwd, ROOT.resolve())
         self.assertNotIn(ROOT.resolve(), probe_cwd.parents)
 
+    def test_project_output_path_resolves_relative_path_from_source_root(self) -> None:
+        self.assertEqual(
+            release_smoke.project_output_path(Path("dist/python"), ROOT),
+            ROOT / "dist" / "python",
+        )
+
+    def test_project_output_path_keeps_absolute_path(self) -> None:
+        absolute = release_smoke.outside_source_tree_cwd(ROOT) / "culvia-dist"
+
+        self.assertEqual(release_smoke.project_output_path(absolute, ROOT), absolute)
+
 
 if __name__ == "__main__":
     unittest.main()

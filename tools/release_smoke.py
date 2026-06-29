@@ -379,6 +379,10 @@ def outside_source_tree_cwd(root: Path = ROOT) -> Path:
     return root.parent
 
 
+def project_output_path(path: Path, root: Path = ROOT) -> Path:
+    return path if path.is_absolute() else root / path
+
+
 def module_available(python: Path, module: str, probe_args: Sequence[str]) -> bool:
     result = subprocess.run(
         [str(python), "-m", module, *probe_args],
@@ -395,6 +399,7 @@ def build_wheel(
 ) -> tuple[Path | None, list[str], list[str]]:
     issues: list[str] = []
     skips: list[str] = []
+    wheelhouse = project_output_path(wheelhouse, root)
     if not module_available(python, "pip", ("--version",)):
         message = f"{python} cannot run pip; install pip before release smoke"
         (issues if strict else skips).append(message)
@@ -435,6 +440,7 @@ def build_sdist(
 ) -> tuple[Path | None, list[str], list[str]]:
     issues: list[str] = []
     skips: list[str] = []
+    dist_dir = project_output_path(dist_dir, root)
     if not module_available(python, "build", ("--version",)):
         message = f"{python} cannot run build; install build before creating an sdist"
         (issues if strict else skips).append(message)
