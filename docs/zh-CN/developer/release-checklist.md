@@ -82,6 +82,14 @@ upload_cache/
 *.db
 ```
 
+## GitHub Release Workflow
+
+推送 `v<version>` tag 会触发 `.github/workflows/desktop-release.yml`。Tag workflow 会构建 full macOS、Windows、Linux 桌面包，构建 Python wheel 和源码包，上传已验证的 workflow artifacts，并创建或更新同名 GitHub Release。
+
+需要手动验证时，可以在 GitHub Actions 手动运行同一 workflow，并关闭 `publish_release`。手动运行可收窄 `platform` 和 `profile`；打开 `publish_release` 时必须从 tag ref 运行，或传入已存在的 `release_tag`。
+
+默认 macOS CI 线使用普通非严格 app/dmg 发布路径，因此可能产出 ad-hoc 或 Apple Development 签名的包。Developer ID 签名、公证和严格 Gatekeeper 验证仍由发布负责人显式执行。
+
 ## Desktop readiness
 
 推荐的本地统一入口：

@@ -82,6 +82,14 @@ upload_cache/
 *.db
 ```
 
+## GitHub Release Workflow
+
+Pushing a `v<version>` tag triggers `.github/workflows/desktop-release.yml`. The tag workflow builds the full macOS, Windows, and Linux desktop packages, builds the Python wheel and source distribution, uploads verified workflow artifacts, and creates or updates the matching GitHub Release.
+
+For manual validation, run the same workflow from GitHub Actions with `publish_release` disabled. Manual runs can narrow `platform` and `profile`; enabling `publish_release` requires running on a tag ref or passing an existing `release_tag`.
+
+The default macOS CI lane uses the normal non-strict app/dmg release path, so it may produce ad-hoc signed or Apple Development signed artifacts. Developer ID signing, notarization, and strict Gatekeeper validation remain explicit release-operator concerns.
+
 ## Desktop Readiness
 
 Preferred local entrypoints:
