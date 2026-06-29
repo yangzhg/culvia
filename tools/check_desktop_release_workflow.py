@@ -258,7 +258,8 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
                 for text in (
                     "--build",
                     "check_backend_smoke.py",
-                    "tauri:build",
+                    "cargo",
+                    "--manifest-path",
                     "build_windows_zip.py",
                     "build_linux_tgz.py",
                     "check_portable_package_preflight.py",

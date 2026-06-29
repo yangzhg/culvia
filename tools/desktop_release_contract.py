@@ -146,6 +146,17 @@ def npm_executable(contract: PlatformContract) -> str:
     return "npm.cmd" if contract.key == "windows" else "npm"
 
 
+def desktop_shell_build_command(*, root: Path = ROOT) -> tuple[str, ...]:
+    return (
+        "cargo",
+        "build",
+        "--release",
+        "--locked",
+        "--manifest-path",
+        str(root / "desktop" / "tauri" / "src-tauri" / "Cargo.toml"),
+    )
+
+
 def collect_steps(
     contract: PlatformContract, *, python: Path = Path(sys.executable), root: Path = ROOT
 ) -> list[ReleaseStep]:
@@ -235,7 +246,7 @@ def collect_steps(
                 "--json",
             ),
         ),
-        ReleaseStep("desktop shell build", (npm, "--prefix", "desktop/tauri", "run", "tauri:build")),
+        ReleaseStep("desktop shell build", desktop_shell_build_command(root=root)),
         ReleaseStep(
             "portable package plan",
             (
