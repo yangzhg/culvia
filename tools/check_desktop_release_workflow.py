@@ -228,6 +228,14 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
             "Windows and Linux matrix targets must be explicit",
         ),
         check(
+            "workflow release default avoids oversized Linux full asset",
+            "|| 'release'" in workflow
+            and 'if selected_profile == "release":' in workflow
+            and 'job["platform"] == "linux"' in workflow
+            and 'return job["profile"] == "lite"' in workflow,
+            "tag-push releases must default to Linux Lite because Linux full exceeds GitHub Release asset limits",
+        ),
+        check(
             "workflow installs required toolchains",
             all(
                 text in workflow

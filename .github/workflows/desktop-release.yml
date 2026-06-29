@@ -68,7 +68,7 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
           INPUT_PLATFORM: ${{ github.event_name == 'workflow_dispatch' && inputs.platform || 'all' }}
-          INPUT_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'full' }}
+          INPUT_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.profile || 'release' }}
           INPUT_UPLOAD_ARTIFACTS: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_artifacts }}
           INPUT_PUBLISH_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release }}
           INPUT_RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}
@@ -171,11 +171,18 @@ jobs:
                   "evidence_path": "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz.evidence.json",
               },
           ]
+          def profile_matches(job):
+              if selected_profile == "release":
+                  if job["platform"] == "linux":
+                      return job["profile"] == "lite"
+                  return job["profile"] == "full"
+              return selected_profile == "all" or selected_profile == job["profile"]
+
           include = [
               job
               for job in jobs
               if (selected_platform == "all" or selected_platform == job["platform"])
-              and (selected_profile == "all" or selected_profile == job["profile"])
+              and profile_matches(job)
           ]
           if not include:
               print("No release jobs matched the requested platform/profile selection.", file=sys.stderr)
@@ -377,6 +384,8 @@ jobs:
           Automated Culvia desktop and source release for ${RELEASE_TAG}.
 
           Assets include verified desktop packages, SHA-256 checksum files, release evidence manifests, a Python wheel, and a Python source distribution.
+
+          The Linux desktop asset uses the Lite runtime profile to stay within GitHub Release asset size limits. It does not bundle the Python/ML runtime; on first launch it uses Python 3.11+ to create an app-managed runtime environment.
 
           GitHub Artifact Attestations are generated for release assets. After downloading an asset, verify its provenance with:
 

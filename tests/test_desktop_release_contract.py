@@ -218,6 +218,21 @@ class DesktopReleaseContractTests(unittest.TestCase):
             "workflow uploads only verified final archives, checksums, and evidence manifests", payload["failed"]
         )
 
+    def test_workflow_checker_rejects_release_default_linux_full(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace("|| 'release'", "|| 'full'"),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow release default avoids oversized Linux full asset", payload["failed"])
+
     def test_workflow_checker_rejects_direct_upload_path_without_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
