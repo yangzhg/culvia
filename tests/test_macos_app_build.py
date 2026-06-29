@@ -242,6 +242,63 @@ class MacosAppBuildTests(unittest.TestCase):
             self.assertEqual(manifest["artifact"], str(staged_dmg.resolve()))
             self.assertEqual(manifest["steps"][-1]["name"], "write release checksum")
 
+    def test_dmg_fallback_recovers_after_tauri_bundle_failure(self) -> None:
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            if "check_macos_app_preflight.py" in command[1]:
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=json.dumps({"ok": True, "selectedIdentity": "-"}),
+                    stderr="",
+                )
+            if command[0] == "hdiutil":
+                Path(command[-1]).write_bytes(b"fallback dmg")
+                return subprocess.CompletedProcess(command, 0, stdout="created", stderr="")
+            if "tauri:build:headless" in command:
+                app = (
+                    root
+                    / "desktop"
+                    / "tauri"
+                    / "src-tauri"
+                    / "target"
+                    / "release"
+                    / "bundle"
+                    / "macos"
+                    / "Culvia.app"
+                )
+                (app / "Contents").mkdir(parents=True)
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr="bundle_dmg.sh failed")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("tools.build_macos_app.subprocess.run", side_effect=fake_run),
+            patch("tools.build_macos_app.platform.system", return_value="Darwin"),
+            patch("tools.build_macos_app.platform.machine", return_value="x86_64"),
+        ):
+            root = Path(tmp)
+            config_path = root / "desktop" / "tauri" / "src-tauri" / "tauri.conf.json"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                json.dumps({"productName": "Culvia", "version": "0.1.0"}),
+                encoding="utf-8",
+            )
+            payload = build_macos_app.run_macos_build(
+                root=root,
+                python=Path("/python"),
+                npm_action="skip",
+                env={},
+            )
+
+            self.assertTrue(payload["ok"], payload.get("evidenceManifestResult"))
+            build_results = [step for step in payload["steps"] if step["name"] == "build macos app and dmg"]
+            self.assertEqual(len(build_results), 2)
+            self.assertFalse(build_results[0]["ok"])
+            self.assertTrue(build_results[1]["ok"])
+            self.assertEqual(build_results[1]["command"][0], "hdiutil")
+            self.assertEqual(Path(str(payload["dmg"])).name, "Culvia_0.1.0_x64.dmg")
+            self.assertEqual(Path(str(payload["dmg"])).read_bytes(), b"fallback dmg")
+
     def test_run_writes_lite_evidence_with_step_results(self) -> None:
         def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
             if "check_macos_app_preflight.py" in command[1]:

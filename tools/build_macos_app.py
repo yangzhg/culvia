@@ -35,6 +35,10 @@ STREAMED_PROGRESS_STEPS = {
     "build macos lite app and dmg",
     "macos app launch smoke",
 }
+MACOS_DMG_BUILD_STEPS = {
+    "build macos app and dmg",
+    "build macos lite app and dmg",
+}
 EXTRA_TOOLCHAIN_DIRECTORIES = (
     Path.home() / ".cargo" / "bin",
     Path("/opt/homebrew/opt/rustup/bin"),
@@ -368,25 +372,121 @@ def local_step_result(
     return payload
 
 
+def bundle_dir(root: Path) -> Path:
+    return root / "desktop" / "tauri" / "src-tauri" / "target" / "release" / "bundle"
+
+
 def resolve_macos_artifacts(*, root: Path) -> tuple[Path | None, Path | None, str]:
-    bundle_dir = root / "desktop" / "tauri" / "src-tauri" / "target" / "release" / "bundle"
-    app_discovery = check_macos_artifact_preflight.resolve_app_path(bundle_dir, None)
-    dmg_discovery = check_macos_artifact_preflight.resolve_dmg_path(bundle_dir, None)
+    artifacts_dir = bundle_dir(root)
+    app_discovery = check_macos_artifact_preflight.resolve_app_path(artifacts_dir, None)
+    dmg_discovery = check_macos_artifact_preflight.resolve_dmg_path(artifacts_dir, None)
     issues: list[str] = []
     if app_discovery.issue:
         issues.append(app_discovery.issue.detail)
     if dmg_discovery.issue:
         issues.append(dmg_discovery.issue.detail)
     if app_discovery.path is None:
-        issues.append(f"No .app bundle found under {bundle_dir}.")
+        issues.append(f"No .app bundle found under {artifacts_dir}.")
     if dmg_discovery.path is None:
-        issues.append(f"No .dmg found under {bundle_dir}.")
+        issues.append(f"No .dmg found under {artifacts_dir}.")
     return app_discovery.path, dmg_discovery.path, "; ".join(issues)
+
+
+def macos_dmg_arch_suffix(machine: str | None = None) -> str:
+    current = (machine or platform.machine()).lower()
+    if current in {"arm64", "aarch64"}:
+        return "aarch64"
+    if current in {"x86_64", "amd64"}:
+        return "x64"
+    return current or "macos"
+
+
+def fallback_macos_dmg_path(*, root: Path) -> Path:
+    config = check_macos_artifact_preflight.read_desktop_config(
+        root / "desktop" / "tauri" / "src-tauri" / "tauri.conf.json"
+    )
+    product_name = str(config.get("productName") or "Culvia").strip() or "Culvia"
+    version = str(config.get("version") or "0.0.0").strip() or "0.0.0"
+    safe_product_name = "_".join(product_name.split())
+    return bundle_dir(root) / "dmg" / f"{safe_product_name}_{version}_{macos_dmg_arch_suffix()}.dmg"
+
+
+def recover_macos_dmg_build(
+    step: MacosBuildStep,
+    *,
+    root: Path,
+    env: Mapping[str, str],
+    progress: bool = False,
+    progress_prefix: str = "macos-release",
+) -> dict[str, Any] | None:
+    if step.name not in MACOS_DMG_BUILD_STEPS:
+        return None
+
+    artifacts_dir = bundle_dir(root)
+    app_discovery = check_macos_artifact_preflight.resolve_app_path(artifacts_dir, None)
+    if app_discovery.path is None:
+        started = time.monotonic()
+        detail = app_discovery.issue.detail if app_discovery.issue else f"No .app bundle found under {artifacts_dir}."
+        return local_step_result(
+            step.name,
+            ("fallback-macos-dmg", str(artifacts_dir)),
+            started=started,
+            ok=False,
+            detail=detail,
+        )
+
+    dmg_discovery = check_macos_artifact_preflight.resolve_dmg_path(artifacts_dir, None)
+    if dmg_discovery.path is not None and dmg_discovery.path.is_file() and dmg_discovery.path.stat().st_size > 0:
+        started = time.monotonic()
+        return local_step_result(
+            step.name,
+            ("reuse-existing-macos-dmg", str(dmg_discovery.path)),
+            started=started,
+            ok=True,
+            detail=json.dumps({"app": str(app_discovery.path), "dmg": str(dmg_discovery.path)}, ensure_ascii=False),
+        )
+
+    if platform.system() != "Darwin":
+        started = time.monotonic()
+        return local_step_result(
+            step.name,
+            ("hdiutil", "create"),
+            started=started,
+            ok=False,
+            detail="Fallback DMG creation requires macOS hdiutil.",
+        )
+
+    dmg = fallback_macos_dmg_path(root=root)
+    dmg.parent.mkdir(parents=True, exist_ok=True)
+    remove_existing_path(dmg)
+    command = (
+        "hdiutil",
+        "create",
+        "-volname",
+        app_discovery.path.stem,
+        "-srcfolder",
+        str(app_discovery.path),
+        "-ov",
+        "-format",
+        "UDZO",
+        str(dmg),
+    )
+    if progress:
+        progress_line(progress_prefix, f"recovering {step.name} with hdiutil fallback ...")
+    result = run_step(
+        MacosBuildStep(step.name, command),
+        root=root,
+        env=env,
+        stream_output=progress,
+        progress_prefix=progress_prefix,
+    )
+    result["fallback"] = "hdiutil-create-from-app"
+    return result
 
 
 def make_removable(path: Path) -> None:
     try:
-        path.chmod(path.stat(follow_symlinks=False).st_mode | stat.S_IWUSR)
+        path.chmod(os.stat(path, follow_symlinks=False).st_mode | stat.S_IWUSR)
     except OSError:
         pass
     if hasattr(os, "chflags"):
@@ -426,7 +526,7 @@ def copy_tree_without_extended_attributes(source: Path, destination: Path) -> No
         target_dir = destination / current_path.relative_to(source)
         target_dir.mkdir(parents=True, exist_ok=True)
         try:
-            target_dir.chmod(current_path.stat(follow_symlinks=False).st_mode & 0o777)
+            target_dir.chmod(os.stat(current_path, follow_symlinks=False).st_mode & 0o777)
         except OSError:
             pass
         for name in tuple(dir_names):
@@ -732,6 +832,23 @@ def run_macos_build(
         if progress:
             status = "OK" if result["ok"] else "FAIL"
             progress_line(progress_prefix, f"{index}/{len(steps)} {status} {step.name} ({result['seconds']}s)")
+        if not result["ok"]:
+            recovery = recover_macos_dmg_build(
+                step,
+                root=root,
+                env=current_env,
+                progress=progress,
+                progress_prefix=progress_prefix,
+            )
+            if recovery is not None:
+                executed.append(recovery)
+                result = recovery
+                if progress:
+                    status = "OK" if result["ok"] else "FAIL"
+                    progress_line(
+                        progress_prefix,
+                        f"{index}/{len(steps)} {status} {step.name} recovery ({result['seconds']}s)",
+                    )
         if step.name == MACOS_APP_PREFLIGHT_STEP and result["ok"]:
             preflight = parse_json_output(str(result.get("stdoutTail") or ""))
             if preflight is not None:
