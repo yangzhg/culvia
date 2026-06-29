@@ -58,6 +58,39 @@ class PortablePackageRuntimeTests(unittest.TestCase):
             self.assertIn("locked", detail)
             self.assertEqual(sleep.call_count, 1)
 
+    def test_wait_for_backend_shutdown_returns_when_health_stops(self) -> None:
+        with (
+            patch.object(check_portable_package_runtime, "backend_responds", side_effect=[True, False]),
+            patch.object(check_portable_package_runtime.time, "sleep") as sleep,
+        ):
+            detail = check_portable_package_runtime.wait_for_backend_shutdown(
+                "http://127.0.0.1:12345",
+                timeout=5.0,
+                delay=0.1,
+            )
+
+        self.assertEqual(detail, "")
+        self.assertEqual(sleep.call_count, 1)
+
+    def test_wait_for_backend_shutdown_reports_persistent_health_response(self) -> None:
+        with (
+            patch.object(check_portable_package_runtime, "backend_responds", return_value=True),
+            patch.object(check_portable_package_runtime.time, "sleep") as sleep,
+            patch.object(
+                check_portable_package_runtime.time,
+                "monotonic",
+                side_effect=[0.0, 0.0, 0.5, 1.1],
+            ),
+        ):
+            detail = check_portable_package_runtime.wait_for_backend_shutdown(
+                "http://127.0.0.1:12345",
+                timeout=1.0,
+                delay=0.1,
+            )
+
+        self.assertIn("backend still answered http://127.0.0.1:12345/health after 1.0s", detail)
+        self.assertEqual(sleep.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

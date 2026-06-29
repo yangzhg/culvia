@@ -12,6 +12,8 @@ import tarfile
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 import zipfile
 from collections import deque
 from dataclasses import dataclass
@@ -30,8 +32,10 @@ LINUX_LABEL = "linux portable tgz runtime"
 REQUIRED_LAUNCHER_EVENTS = ("backendReady", "windowCreated", "frontendReady")
 DEFAULT_EXIT_AFTER_MS = 20000
 DEFAULT_FIXTURE_COUNT = 4
-TEMP_CLEANUP_ATTEMPTS = 30
+TEMP_CLEANUP_ATTEMPTS = 90
 TEMP_CLEANUP_DELAY_SECS = 0.5
+BACKEND_SHUTDOWN_TIMEOUT_SECS = 30.0
+BACKEND_SHUTDOWN_POLL_SECS = 0.5
 
 
 @dataclass(frozen=True)
@@ -277,6 +281,37 @@ def base_url_from_events(events: Sequence[dict[str, Any]]) -> str:
     return ""
 
 
+def backend_health_url(base_url: str) -> str:
+    return base_url.rstrip("/") + "/health"
+
+
+def backend_responds(url: str, *, timeout: float = 1.0) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=max(0.1, timeout)):
+            return True
+    except urllib.error.HTTPError:
+        return True
+    except (OSError, urllib.error.URLError, ValueError):
+        return False
+
+
+def wait_for_backend_shutdown(
+    base_url: str,
+    *,
+    timeout: float = BACKEND_SHUTDOWN_TIMEOUT_SECS,
+    delay: float = BACKEND_SHUTDOWN_POLL_SECS,
+) -> str:
+    if not base_url:
+        return ""
+    health_url = backend_health_url(base_url)
+    deadline = time.monotonic() + max(0.0, timeout)
+    while time.monotonic() <= deadline:
+        if not backend_responds(health_url, timeout=min(1.0, max(0.1, delay))):
+            return ""
+        time.sleep(max(0.0, delay))
+    return f"backend still answered {health_url} after {timeout:.1f}s"
+
+
 def launcher_environment(fixture: dict[str, Any], *, timeout: int, exit_after_ms: int) -> dict[str, str]:
     from tools import check_backend_workflow_smoke
 
@@ -355,6 +390,8 @@ def run_launcher_workflow_smoke(
     checks: list[CheckResult] = []
     events: list[dict[str, Any]] = []
     returncode: int | None = None
+    base_url = ""
+    backend_shutdown_error = ""
     cleanup_error = ""
     try:
         try:
@@ -420,8 +457,14 @@ def run_launcher_workflow_smoke(
             checks.append(check(f"{spec.label} launcher starts", False, repr(exc)))
             returncode = terminate_process(process) if process is not None else None
     finally:
+        if process is not None and process.poll() is None:
+            returncode = terminate_process(process)
+        if base_url:
+            backend_shutdown_error = wait_for_backend_shutdown(base_url)
         cleanup_error = remove_tree_with_retries(tmp_path)
 
+    if backend_shutdown_error:
+        checks.append(check(f"{spec.label} launcher stops bundled backend after exit", False, backend_shutdown_error))
     if cleanup_error:
         checks.append(check(f"{spec.label} launcher fixture cleanup releases temporary files", False, cleanup_error))
 
@@ -431,6 +474,8 @@ def run_launcher_workflow_smoke(
         "events": events,
         "failed": payload["failed"],
         "returncode": returncode,
+        "backendShutdownError": backend_shutdown_error,
+        "cleanupError": cleanup_error,
         "stdoutTail": list(stdout_tail),
         "stderrTail": list(stderr_tail),
     }
