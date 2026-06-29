@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -157,6 +158,42 @@ def whitespace_fallback_check(*, root: Path = ROOT) -> tuple[int, str]:
     if issues:
         return 1, "\n".join(issues)
     return 0, "git diff --check unavailable because Xcode license is not accepted; Python whitespace fallback passed."
+
+
+def should_secret_scan_file(path: Path, *, root: Path) -> bool:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return False
+    excluded_dirs = WHITESPACE_EXCLUDED_DIRS | {
+        glob.removeprefix("!").removesuffix("/**") for glob in SECRET_SCAN_EXCLUDES if glob.startswith("!")
+    }
+    return not any(part in excluded_dirs for part in relative.parts[:-1])
+
+
+def sensitive_scan_fallback_check(*, root: Path = ROOT, pattern: str = SECRET_PATTERN) -> tuple[int, str]:
+    regex = re.compile(pattern)
+    matches: list[str] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or not should_secret_scan_file(path, root=root):
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if b"\0" in data[:4096]:
+            continue
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = data.decode("utf-8", errors="ignore")
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            match = regex.search(line)
+            if match:
+                matches.append(f"{path.relative_to(root).as_posix()}:{line_number}:{match.group(0)}")
+    if matches:
+        return 0, "\n".join(matches)
+    return 1, "rg unavailable; Python sensitive information fallback found no matches."
 
 
 def collect_steps(
@@ -450,14 +487,39 @@ def run_step(step: GateStep, *, root: Path = ROOT) -> GateResult:
     if step.env:
         env.update(step.env)
     started = time.monotonic()
-    result = subprocess.run(
-        list(step.command),
-        cwd=root,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            list(step.command),
+            cwd=root,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        if step.name == "sensitive information scan" and step.command[:1] == ("rg",):
+            returncode, stdout = sensitive_scan_fallback_check(root=root)
+            seconds = time.monotonic() - started
+            status = "OK" if returncode in step.ok_returncodes else "FAIL"
+            return GateResult(
+                name=step.name,
+                command=step.command,
+                status=status,
+                returncode=returncode,
+                seconds=seconds,
+                stdout=compact_output(stdout),
+                stderr=compact_output(str(exc)),
+            )
+        seconds = time.monotonic() - started
+        return GateResult(
+            name=step.name,
+            command=step.command,
+            status="FAIL",
+            returncode=127,
+            seconds=seconds,
+            stdout="",
+            stderr=compact_output(str(exc)),
+        )
     seconds = time.monotonic() - started
     if (
         step.name == "whitespace"

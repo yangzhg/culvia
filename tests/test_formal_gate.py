@@ -360,6 +360,36 @@ class FormalGateTests(unittest.TestCase):
         self.assertEqual(result.status, "FAIL")
         self.assertIn("sk-secret", result.stdout)
 
+    def test_sensitive_scan_falls_back_when_rg_is_missing(self) -> None:
+        step = formal_gate.GateStep("sensitive information scan", ("rg",), ok_returncodes=(1,))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "README.md").write_text("ok\n", encoding="utf-8")
+            with patch("tools.formal_gate.subprocess.run", side_effect=FileNotFoundError("rg")):
+                result = formal_gate.run_step(step, root=root)
+
+        self.assertEqual(result.status, "OK")
+        self.assertIn("Python sensitive information fallback found no matches", result.stdout)
+
+    def test_sensitive_scan_fallback_reports_secret_match(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "README.md").write_text("token sk-abcdefghijkl\n", encoding="utf-8")
+            returncode, stdout = formal_gate.sensitive_scan_fallback_check(root=root)
+
+        self.assertEqual(returncode, 0)
+        self.assertIn("README.md:1:sk-abcdefghijkl", stdout)
+
+    def test_missing_gate_command_reports_failure(self) -> None:
+        step = formal_gate.GateStep("missing", ("missing-command",))
+
+        with patch("tools.formal_gate.subprocess.run", side_effect=FileNotFoundError("missing-command")):
+            result = formal_gate.run_step(step, root=ROOT)
+
+        self.assertEqual(result.status, "FAIL")
+        self.assertEqual(result.returncode, 127)
+        self.assertIn("missing-command", result.stderr)
+
     def test_whitespace_step_falls_back_when_git_is_blocked_by_xcode_license(self) -> None:
         step = formal_gate.GateStep("whitespace", ("git", "diff", "--check"))
         with tempfile.TemporaryDirectory() as temp_dir:
