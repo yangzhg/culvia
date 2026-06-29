@@ -1075,10 +1075,26 @@ fn setup_desktop(app: &tauri::App, backend_slot: &SharedBackend) {
 fn stop_backend(backend_slot: &SharedBackend) {
     if let Ok(mut guard) = backend_slot.lock() {
         if let Some(mut child) = guard.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop_backend_child(&mut child);
         }
     }
+}
+
+fn stop_backend_child(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        let pid = child.id().to_string();
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid, "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    if child.try_wait().ok().flatten().is_none() {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
 }
 
 fn main() {
