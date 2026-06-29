@@ -84,7 +84,7 @@ upload_cache/
 
 ## GitHub Release Workflow
 
-Pushing a `v<version>` tag triggers `.github/workflows/desktop-release.yml`. The tag workflow builds the full macOS, Windows, and Linux desktop packages, builds the Python wheel and source distribution, uploads verified workflow artifacts, and creates or updates the matching GitHub Release.
+Pushing a `v<version>` tag triggers `.github/workflows/desktop-release.yml`. The tag workflow builds full macOS arm64, macOS x64, Windows x64, and Linux x64 desktop packages, builds the Python wheel and source distribution, uploads verified workflow artifacts, and creates or updates the matching GitHub Release.
 
 For manual validation, run the same workflow from GitHub Actions with `publish_release` disabled. Manual runs can narrow `platform` and `profile`; enabling `publish_release` requires running on a tag ref or passing an existing `release_tag`.
 

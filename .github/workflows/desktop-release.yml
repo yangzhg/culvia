@@ -87,21 +87,45 @@ jobs:
 
           jobs = [
               {
-                  "name": "macOS app dmg",
+                  "name": "macOS arm64 app dmg",
                   "platform": "macos",
                   "profile": "full",
                   "os": "macos-latest",
-                  "artifact_name": "culvia-macos",
+                  "arch": "arm64",
+                  "artifact_name": "culvia-macos-arm64",
                   "artifact_path": "dist/macos/*.dmg",
                   "checksum_path": "dist/macos/*.dmg.sha256",
                   "evidence_path": "dist/macos/*.dmg.evidence.json",
               },
               {
-                  "name": "macOS Lite app dmg",
+                  "name": "macOS x64 app dmg",
+                  "platform": "macos",
+                  "profile": "full",
+                  "os": "macos-15-intel",
+                  "arch": "x64",
+                  "artifact_name": "culvia-macos-x64",
+                  "artifact_path": "dist/macos/*.dmg",
+                  "checksum_path": "dist/macos/*.dmg.sha256",
+                  "evidence_path": "dist/macos/*.dmg.evidence.json",
+              },
+              {
+                  "name": "macOS Lite arm64 app dmg",
                   "platform": "macos",
                   "profile": "lite",
                   "os": "macos-latest",
-                  "artifact_name": "culvia-macos-lite",
+                  "arch": "arm64",
+                  "artifact_name": "culvia-macos-lite-arm64",
+                  "artifact_path": "dist/macos-lite/*.dmg",
+                  "checksum_path": "dist/macos-lite/*.dmg.sha256",
+                  "evidence_path": "dist/macos-lite/*.dmg.evidence.json",
+              },
+              {
+                  "name": "macOS Lite x64 app dmg",
+                  "platform": "macos",
+                  "profile": "lite",
+                  "os": "macos-15-intel",
+                  "arch": "x64",
+                  "artifact_name": "culvia-macos-lite-x64",
                   "artifact_path": "dist/macos-lite/*.dmg",
                   "checksum_path": "dist/macos-lite/*.dmg.sha256",
                   "evidence_path": "dist/macos-lite/*.dmg.evidence.json",
@@ -223,6 +247,10 @@ jobs:
       - name: Install macOS Python desktop dependencies
         if: matrix.platform == 'macos' && matrix.profile == 'full'
         run: python -m pip install -e '.[desktop]'
+
+      - name: Show macOS runner architecture
+        if: matrix.platform == 'macos'
+        run: uname -m
 
       - name: Show macOS release plan
         if: matrix.platform == 'macos'
