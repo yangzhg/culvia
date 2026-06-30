@@ -245,7 +245,9 @@ class PortablePackagePreflightTests(unittest.TestCase):
                 / "cacert.pem"
             )
             ca_bundle.parent.mkdir(parents=True)
-            ca_bundle.write_text("-----BEGIN CERTIFICATE-----\nplaceholder\n-----END CERTIFICATE-----\n", encoding="utf-8")
+            ca_bundle.write_text(
+                "-----BEGIN CERTIFICATE-----\nplaceholder\n-----END CERTIFICATE-----\n", encoding="utf-8"
+            )
             archive = build_windows_zip.build_archive(
                 package_root=package_root,
                 output_dir=temp / "dist",

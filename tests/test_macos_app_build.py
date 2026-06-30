@@ -256,15 +256,7 @@ class MacosAppBuildTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, stdout="created", stderr="")
             if "tauri:build:headless" in command:
                 app = (
-                    root
-                    / "desktop"
-                    / "tauri"
-                    / "src-tauri"
-                    / "target"
-                    / "release"
-                    / "bundle"
-                    / "macos"
-                    / "Culvia.app"
+                    root / "desktop" / "tauri" / "src-tauri" / "target" / "release" / "bundle" / "macos" / "Culvia.app"
                 )
                 (app / "Contents").mkdir(parents=True)
                 return subprocess.CompletedProcess(command, 1, stdout="", stderr="bundle_dmg.sh failed")

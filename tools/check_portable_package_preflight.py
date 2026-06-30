@@ -84,12 +84,8 @@ SECRET_TEXT_PATTERNS = (
     re.compile(rb"APPLE_(CERTIFICATE|PASSWORD|API_KEY|API_ISSUER|ID|TEAM_ID)"),
     re.compile(rb"(ALIYUN|DASHSCOPE|DEEPSEEK|OPENAI)[A-Z0-9_]{0,32}(API)?_?KEY", re.IGNORECASE),
 )
-ALLOWED_FORBIDDEN_SUFFIX_PATTERNS = (
-    re.compile(r"/_internal/certifi/cacert\.pem$", re.IGNORECASE),
-)
-SECRET_SCAN_SKIP_PATTERNS = (
-    re.compile(r"/[^/]+\.dist-info/record$", re.IGNORECASE),
-)
+ALLOWED_FORBIDDEN_SUFFIX_PATTERNS = (re.compile(r"/_internal/certifi/cacert\.pem$", re.IGNORECASE),)
+SECRET_SCAN_SKIP_PATTERNS = (re.compile(r"/[^/]+\.dist-info/record$", re.IGNORECASE),)
 TEXT_SCAN_MAX_BYTES = 2_000_000
 
 
