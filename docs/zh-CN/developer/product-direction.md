@@ -2,7 +2,7 @@
 
 英文版：[../../en/developer/product-direction.md](../../en/developer/product-direction.md)
 
-这个文件记录Culvia 的长期产品判断。它不是营销稿，而是后续每轮迭代的取舍依据。
+这个文件记录 Culvia 的长期产品判断。它不是面向外部发布的介绍稿，而是后续每轮迭代的取舍依据。
 
 ## 调研输入
 

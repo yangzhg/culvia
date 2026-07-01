@@ -7,6 +7,10 @@ Simplified Chinese: [../zh-CN/index.md](../zh-CN/index.md)
 - [Getting Started](user/getting-started.md)
 - [Export Workflows](user/export-workflows.md)
 
+## Project
+
+- [Project Summary](project/project-summary.md)
+
 ## Developer Documentation
 
 - [Development Setup and Runbook](developer/getting-started.md)

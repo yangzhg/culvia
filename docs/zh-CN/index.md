@@ -7,6 +7,10 @@ English: [../en/index.md](../en/index.md)
 - [快速开始](user/getting-started.md)
 - [导出工作流](user/export-workflows.md)
 
+## 项目
+
+- [项目摘要](project/project-summary.md)
+
 ## 开发文档
 
 - [开发环境与运行手册](developer/getting-started.md)

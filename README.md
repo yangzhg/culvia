@@ -2,13 +2,33 @@
 
 Simplified Chinese: [README.zh-CN.md](README.zh-CN.md)
 
-Culvia is a local-first photo curation, scoring, review, and delivery workbench for photographers. It helps you move from a full shoot to a smaller, more intentional set of images by combining local scoring, optional vision-model critique, manual decisions, and export tools.
+[![Status: alpha](https://img.shields.io/badge/status-alpha-orange)](#project-status)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-It is designed for reviewing a folder of photos, finding the stronger frames, marking final decisions, and handing selected images into the next stage of editing or delivery.
+Culvia is a local-first photo culling, scoring, review, and delivery workbench for photographers. It helps you move from a full shoot to a smaller, more intentional set of images by combining local scoring, optional vision-model critique, manual pick/hold/reject decisions, and export tools.
+
+![Culvia workbench preview](assets/preview/culvia-github-preview.jpg)
+
+## Design Goals
+
+- **Local-first storage:** photos, thumbnails, SQLite data, model caches, manual labels, uploads, and exports stay on your machine unless you explicitly enable an external vision review.
+- **Manual decisions stay authoritative:** model scores and LLM critique are second opinions. Manual decisions remain the final layer.
+- **One review workflow:** scan folders, browse thumbnails, score, filter, inspect, mark picks, and export selected photos or CSV results from the same workbench.
+
+## Intended Use
+
+Culvia is aimed at photographers and photo-heavy local workflows where a shoot contains many similar frames and the final set still needs human judgment: portraits, events, weddings, street sessions, practice shoots, editorial selects, and personal archives.
+
+It is not a replacement for a full RAW editor such as Lightroom Classic, Capture One, or darktable. Culvia is meant to sit before or beside those tools as a local review and selection layer.
+
+## Project Status
 
 > Culvia is currently an early-stage open-source project. Expect rapid changes while the workflow, desktop packaging, and model integrations mature.
 
-## Install
+The Python package and local Web app are the most direct way to try the project today. Desktop packaging exists, but early public desktop binaries may be unsigned and should be treated as alpha release artifacts.
+
+## Quick Start
 
 ```bash
 pip install culvia
@@ -26,6 +46,12 @@ Open the local address shown in the terminal. You can also run the direct server
 culvia-web --host 127.0.0.1 --port 8501
 ```
 
+## Preview
+
+The preview assets below use practice-photo material to show the workflow without publishing original files or local file paths.
+
+![Culvia review flow preview](assets/preview/culvia-review-flow.jpg)
+
 ## What You Can Do
 
 - Import a folder of photos or temporary uploaded images.
@@ -38,6 +64,16 @@ culvia-web --host 127.0.0.1 --port 8501
 - Accept model or vision-model suggestions when they are useful.
 - Filter and sort by recommendation, technical quality, LLM review, manual status, color label, and other review dimensions.
 - Export picked photos or CSV results for downstream editing and delivery workflows.
+
+## Privacy Model
+
+Culvia is local-first:
+
+- Local models, thumbnails, previews, SQLite data, uploads, and exports stay on your machine by default.
+- Photos are sent to an external service only when you explicitly enable an OpenAI-compatible vision review.
+- API keys should be entered through the app configuration flow or environment variables, not written into docs, tests, logs, SQLite plaintext fields, or Git.
+
+LLM configuration can come from the current session, persisted non-secret settings, or environment variables. The application should never require committing credentials.
 
 ## Typical Workflow
 
@@ -52,6 +88,14 @@ culvia-web --host 127.0.0.1 --port 8501
 9. Export selected photos or a CSV review table.
 
 Manual decisions remain the final culling layer. Model scores are guidance for sorting, comparison, and explanation; they should not replace your own edit.
+
+## Download And Release Notes
+
+- Python package: `pip install culvia`
+- Source checkout: clone this repository and run `make init`
+- Desktop packages: use the project GitHub Releases page when release assets are published
+- Release history: see [CHANGELOG.md](CHANGELOG.md)
+- Project summary: see [docs/en/project/project-summary.md](docs/en/project/project-summary.md)
 
 ## Development Setup
 
@@ -134,16 +178,6 @@ These workarounds are for early public builds. A future release lane can add Dev
 
 Desktop packaging is still evolving. For build instructions, see [docs/en/developer/desktop-build.md](docs/en/developer/desktop-build.md).
 
-## Privacy
-
-Culvia is local-first:
-
-- Local models, thumbnails, previews, SQLite data, uploads, and exports stay on your machine by default.
-- Photos are sent to an external service only when you explicitly enable an OpenAI-compatible vision review.
-- API keys should be entered through the app configuration flow or environment variables, not written into docs, tests, logs, SQLite plaintext fields, or Git.
-
-LLM configuration can come from the current session, persisted non-secret settings, or environment variables. The application should never require committing credentials.
-
 ## User Documentation
 
 - [Getting Started](docs/en/user/getting-started.md)
@@ -168,6 +202,13 @@ make test
 make js-check
 make lint
 ```
+
+## Community
+
+- Bugs and reproducible workflow problems: use the GitHub issue template.
+- Feature ideas: describe the photography workflow first, then the proposed product behavior.
+- Contributions: see [CONTRIBUTING.md](CONTRIBUTING.md).
+- Security or privacy-sensitive reports: see [SECURITY.md](SECURITY.md).
 
 Project rules for AI-assisted development and contributor handoff are in [AGENTS.md](AGENTS.md).
 

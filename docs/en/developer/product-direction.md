@@ -2,7 +2,7 @@
 
 Simplified Chinese: [../../zh-CN/developer/product-direction.md](../../zh-CN/developer/product-direction.md)
 
-This file records long-term product judgment for Culvia. It is not marketing copy; it is the decision basis for future iterations.
+This file records long-term product judgment for Culvia. It is not external overview copy; it is the decision basis for future iterations.
 
 ## Research Inputs
 
