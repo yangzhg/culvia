@@ -32,6 +32,10 @@ def fake_backend_path(temp: Path, target: str = WINDOWS_TARGET) -> Path:
 
 
 class WindowsZipReleaseTests(unittest.TestCase):
+    def test_product_version_requires_desktop_config_version(self) -> None:
+        with self.assertRaisesRegex(ValueError, "non-empty version"):
+            build_windows_zip.product_version({})
+
     def test_default_backend_binary_uses_windows_backend_naming_rule(self) -> None:
         path = build_windows_zip.default_backend_binary(WINDOWS_TARGET)
 

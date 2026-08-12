@@ -210,9 +210,9 @@ def summarize_scores(
         "scored": int(len(scores)),
         "showing": int(len(filtered_df)),
         "errors": int(len(errors)),
-        "best": score_text(None if scores.empty else float(scores.max())),
-        "average": score_text(None if scores.empty else float(scores.mean())),
-        "median": score_text(None if scores.empty else float(scores.median())),
+        "best": None if scores.empty else score_text(float(scores.max())),
+        "average": None if scores.empty else score_text(float(scores.mean())),
+        "median": None if scores.empty else score_text(float(scores.median())),
     }
 
 

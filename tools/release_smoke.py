@@ -47,6 +47,7 @@ INSTALLED_WEB_REQUIRED_FILES = (
     "export_result_data.js",
     "distribution_view.js",
     "viewer_inspector.js",
+    "update_panel.js",
     "app_config.js",
     "icons.js",
     "ui_helpers.js",

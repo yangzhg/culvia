@@ -40,7 +40,7 @@ rg -n "sk-[A-Za-z0-9]{12,}" --glob '!model_cache/**' --glob '!thumbnail_cache/**
 python tools/formal_gate.py
 python tools/formal_gate.py --skip-release-smoke
 python tools/formal_gate.py --build-sdist
-python tools/formal_gate.py --sdist-artifact dist/python/culvia-0.1.0.tar.gz
+python tools/formal_gate.py --sdist-artifact dist/python/culvia-0.1.1.tar.gz
 ```
 
 前端改动至少运行：
@@ -84,9 +84,19 @@ upload_cache/
 
 ## GitHub Release Workflow
 
-推送 `v<version>` tag 会触发 `.github/workflows/desktop-release.yml`。Tag workflow 会构建 full macOS arm64、macOS x64、Windows x64、Linux x64 桌面包，构建 Python wheel 和源码包，为发布资产生成 GitHub Artifact Attestations，上传已验证的 workflow artifacts，并创建或更新同名 GitHub Release。
+打 tag 前，先确认所有包清单的版本都与 Python canonical version 一致，并且预期 tag 与它完全匹配：
 
-需要手动验证时，可以在 GitHub Actions 手动运行同一 workflow，并关闭 `publish_release`。手动运行可收窄 `platform` 和 `profile`；打开 `publish_release` 时必须从 tag ref 运行，或传入已存在的 `release_tag`。
+```bash
+python tools/check_version_sync.py --tag v<version>
+```
+
+已发布的版本 tag 不得移动或复用，也不得用同一版本号覆盖成另一份构建。每一份不同的正式构建都必须提升版本号。
+
+推送 `v<version>` tag 会触发 `.github/workflows/desktop-release.yml`。其中 `release` profile 会构建 arm64 和 x64 的 macOS Full/Lite 包、x64 的 Windows Full/Lite 包，以及 Linux Lite x64 包。macOS Lite DMG 及其 sidecar 的 basename 会显式包含 `-lite`，publish job 会在上传前拒绝任何重复 basename。Linux Full 因超过 GitHub Release 单资产大小限制，仍不纳入正式发布矩阵。workflow 同时构建 Python wheel 和源码包，为发布资产生成 GitHub Artifact Attestations，上传已验证的 workflow artifacts，并先以草稿创建同名 GitHub Release，全部上传成功后再发布；指向同一个手工 `release_tag` 或 ref 的运行会串行排队。上传失败只会留下可在重试时替换的草稿。若 tag 与已同步的包版本不一致，或该 tag 已存在正式 Release，workflow 会直接拒绝发布。
+
+Lite 发布会从官方 GitHub Release 安装与桌面壳完全同版本的 Culvia wheel，第三方依赖仍由 pip 解析。因此 publish job 必须把对应的 `culvia-<version>-py3-none-any.whl` 与所有 Lite 桌面资产放进同一份 Release 草稿。source job 会把该 wheel 的 `desktop-runtime` extra 及全部解析依赖安装到全新 virtualenv，再检查服务版本、桌面壳 runtime contract、必需模块和 extra 依赖；这条自动门禁通过前不得发布 Release。
+
+需要手动验证时，可以在 GitHub Actions 手动运行同一 workflow，并关闭 `publish_release`。手动运行默认选择 `platform=all` 和 `profile=release`；未发布时可收窄任一输入。打开 `publish_release` 时必须保持 `platform=all` 和 `profile=release`，并且从 tag ref 运行或传入已存在的 `release_tag`；不完整的发布矩阵会被 workflow 拒绝。
 
 默认 macOS CI 线使用普通非严格 app/dmg 发布路径，因此可能产出 ad-hoc 或 Apple Development 签名的包。Developer ID 签名、公证和严格 Gatekeeper 验证仍由发布负责人显式执行。
 
@@ -189,10 +199,10 @@ python tools/build_windows_zip.py --check-plan --target x86_64-pc-windows-msvc -
 python tools/build_windows_zip.py --build --target x86_64-pc-windows-msvc --desktop-binary <culvia-desktop.exe> --backend-binary <culvia-server.exe> --json
 python tools/build_windows_zip.py --runtime-profile lite --check-plan --target x86_64-pc-windows-msvc --desktop-binary <culvia-desktop.exe> --json
 python tools/build_windows_zip.py --runtime-profile lite --build --target x86_64-pc-windows-msvc --desktop-binary <culvia-desktop.exe> --json
-python tools/check_portable_package_preflight.py --windows-zip dist/windows/culvia-0.1.0-windows-x86_64-pc-windows-msvc.zip --json
-python tools/check_portable_package_preflight.py --windows-lite-zip dist/windows-lite/culvia-0.1.0-windows-lite-x86_64-pc-windows-msvc.zip --json
-python tools/check_portable_package_runtime.py --windows-zip dist/windows/culvia-0.1.0-windows-x86_64-pc-windows-msvc.zip --exit-after-ms 20000 --json
-python tools/formal_gate.py --windows-zip-artifact dist/windows/culvia-0.1.0-windows-x86_64-pc-windows-msvc.zip --skip-release-smoke
+python tools/check_portable_package_preflight.py --windows-zip dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip --json
+python tools/check_portable_package_preflight.py --windows-lite-zip dist/windows-lite/culvia-0.1.1-windows-lite-x86_64-pc-windows-msvc.zip --json
+python tools/check_portable_package_runtime.py --windows-zip dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip --exit-after-ms 20000 --json
+python tools/formal_gate.py --windows-zip-artifact dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip --skip-release-smoke
 ```
 
 Linux：
@@ -210,10 +220,10 @@ python tools/build_linux_tgz.py --check-plan --target x86_64-unknown-linux-gnu -
 python tools/build_linux_tgz.py --build --target x86_64-unknown-linux-gnu --desktop-binary <culvia-desktop> --backend-binary <culvia-server> --json
 python tools/build_linux_tgz.py --runtime-profile lite --check-plan --target x86_64-unknown-linux-gnu --desktop-binary <culvia-desktop> --json
 python tools/build_linux_tgz.py --runtime-profile lite --build --target x86_64-unknown-linux-gnu --desktop-binary <culvia-desktop> --json
-python tools/check_portable_package_preflight.py --linux-tgz dist/linux/culvia-0.1.0-linux-x86_64-unknown-linux-gnu.tar.gz --json
-python tools/check_portable_package_preflight.py --linux-lite-tgz dist/linux-lite/culvia-0.1.0-linux-lite-x86_64-unknown-linux-gnu.tar.gz --json
-python tools/check_portable_package_runtime.py --linux-tgz dist/linux/culvia-0.1.0-linux-x86_64-unknown-linux-gnu.tar.gz --exit-after-ms 20000 --json
-python tools/formal_gate.py --linux-tgz-artifact dist/linux/culvia-0.1.0-linux-x86_64-unknown-linux-gnu.tar.gz --skip-release-smoke
+python tools/check_portable_package_preflight.py --linux-tgz dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz --json
+python tools/check_portable_package_preflight.py --linux-lite-tgz dist/linux-lite/culvia-0.1.1-linux-lite-x86_64-unknown-linux-gnu.tar.gz --json
+python tools/check_portable_package_runtime.py --linux-tgz dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz --exit-after-ms 20000 --json
+python tools/formal_gate.py --linux-tgz-artifact dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz --skip-release-smoke
 ```
 
 Full 包必须自包含 Python runtime 和 web data，不要求用户安装系统 Python。Lite 包有意不内置 backend 和 web data，默认使用应用自己管理的 virtualenv runtime，并在首次启动时需要 Python 3.11+。`tools/check_portable_package_preflight.py` 验证压缩包结构、路径安全、manifest、可执行文件类型和 forbidden runtime artifacts。`tools/check_portable_package_runtime.py` 必须在目标 OS runner 上验证 full 包 launcher、bundled backend 和 fixture workflow。

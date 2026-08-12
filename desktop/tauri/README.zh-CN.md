@@ -34,6 +34,7 @@
 - `productionBackendArgs`: 使用 `--port auto`、`--no-open` 和 `--print-json` 启动 supervisor
 - `readyEvent`: 桌面外壳读取包含 `event`、`baseUrl` 和 `healthUrl` 的 JSON 行
 - `runtimeProfiles`: `full` 使用内置 backend，`lite` 使用应用自己管理的 Python virtualenv，`auto` 在没有内置 backend 时回落到 `lite`
+- `versionReporting`: 桌面壳把自身版本和运行时形态传给 backend，供界面识别桌面壳与服务版本是否一致
 
 ## 构建方向
 
@@ -67,7 +68,11 @@ culvia-supervisor --host 127.0.0.1 --port 8501 --no-open --print-json
 
 `full` 生产包把 `culvia.server:main` 打包为 backend 二进制。Rust 外壳解析内置 backend，用 `--port auto --no-open --print-json` 启动它，从 stdout 解析 ready JSON，等待 `/health`，使用返回的 `baseUrl` 创建主窗口，并在应用退出时终止 backend 进程。full backend 不应要求用户额外安装系统 Python。
 
-`lite` 模式可以通过持久化 runtime 配置或 `CULVIA_DESKTOP_RUNTIME_MODE=lite` 启用。桌面壳会读取用户 runtime 目录下的 `runtime.json`，环境变量只作为开发 override。它会查找配置的 Python 或系统 Python 3.11+，在用户数据目录创建 Culvia 管理的 virtualenv，依赖缺失时安装配置的 package 或默认 `culvia[desktop-runtime]==<app version>`，再启动 `python -m culvia.server`。需要源码开发时可运行 `make runtime-configure CLI_ARGS="--mode lite --python <python>"` 和 `make runtime-ensure CLI_ARGS="--editable-source $PWD"`。
+无论 `full` 还是 `lite`，桌面壳都会为 backend 进程设置 `CULVIA_DESKTOP_APP=1`、`CULVIA_DESKTOP_SHELL_VERSION` 和 `CULVIA_DESKTOP_RUNTIME_PROFILE`。设置界面会把这些值与当前运行的 Python package 版本一起展示；若两者不一致，会明确提示，而不会只根据桌面壳版本判断整个应用已经更新。
+
+更新检查返回的发布链接只允许官方 `https://github.com/yangzhg/culvia/releases/tag/<tag>` 路径。桌面壳会用系统浏览器打开链接，本地工作台仍停留在 backend URL。
+
+`lite` 模式可以通过持久化 runtime 配置或 `CULVIA_DESKTOP_RUNTIME_MODE=lite` 启用。桌面壳会读取用户 runtime 目录下的 `runtime.json`，环境变量只作为开发 override。它会查找配置的 Python 或系统 Python 3.11+，在用户数据目录创建 Culvia 管理的 virtualenv，并要求依赖完整且满足当前 Desktop Lite runtime contract。默认托管 package 还必须与桌面壳版本一致；显式指定的环境变量/config package 若满足同一 contract，则允许使用不同的服务版本，以支持 editable 或 direct-URL 开发构建。允许自动安装时，桌面壳只会安装或升级同一份显式 package，未指定时使用官方 GitHub Release 中的同版本 wheel；禁用自动安装时则直接失败，不会启动不兼容的旧服务。需要源码开发时可运行 `make runtime-configure CLI_ARGS="--mode lite --python <python>"` 和 `make runtime-ensure CLI_ARGS="--editable-source $PWD"`。
 
 生产 backend 构建入口：
 
@@ -101,8 +106,8 @@ npm run windows:zip:build -- --target x86_64-pc-windows-msvc --desktop-binary sr
 构建 Windows/Linux 压缩包后，应对最终压缩包运行便携包预检，而不是检查 staging 目录：
 
 ```bash
-npm run windows:zip:preflight -- ../../dist/windows/culvia-0.1.0-windows-x86_64-pc-windows-msvc.zip
-npm run linux:tgz:preflight -- ../../dist/linux/culvia-0.1.0-linux-x86_64-unknown-linux-gnu.tar.gz
+npm run windows:zip:preflight -- ../../dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip
+npm run linux:tgz:preflight -- ../../dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 Windows/Linux runner 的权威流程位于 `../../tools/desktop_release_contract.py`，手动 GitHub Actions 入口是 `../../.github/workflows/desktop-release.yml`。工作流检查器是 `../../tools/check_desktop_release_workflow.py`；它限制上传路径只能是最终 `.zip` / `.tar.gz` 包，并拒绝 release bypass 或 secret 使用。

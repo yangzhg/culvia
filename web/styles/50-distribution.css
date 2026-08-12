@@ -109,7 +109,8 @@
   line-height: 1.16;
   text-overflow: clip;
   white-space: normal;
-  overflow-wrap: anywhere;
+  word-break: keep-all;
+  overflow-wrap: normal;
 }
 
 .distribution-lens-copy small {

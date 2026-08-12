@@ -63,6 +63,7 @@
       "resolve bundled backend path",
       "search runtime/backend target directories in packaged resources, portable package roots, environment overrides, and development paths",
       "spawn backend with --port random --no-open --print-json",
+      "pass the desktop marker, shell version, and runtime profile to the backend",
       "parse ready JSON from stdout",
       "wait for /health",
       "create the main window after backend readiness",
@@ -73,6 +74,18 @@
     ],
     "binaryRole": "start the local Starlette API and static web server",
     "mustNotRequireUserPython": true
+  },
+  "versionReporting": {
+    "status": "implemented",
+    "serviceSource": "running Python package version",
+    "shellVersionEnv": "CULVIA_DESKTOP_SHELL_VERSION",
+    "runtimeProfileEnv": "CULVIA_DESKTOP_RUNTIME_PROFILE",
+    "desktopMarkerEnv": "CULVIA_DESKTOP_APP",
+    "mismatchRule": "desktop shell and Python service versions are reported separately when they differ",
+    "updateChannel": "stable GitHub Releases",
+    "releaseLinkBehavior": "open validated official release-tag URLs in the system browser without navigating the workbench",
+    "automaticCheck": false,
+    "automaticInstall": false
   },
   "runtimeProfiles": {
     "status": "implemented",
@@ -102,9 +115,10 @@
         "pythonEnv": "CULVIA_RUNTIME_PYTHON",
         "packageEnv": "CULVIA_RUNTIME_PACKAGE",
         "skipInstallEnv": "CULVIA_RUNTIME_SKIP_INSTALL",
+        "runtimeContract": 1,
         "configCommand": "culvia runtime configure --mode lite --python <python> --venv <venv>",
         "defaultVenv": "user data dir/runtime/venv",
-        "dependencyRule": "detect modules with importlib.util.find_spec, create an app-managed venv when missing, and install culvia[desktop-runtime] into that venv"
+        "dependencyRule": "require complete modules and runtime contract 1; the default managed package installs the matching wheel from the official GitHub Release and must match the shell version, while explicit package overrides may use another version with the same contract"
       },
       "auto": {
         "role": "prefer bundled backend, fall back to lite when no bundled backend exists",

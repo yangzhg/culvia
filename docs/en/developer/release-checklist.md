@@ -40,7 +40,7 @@ Aggregated gate:
 python tools/formal_gate.py
 python tools/formal_gate.py --skip-release-smoke
 python tools/formal_gate.py --build-sdist
-python tools/formal_gate.py --sdist-artifact dist/python/culvia-0.1.0.tar.gz
+python tools/formal_gate.py --sdist-artifact dist/python/culvia-0.1.1.tar.gz
 ```
 
 For frontend changes, at least run:
@@ -84,9 +84,19 @@ upload_cache/
 
 ## GitHub Release Workflow
 
-Pushing a `v<version>` tag triggers `.github/workflows/desktop-release.yml`. The tag workflow builds full macOS arm64, macOS x64, Windows x64, and Linux x64 desktop packages, builds the Python wheel and source distribution, generates GitHub Artifact Attestations for published assets, uploads verified workflow artifacts, and creates or updates the matching GitHub Release.
+Before tagging, verify that every package manifest agrees with the canonical Python version and that the intended tag matches it exactly:
 
-For manual validation, run the same workflow from GitHub Actions with `publish_release` disabled. Manual runs can narrow `platform` and `profile`; enabling `publish_release` requires running on a tag ref or passing an existing `release_tag`.
+```bash
+python tools/check_version_sync.py --tag v<version>
+```
+
+Never move or reuse a published version tag, and never replace release assets with a different build under the same version. Bump the version for every distinct published build.
+
+Pushing a `v<version>` tag triggers `.github/workflows/desktop-release.yml`. Its `release` profile builds Full and Lite macOS packages for arm64 and x64, Full and Lite Windows packages for x64, and the Linux Lite x64 package. macOS Lite DMGs and their sidecars carry an explicit `-lite` basename, and the publish job rejects any duplicate asset basename before upload. Linux Full remains excluded because it exceeds the GitHub Release asset limit. The workflow also builds the Python wheel and source distribution, generates GitHub Artifact Attestations for published assets, uploads verified workflow artifacts, and creates the matching GitHub Release as a draft before publishing it. Runs targeting the same manual `release_tag` or ref are serialized. A failed upload leaves only a replaceable draft for a safe retry. The workflow rejects a tag that does not equal the synchronized package version, or a published Release that already exists for that tag.
+
+A Lite release installs its exact same-version Culvia wheel from the official GitHub Release, while resolving third-party dependencies through pip. The publish job must therefore include the matching `culvia-<version>-py3-none-any.whl` in the same draft as every Lite desktop asset. The source job enforces this release blocker by installing that wheel's `desktop-runtime` extra and all resolved dependencies into a fresh virtualenv, then checking the service version, shell runtime contract, required modules, and extra dependency before any release can be published.
+
+For manual validation, run the same workflow from GitHub Actions with `publish_release` disabled. Manual runs default to `platform=all` and `profile=release`; while publishing is disabled, they may narrow either input. Enabling `publish_release` requires the unchanged `platform=all` and `profile=release` selection, plus either a tag ref or an existing `release_tag`. The workflow rejects an incomplete publish matrix.
 
 The default macOS CI lane uses the normal non-strict app/dmg release path, so it may produce ad-hoc signed or Apple Development signed artifacts. Developer ID signing, notarization, and strict Gatekeeper validation remain explicit release-operator concerns.
 
@@ -189,10 +199,10 @@ python tools/build_windows_zip.py --check-plan --target x86_64-pc-windows-msvc -
 python tools/build_windows_zip.py --build --target x86_64-pc-windows-msvc --desktop-binary <culvia-desktop.exe> --backend-binary <culvia-server.exe> --json
 python tools/build_windows_zip.py --runtime-profile lite --check-plan --target x86_64-pc-windows-msvc --desktop-binary <culvia-desktop.exe> --json
 python tools/build_windows_zip.py --runtime-profile lite --build --target x86_64-pc-windows-msvc --desktop-binary <culvia-desktop.exe> --json
-python tools/check_portable_package_preflight.py --windows-zip dist/windows/culvia-0.1.0-windows-x86_64-pc-windows-msvc.zip --json
-python tools/check_portable_package_preflight.py --windows-lite-zip dist/windows-lite/culvia-0.1.0-windows-lite-x86_64-pc-windows-msvc.zip --json
-python tools/check_portable_package_runtime.py --windows-zip dist/windows/culvia-0.1.0-windows-x86_64-pc-windows-msvc.zip --exit-after-ms 20000 --json
-python tools/formal_gate.py --windows-zip-artifact dist/windows/culvia-0.1.0-windows-x86_64-pc-windows-msvc.zip --skip-release-smoke
+python tools/check_portable_package_preflight.py --windows-zip dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip --json
+python tools/check_portable_package_preflight.py --windows-lite-zip dist/windows-lite/culvia-0.1.1-windows-lite-x86_64-pc-windows-msvc.zip --json
+python tools/check_portable_package_runtime.py --windows-zip dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip --exit-after-ms 20000 --json
+python tools/formal_gate.py --windows-zip-artifact dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip --skip-release-smoke
 ```
 
 Linux:
@@ -210,10 +220,10 @@ python tools/build_linux_tgz.py --check-plan --target x86_64-unknown-linux-gnu -
 python tools/build_linux_tgz.py --build --target x86_64-unknown-linux-gnu --desktop-binary <culvia-desktop> --backend-binary <culvia-server> --json
 python tools/build_linux_tgz.py --runtime-profile lite --check-plan --target x86_64-unknown-linux-gnu --desktop-binary <culvia-desktop> --json
 python tools/build_linux_tgz.py --runtime-profile lite --build --target x86_64-unknown-linux-gnu --desktop-binary <culvia-desktop> --json
-python tools/check_portable_package_preflight.py --linux-tgz dist/linux/culvia-0.1.0-linux-x86_64-unknown-linux-gnu.tar.gz --json
-python tools/check_portable_package_preflight.py --linux-lite-tgz dist/linux-lite/culvia-0.1.0-linux-lite-x86_64-unknown-linux-gnu.tar.gz --json
-python tools/check_portable_package_runtime.py --linux-tgz dist/linux/culvia-0.1.0-linux-x86_64-unknown-linux-gnu.tar.gz --exit-after-ms 20000 --json
-python tools/formal_gate.py --linux-tgz-artifact dist/linux/culvia-0.1.0-linux-x86_64-unknown-linux-gnu.tar.gz --skip-release-smoke
+python tools/check_portable_package_preflight.py --linux-tgz dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz --json
+python tools/check_portable_package_preflight.py --linux-lite-tgz dist/linux-lite/culvia-0.1.1-linux-lite-x86_64-unknown-linux-gnu.tar.gz --json
+python tools/check_portable_package_runtime.py --linux-tgz dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz --exit-after-ms 20000 --json
+python tools/formal_gate.py --linux-tgz-artifact dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz --skip-release-smoke
 ```
 
 Full packages must contain their own Python runtime and web data; users should not need to install system Python. Lite packages intentionally do not bundle the backend or web data; they default to the app-managed virtualenv runtime and require Python 3.11+ on first launch. `tools/check_portable_package_preflight.py` verifies archive structure, path safety, manifest data, executable file types, and forbidden runtime artifacts. `tools/check_portable_package_runtime.py` must run on the target OS runner to verify full package launcher, bundled backend, and fixture workflow.

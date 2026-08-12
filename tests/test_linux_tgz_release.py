@@ -27,6 +27,10 @@ def fake_backend_path(temp: Path, target: str = LINUX_TARGET) -> Path:
 
 
 class LinuxTgzReleaseTests(unittest.TestCase):
+    def test_product_version_requires_desktop_config_version(self) -> None:
+        with self.assertRaisesRegex(ValueError, "non-empty version"):
+            build_linux_tgz.product_version({})
+
     def test_default_backend_binary_uses_backend_build_naming_rule(self) -> None:
         path = build_linux_tgz.default_backend_binary(LINUX_TARGET)
 

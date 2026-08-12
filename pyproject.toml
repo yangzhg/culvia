@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "culvia"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local-first photo curation, scoring, review, and delivery workbench for photographers."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -98,6 +98,7 @@ py-modules = ["culvia_app"]
   "web/batch_actions.js",
   "web/clipboard.js",
   "web/api_client.js",
+  "web/update_panel.js",
   "web/distribution_model.js",
   "web/distribution_view.js",
   "web/distribution_panel.js",

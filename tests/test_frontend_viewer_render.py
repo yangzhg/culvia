@@ -158,10 +158,11 @@ class FrontendViewerRenderTests(unittest.TestCase):
               "web/export_preflight.js", "web/export_preflight_state.js",
               "web/export_result_data.js", "web/export_result.js", "web/export_actions.js",
               "web/export_list.js", "web/batch_actions.js", "web/clipboard.js",
-              "web/api_client.js", "web/distribution_model.js", "web/app_config.js",
+              "web/api_client.js", "web/update_panel.js", "web/distribution_model.js", "web/app_config.js",
               "web/icons.js", "web/ui_helpers.js", "web/gallery_view.js",
               "web/distribution_view.js", "web/distribution_panel.js", "web/export_panel.js",
-              "web/llm_config_panel.js", "web/gallery_panel.js", "web/viewer_inspector.js",
+              "web/llm_config_panel.js", "web/gallery_panel.js", "web/viewer_panel.js",
+              "web/source_panel.js", "web/filter_panel.js", "web/viewer_inspector.js",
             ].forEach((file) => vm.runInContext(fs.readFileSync(file, "utf8"), context, {{ filename: file }}));
             let app = fs.readFileSync("web/app.js", "utf8").replace(/\\nrenderStaticIcons\\(\\);[\\s\\S]*$/, "\\n");
             app += `\\nappState = ${{JSON.stringify(state)}}; selectedIndex = 0; renderViewer();`;

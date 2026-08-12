@@ -9,15 +9,15 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, Output, Stdio},
     sync::mpsc,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
 use tauri::{
-    DragDropEvent, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
-    WindowEvent,
+    webview::NewWindowResponse, DragDropEvent, Manager, RunEvent, Url, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
 };
 
 const BACKEND_STEM: &str = "culvia-server";
@@ -28,6 +28,8 @@ const HEALTH_PATH: &str = "/health";
 const DESKTOP_DROP_EVENT: &str = "culvia-desktop-drop";
 const DESKTOP_BACKEND_PORT: &str = "random";
 const DESKTOP_APP_ENV: &str = "CULVIA_DESKTOP_APP";
+const DESKTOP_SHELL_VERSION_ENV: &str = "CULVIA_DESKTOP_SHELL_VERSION";
+const DESKTOP_RUNTIME_PROFILE_ENV: &str = "CULVIA_DESKTOP_RUNTIME_PROFILE";
 const RUNTIME_MODE_ENV: &str = "CULVIA_DESKTOP_RUNTIME_MODE";
 const DEFAULT_RUNTIME_MODE: Option<&str> = option_env!("CULVIA_DESKTOP_DEFAULT_RUNTIME_MODE");
 const RUNTIME_HOME_ENV: &str = "CULVIA_RUNTIME_HOME";
@@ -36,6 +38,7 @@ const RUNTIME_VENV_ENV: &str = "CULVIA_RUNTIME_VENV";
 const RUNTIME_PYTHON_ENV: &str = "CULVIA_RUNTIME_PYTHON";
 const RUNTIME_PACKAGE_ENV: &str = "CULVIA_RUNTIME_PACKAGE";
 const RUNTIME_SKIP_INSTALL_ENV: &str = "CULVIA_RUNTIME_SKIP_INSTALL";
+const EXPECTED_LITE_RUNTIME_CONTRACT: u32 = 1;
 const SMOKE_ENV: &str = "CULVIA_DESKTOP_SMOKE";
 const SMOKE_EXIT_AFTER_MS_ENV: &str = "CULVIA_DESKTOP_SMOKE_EXIT_AFTER_MS";
 const READY_TIMEOUT_SECS_ENV: &str = "CULVIA_DESKTOP_READY_TIMEOUT_SECS";
@@ -49,6 +52,7 @@ const DEFAULT_BACKEND_HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
 const DEFAULT_HEALTH_TIMEOUT: Duration = Duration::from_secs(35);
 const DEFAULT_FRONTEND_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const HEALTH_INTERVAL: Duration = Duration::from_millis(250);
+const LITE_RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const SPLASH_STEPS: u32 = 4;
 const SPLASH_HTML: &str = include_str!("../assets/splash.html");
 
@@ -78,6 +82,7 @@ const FRONTEND_READY_SCRIPT: &str = r##"
       "#mainScoreBtn",
       "#viewerView",
       "#modelOptions",
+      "#appVersionValue",
       ".view-tab[data-view='viewer']",
       ".view-tab[data-view='gallery']",
       ".view-tab[data-view='distribution']",
@@ -126,6 +131,13 @@ struct RuntimeConfigFile {
     venv: Option<String>,
     package: Option<String>,
     auto_install: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+struct LiteRuntimeStatus {
+    version: Option<String>,
+    contract_version: Option<u32>,
+    missing: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -713,48 +725,141 @@ fn create_lite_venv(base_python: &CommandSpec, venv: &Path) -> DesktopResult<()>
 }
 
 fn lite_package_install_args(config: &RuntimeConfigFile) -> Vec<String> {
-    let package = env::var(RUNTIME_PACKAGE_ENV)
-        .ok()
-        .or_else(|| config.package.clone())
-        .unwrap_or_else(|| format!("culvia[desktop-runtime]=={}", env!("CARGO_PKG_VERSION")));
-    package.split_whitespace().map(str::to_string).collect()
+    if let Some(package) = lite_custom_package(config) {
+        return package.split_whitespace().map(str::to_string).collect();
+    }
+    vec![lite_release_wheel_spec(env!("CARGO_PKG_VERSION"))]
 }
 
-fn lite_modules_missing(python: &Path) -> DesktopResult<Vec<String>> {
-    let probe = concat!(
-        "import importlib.util; ",
-        "culvia_spec = importlib.util.find_spec('culvia'); ",
-        "mods = ['culvia'] if culvia_spec is None else __import__('culvia.runtime_dependencies', fromlist=['REQUIRED_RUNTIME_MODULES']).REQUIRED_RUNTIME_MODULES; ",
-        "missing = [item for item in mods if importlib.util.find_spec(item) is None]; ",
-        "print('\\n'.join(missing)); ",
-        "raise SystemExit(1 if missing else 0)"
-    );
-    let output = Command::new(python).arg("-c").arg(probe).output()?;
-    let missing = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    if output.status.success() || !missing.is_empty() {
-        Ok(missing)
-    } else {
-        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(format!("Lite dependency check failed: {error}").into())
+fn lite_release_wheel_spec(version: &str) -> String {
+    format!(
+        "culvia[desktop-runtime] @ https://github.com/yangzhg/culvia/releases/download/v{version}/culvia-{version}-py3-none-any.whl"
+    )
+}
+
+fn lite_custom_package(config: &RuntimeConfigFile) -> Option<String> {
+    configured_lite_package(env::var(RUNTIME_PACKAGE_ENV).ok(), config)
+}
+
+fn configured_lite_package(
+    environment_package: Option<String>,
+    config: &RuntimeConfigFile,
+) -> Option<String> {
+    environment_package
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            config
+                .package
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+fn lite_runtime_status(python: &Path) -> DesktopResult<LiteRuntimeStatus> {
+    let probe = r#"
+import importlib
+import importlib.metadata
+import importlib.util
+import json
+
+culvia_spec = importlib.util.find_spec("culvia")
+if culvia_spec is None:
+    modules = ["culvia"]
+    version = None
+    contract_version = None
+else:
+    modules = __import__(
+        "culvia.runtime_dependencies",
+        fromlist=["REQUIRED_RUNTIME_MODULES"],
+    ).REQUIRED_RUNTIME_MODULES
+    try:
+        version = importlib.metadata.version("culvia")
+    except importlib.metadata.PackageNotFoundError:
+        version = getattr(__import__("culvia"), "__version__", None)
+    try:
+        contract_version = importlib.import_module(
+            "culvia.runtime_contract"
+        ).DESKTOP_LITE_CONTRACT
+    except (ImportError, AttributeError):
+        contract_version = None
+missing = [item for item in modules if importlib.util.find_spec(item) is None]
+print(json.dumps({
+    "version": version,
+    "contract_version": contract_version,
+    "missing": missing,
+}))
+"#;
+    let mut command = Command::new(python);
+    command.arg("-c").arg(probe);
+    let output = command_output_with_timeout(command, LITE_RUNTIME_PROBE_TIMEOUT)?;
+    if !output.status.success() {
+        return Err("Lite runtime check process failed.".into());
+    }
+    let status = serde_json::from_slice::<LiteRuntimeStatus>(&output.stdout)
+        .map_err(|error| format!("Lite runtime check did not return valid status: {error}"))?;
+    Ok(status)
+}
+
+fn command_output_with_timeout(mut command: Command, timeout: Duration) -> DesktopResult<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    let started = Instant::now();
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output().map_err(Into::into);
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Lite runtime check timed out.".into());
+        }
+        thread::sleep(Duration::from_millis(25));
     }
 }
 
-fn install_lite_dependencies(python: &Path, config: &RuntimeConfigFile) -> DesktopResult<()> {
-    let mut upgrade = Command::new(python);
-    upgrade
-        .args(["-m", "pip", "install", "-U", "pip"])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    run_status_command(upgrade, "Upgrade pip")?;
+fn lite_runtime_issues(
+    status: &LiteRuntimeStatus,
+    expected_version: &str,
+    managed: bool,
+) -> Vec<String> {
+    let mut issues = Vec::new();
+    if !status.missing.is_empty() {
+        issues.push(format!(
+            "missing dependencies: {}",
+            status.missing.join(", ")
+        ));
+    }
+    if status.contract_version != Some(EXPECTED_LITE_RUNTIME_CONTRACT) {
+        issues.push(format!(
+            "Culvia runtime contract {:?} does not match required contract {}",
+            status.contract_version, EXPECTED_LITE_RUNTIME_CONTRACT
+        ));
+    }
+    if managed {
+        match status
+            .version
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(version) if version != expected_version => issues.push(format!(
+                "Culvia service version {version} does not match desktop shell version {expected_version}"
+            )),
+            None => issues.push("Culvia service version could not be determined".to_string()),
+            _ => {}
+        }
+    }
+    issues
+}
 
+fn lite_install_allowed(config: &RuntimeConfigFile, skip_install: bool) -> bool {
+    !skip_install && config.auto_install != Some(false)
+}
+
+fn install_lite_dependencies(python: &Path, config: &RuntimeConfigFile) -> DesktopResult<()> {
     let mut install = Command::new(python);
     install
-        .args(["-m", "pip", "install"])
+        .args(["-m", "pip", "install", "--upgrade"])
         .args(lite_package_install_args(config))
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
@@ -775,24 +880,27 @@ fn ensure_lite_runtime(
     }
 
     set_status("Checking dependencies", 2, SPLASH_STEPS);
-    let missing = lite_modules_missing(&python)?;
-    if !missing.is_empty() {
-        if env::var(RUNTIME_SKIP_INSTALL_ENV).ok().as_deref() == Some("1")
-            || config.auto_install == Some(false)
-        {
+    let expected_version = env!("CARGO_PKG_VERSION");
+    let managed = lite_custom_package(config).is_none();
+    let status = lite_runtime_status(&python)?;
+    let issues = lite_runtime_issues(&status, expected_version, managed);
+    if !issues.is_empty() {
+        let skip_install = env::var(RUNTIME_SKIP_INSTALL_ENV).ok().as_deref() == Some("1");
+        if !lite_install_allowed(config, skip_install) {
             return Err(format!(
-                "Lite runtime is missing dependencies: {}",
-                missing.join(", ")
+                "Lite runtime is incompatible and automatic updates are disabled: {}",
+                issues.join("; ")
             )
             .into());
         }
-        set_status("Installing dependencies", 2, SPLASH_STEPS);
+        set_status("Installing or updating runtime", 2, SPLASH_STEPS);
         install_lite_dependencies(&python, config)?;
-        let remaining = lite_modules_missing(&python)?;
+        let updated = lite_runtime_status(&python)?;
+        let remaining = lite_runtime_issues(&updated, expected_version, managed);
         if !remaining.is_empty() {
             return Err(format!(
-                "Lite runtime dependencies are still incomplete: {}",
-                remaining.join(", ")
+                "Lite runtime is still incompatible after installation: {}",
+                remaining.join("; ")
             )
             .into());
         }
@@ -877,7 +985,7 @@ fn start_production_backend(
         .arg(backend_health_timeout)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
-    mark_desktop_backend_command(&mut command);
+    mark_desktop_backend_command(&mut command, "full");
     let mut child = command.spawn()?;
     set_status("Waiting for service", 3, SPLASH_STEPS);
     let ready = read_ready_event(&mut child, ready_timeout_from_env())?;
@@ -920,7 +1028,7 @@ fn start_lite_backend(
         .arg(backend_health_timeout)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
-    mark_desktop_backend_command(&mut command);
+    mark_desktop_backend_command(&mut command, "lite");
     let mut child = command.spawn()?;
     set_status("Waiting for service", 3, SPLASH_STEPS);
     let ready = read_ready_event(&mut child, ready_timeout_from_env())?;
@@ -940,8 +1048,11 @@ fn start_lite_backend(
     })
 }
 
-fn mark_desktop_backend_command(command: &mut Command) {
-    command.env(DESKTOP_APP_ENV, "1");
+fn mark_desktop_backend_command(command: &mut Command, runtime_profile: &str) {
+    command
+        .env(DESKTOP_APP_ENV, "1")
+        .env(DESKTOP_SHELL_VERSION_ENV, env!("CARGO_PKG_VERSION"))
+        .env(DESKTOP_RUNTIME_PROFILE_ENV, runtime_profile);
 }
 
 fn start_development_backend(
@@ -962,6 +1073,7 @@ fn start_development_backend(
 
 fn create_main_window(app: &tauri::AppHandle, base_url: &str) -> DesktopResult<WebviewWindow> {
     let url = Url::parse(base_url)?;
+    let backend_origin = url.clone();
     let mut config = app
         .config()
         .app
@@ -974,9 +1086,65 @@ fn create_main_window(app: &tauri::AppHandle, base_url: &str) -> DesktopResult<W
     config.url = WebviewUrl::External(url);
     config.visible = false;
     config.focus = false;
-    let window = WebviewWindowBuilder::from_config(app, &config)?.build()?;
+    let window = WebviewWindowBuilder::from_config(app, &config)?
+        .on_new_window(move |url, _features| {
+            if trusted_release_url(&url) && open_url_in_default_browser(&url) {
+                NewWindowResponse::Deny
+            } else if trusted_release_url(&url) || same_origin(&backend_origin, &url) {
+                NewWindowResponse::Allow
+            } else {
+                NewWindowResponse::Deny
+            }
+        })
+        .build()?;
     install_desktop_drop_bridge(&window);
     Ok(window)
+}
+
+fn same_origin(left: &Url, right: &Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.host_str() == right.host_str()
+        && left.port_or_known_default() == right.port_or_known_default()
+}
+
+fn trusted_release_url(url: &Url) -> bool {
+    let path = url.path().trim_end_matches('/');
+    let Some(tag) = path.strip_prefix("/yangzhg/culvia/releases/tag/") else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.host_str() == Some("github.com")
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && !tag.is_empty()
+        && !tag.contains('/')
+}
+
+fn open_url_in_default_browser(url: &Url) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return Command::new("open").arg(url.as_str()).spawn().is_ok();
+    }
+    #[cfg(windows)]
+    {
+        return Command::new("explorer").arg(url.as_str()).spawn().is_ok();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if Command::new("xdg-open").arg(url.as_str()).spawn().is_ok() {
+            return true;
+        }
+        return Command::new("gio")
+            .arg("open")
+            .arg(url.as_str())
+            .spawn()
+            .is_ok();
+    }
+    #[allow(unreachable_code)]
+    false
 }
 
 fn desktop_drop_script(paths: &[PathBuf]) -> String {
@@ -1246,6 +1414,7 @@ mod tests {
     fn frontend_ready_script_checks_core_workbench_dom() {
         assert!(FRONTEND_READY_SCRIPT.contains("#mainScoreBtn"));
         assert!(FRONTEND_READY_SCRIPT.contains("#viewerView"));
+        assert!(FRONTEND_READY_SCRIPT.contains("#appVersionValue"));
         assert!(FRONTEND_READY_SCRIPT.contains(".view-tab[data-view='export']"));
         assert!(FRONTEND_READY_SCRIPT.contains("window.CulviaI18n"));
     }
@@ -1322,7 +1491,68 @@ mod tests {
             lite_package_install_args(&config),
             vec!["culvia[desktop-runtime]==9.9.9"]
         );
+        assert_eq!(
+            configured_lite_package(Some("env-spec".to_string()), &config),
+            Some("env-spec".to_string())
+        );
         assert_eq!(config.auto_install, Some(false));
+    }
+
+    #[test]
+    fn managed_lite_runtime_uses_the_matching_official_release_wheel() {
+        let config = RuntimeConfigFile::default();
+        let version = env!("CARGO_PKG_VERSION");
+
+        assert_eq!(
+            lite_package_install_args(&config),
+            vec![format!(
+                "culvia[desktop-runtime] @ https://github.com/yangzhg/culvia/releases/download/v{version}/culvia-{version}-py3-none-any.whl"
+            )]
+        );
+    }
+
+    #[test]
+    fn lite_runtime_requires_dependencies_and_matching_service_version() {
+        let current = LiteRuntimeStatus {
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            contract_version: Some(EXPECTED_LITE_RUNTIME_CONTRACT),
+            missing: Vec::new(),
+        };
+        let outdated = LiteRuntimeStatus {
+            version: Some("0.0.1".to_string()),
+            contract_version: None,
+            missing: vec!["starlette".to_string()],
+        };
+
+        assert!(lite_runtime_issues(&current, env!("CARGO_PKG_VERSION"), true).is_empty());
+        let issues = lite_runtime_issues(&outdated, env!("CARGO_PKG_VERSION"), true);
+        assert!(issues[0].contains("starlette"));
+        assert!(issues[1].contains("required contract"));
+        assert!(issues[2].contains("0.0.1"));
+        assert!(issues[2].contains(env!("CARGO_PKG_VERSION")));
+        assert_eq!(
+            lite_runtime_issues(&outdated, env!("CARGO_PKG_VERSION"), false).len(),
+            2
+        );
+        let custom = LiteRuntimeStatus {
+            version: Some("9.9.9-dev".to_string()),
+            contract_version: Some(EXPECTED_LITE_RUNTIME_CONTRACT),
+            missing: Vec::new(),
+        };
+        assert!(lite_runtime_issues(&custom, env!("CARGO_PKG_VERSION"), false).is_empty());
+    }
+
+    #[test]
+    fn lite_install_respects_config_and_skip_switches() {
+        let default_config = RuntimeConfigFile::default();
+        let disabled_config = RuntimeConfigFile {
+            auto_install: Some(false),
+            ..RuntimeConfigFile::default()
+        };
+
+        assert!(lite_install_allowed(&default_config, false));
+        assert!(!lite_install_allowed(&default_config, true));
+        assert!(!lite_install_allowed(&disabled_config, false));
     }
 
     #[test]
@@ -1338,15 +1568,67 @@ mod tests {
     }
 
     #[test]
-    fn desktop_backend_marks_app_environment() {
+    fn desktop_backend_marks_app_version_and_runtime_environment() {
         let mut command = Command::new("culvia-server");
 
-        mark_desktop_backend_command(&mut command);
+        mark_desktop_backend_command(&mut command, "lite");
 
-        let has_desktop_marker = command.get_envs().any(|(key, value)| {
-            key == DESKTOP_APP_ENV && value.and_then(|v| v.to_str()) == Some("1")
-        });
-        assert!(has_desktop_marker);
+        let environment = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().to_string(),
+                    value
+                        .and_then(|item| item.to_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            environment.get(DESKTOP_APP_ENV).map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            environment
+                .get(DESKTOP_SHELL_VERSION_ENV)
+                .map(String::as_str),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(
+            environment
+                .get(DESKTOP_RUNTIME_PROFILE_ENV)
+                .map(String::as_str),
+            Some("lite")
+        );
+    }
+
+    #[test]
+    fn desktop_release_links_are_restricted_to_the_official_repository() {
+        let trusted = Url::parse("https://github.com/yangzhg/culvia/releases/tag/v0.2.0").unwrap();
+        let wrong_host =
+            Url::parse("https://example.com/yangzhg/culvia/releases/tag/v0.2.0").unwrap();
+        let credentialed =
+            Url::parse("https://secret@github.com/yangzhg/culvia/releases/tag/v0.2.0").unwrap();
+        let nested =
+            Url::parse("https://github.com/yangzhg/culvia/releases/tag/v0.2.0/asset").unwrap();
+
+        assert!(trusted_release_url(&trusted));
+        assert!(!trusted_release_url(&wrong_host));
+        assert!(!trusted_release_url(&credentialed));
+        assert!(!trusted_release_url(&nested));
+    }
+
+    #[test]
+    fn desktop_new_windows_only_allow_the_backend_origin() {
+        let backend = Url::parse("http://127.0.0.1:49152/").unwrap();
+        let preview = Url::parse("http://127.0.0.1:49152/api/photo/preview?id=1").unwrap();
+        let wrong_port = Url::parse("http://127.0.0.1:49153/api/photo/preview?id=1").unwrap();
+        let external = Url::parse("https://example.com/photo.jpg").unwrap();
+
+        assert!(same_origin(&backend, &preview));
+        assert!(!same_origin(&backend, &wrong_port));
+        assert!(!same_origin(&backend, &external));
     }
 
     #[test]

@@ -41,7 +41,10 @@ def read_desktop_config(config_path: Path = DESKTOP_CONFIG_PATH) -> dict[str, An
 
 
 def product_version(config: dict[str, Any]) -> str:
-    return str(config.get("version") or "0.1.0").strip() or "0.1.0"
+    version = str(config.get("version") or "").strip()
+    if not version:
+        raise ValueError("desktop config must define a non-empty version")
+    return version
 
 
 def product_name(config: dict[str, Any]) -> str:

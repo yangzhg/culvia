@@ -43,6 +43,7 @@ class WebRouteTests(unittest.TestCase):
                 ("/health", "health", ()),
                 ("/api/host-config", "host_config", ()),
                 ("/api/capabilities", "api_capabilities", ()),
+                ("/api/update/check", "api_update_check", ("POST",)),
                 ("/api/state", "api_state", ()),
                 ("/api/filter", "api_filter", ("POST",)),
                 ("/api/network", "api_network", ("POST",)),

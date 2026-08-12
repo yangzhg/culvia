@@ -82,7 +82,7 @@
     applyText(root, "[data-i18n-tooltip]", (element, value) => {
       element.dataset.uiTooltip = value;
       element.removeAttribute("title");
-      if (!element.getAttribute("aria-label")) {
+      if (!element.getAttribute("data-i18n-aria-label")) {
         element.setAttribute("aria-label", value);
       }
     });

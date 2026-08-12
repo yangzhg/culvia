@@ -87,7 +87,7 @@ culvia-supervisor --port auto --no-open --print-json
 Desktop runtime profiles:
 
 - `full`: release default. The desktop shell starts the bundled backend runtime and does not require user Python.
-- `lite`: the desktop shell finds Python 3.11+, creates an app-managed virtualenv, installs `culvia[desktop-runtime]` when dependencies are missing, then starts `python -m culvia.server`.
+- `lite`: the desktop shell finds Python 3.11+, creates an app-managed virtualenv, and probes required modules, the desktop runtime contract, and the running Culvia version before starting `python -m culvia.server`. The managed runtime repairs missing or incompatible installs from the exact same-version wheel on the official GitHub Release; an explicit package override is reused instead of silently falling back to the official wheel.
 - `auto`: prefer the bundled backend and fall back to `lite` when no bundled backend exists.
 - `dev`: use the development server at `http://127.0.0.1:8501`.
 

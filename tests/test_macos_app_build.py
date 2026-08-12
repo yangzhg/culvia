@@ -325,11 +325,15 @@ class MacosAppBuildTests(unittest.TestCase):
 
             self.assertTrue(payload["ok"], payload.get("evidenceManifestResult"))
             self.assertEqual(payload["runtimeProfile"], "lite")
+            self.assertEqual(Path(str(payload["dmg"])).name, "Culvia_0.1.0_aarch64-lite.dmg")
+            self.assertEqual(Path(str(payload["checksum"])).name, "Culvia_0.1.0_aarch64-lite.dmg.sha256")
             manifest_path = Path(str(payload["evidenceManifest"]))
+            self.assertEqual(manifest_path.name, "Culvia_0.1.0_aarch64-lite.dmg.evidence.json")
             self.assertTrue(manifest_path.is_file())
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             step_names = [step["name"] for step in manifest["steps"]]
             self.assertEqual(manifest["runtimeProfile"], "lite")
+            self.assertEqual(manifest["artifactName"], "Culvia_0.1.0_aarch64-lite.dmg")
             self.assertIn("build macos lite app and dmg", step_names)
             self.assertIn("write release checksum", step_names)
             self.assertNotIn("build macos backend", step_names)
@@ -341,9 +345,9 @@ class MacosAppBuildTests(unittest.TestCase):
             "steps": [],
             "outputDir": "/repo/dist/macos-lite",
             "app": "/repo/dist/macos-lite/Culvia.app",
-            "dmg": "/repo/dist/macos-lite/Culvia_0.1.0_aarch64.dmg",
-            "checksum": "/repo/dist/macos-lite/Culvia_0.1.0_aarch64.dmg.sha256",
-            "evidenceManifest": "/repo/dist/macos-lite/Culvia_0.1.0_aarch64.dmg.evidence.json",
+            "dmg": "/repo/dist/macos-lite/Culvia_0.1.0_aarch64-lite.dmg",
+            "checksum": "/repo/dist/macos-lite/Culvia_0.1.0_aarch64-lite.dmg.sha256",
+            "evidenceManifest": "/repo/dist/macos-lite/Culvia_0.1.0_aarch64-lite.dmg.evidence.json",
         }
         stdout = io.StringIO()
 
@@ -353,7 +357,7 @@ class MacosAppBuildTests(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("Artifacts:", output)
         self.assertIn("dist: /repo/dist/macos-lite", output)
-        self.assertIn("dmg: /repo/dist/macos-lite/Culvia_0.1.0_aarch64.dmg", output)
+        self.assertIn("dmg: /repo/dist/macos-lite/Culvia_0.1.0_aarch64-lite.dmg", output)
 
 
 if __name__ == "__main__":

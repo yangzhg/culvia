@@ -99,6 +99,11 @@ class StatePayloadBuilderTests(unittest.TestCase):
                 "fileIds": list(file_ids),
                 "markCount": len(mark_by_file_id),
             },
+            application_info=lambda: {
+                "version": "9.8.7",
+                "serviceVersion": "9.8.7",
+                "distribution": "python",
+            },
             local_capabilities=lambda: {"desktop": True},
             device_text=lambda: {"key": "device.genericCpu"},
             network_payload=lambda network: {"mode": network["mode"]},
@@ -119,6 +124,8 @@ class StatePayloadBuilderTests(unittest.TestCase):
         self.assertEqual(calls["insightFileIds"], ["b", "a"])
         self.assertEqual(payload["app"]["name"], "Test Studio")
         self.assertTrue(payload["app"]["heifAvailable"])
+        self.assertEqual(payload["app"]["version"], "9.8.7")
+        self.assertEqual(payload["app"]["distribution"], "python")
         self.assertEqual(payload["network"], {"mode": "direct"})
         self.assertEqual(payload["llm"], {"configured": True})
         self.assertEqual(payload["model"], {"network": "direct", "selected": ["normalized", "core"]})

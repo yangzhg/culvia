@@ -49,11 +49,13 @@ The backend build uses PyInstaller in onedir mode, bundles `web/` as `share/culv
 Desktop startup supports four runtime modes. Desktop users should rely on automatic setup or the persisted `runtime.json`; environment variables are developer and CI overrides.
 
 - `full`: default release mode. The desktop shell starts the bundled `culvia-server` runtime and does not require a user Python installation.
-- `lite`: the desktop shell uses a user-selected or discovered Python 3.11+ executable to create an app-managed virtualenv, installs Culvia into that virtualenv when dependencies are missing, then starts `python -m culvia.server`.
+- `lite`: the desktop shell uses a user-selected or discovered Python 3.11+ executable to create an app-managed virtualenv, repairs missing dependencies or an incompatible service, then starts `python -m culvia.server`.
 - `auto`: use the bundled backend when it exists; otherwise fall back to `lite`.
 - `dev`: use the existing development server at `http://127.0.0.1:8501`.
 
 In `full`, `lite`, and `auto`, the desktop shell starts the local backend on a random available localhost port and reads the final URL from the backend ready event. Only `dev` mode assumes port `8501`.
+
+For a production backend launch, the shell also sets `CULVIA_DESKTOP_APP=1`, `CULVIA_DESKTOP_SHELL_VERSION`, and `CULVIA_DESKTOP_RUNTIME_PROFILE`. The backend combines these values with the running Python package version for the About panel and manual update checks. Full packages and the default managed Lite runtime should report matching shell and service versions. An explicit Lite package override may report a different service version only when it implements the same runtime contract; the UI keeps both versions visible.
 
 Lite mode never installs dependencies into a global Python environment. It creates or repairs a virtualenv under the user data directory by default:
 
@@ -93,7 +95,7 @@ Useful developer overrides:
 export CULVIA_DESKTOP_RUNTIME_MODE=lite
 export CULVIA_RUNTIME_PYTHON=/opt/homebrew/bin/python3.11
 export CULVIA_RUNTIME_VENV="$HOME/Library/Application Support/Culvia/runtime/venv"
-export CULVIA_RUNTIME_PACKAGE='culvia[desktop-runtime]==0.1.0'
+export CULVIA_RUNTIME_PACKAGE='-e /path/to/culvia[desktop-runtime]'
 ```
 
 For source-checkout development, inspect or repair the same runtime with:
@@ -114,7 +116,7 @@ culvia runtime install --profile desktop-lite
 culvia runtime ensure --profile desktop-lite
 ```
 
-`doctor` checks Python, the virtualenv path, and required modules with `importlib.util.find_spec`; it does not import heavy model libraries. `ensure` creates the virtualenv if needed and installs missing dependencies unless `CULVIA_RUNTIME_SKIP_INSTALL=1` is set.
+`doctor` checks Python, the virtualenv path, required modules, service version, and the lightweight Desktop Lite runtime contract without importing heavy model libraries. `ensure` creates the virtualenv if needed and installs missing dependencies unless `CULVIA_RUNTIME_SKIP_INSTALL=1` is set. Desktop Lite startup requires the current runtime contract; its default managed package must also equal the shell version. An explicit package override may have a different version but must implement that contract. The shell upgrades only the selected package when permitted, then probes again; `CULVIA_RUNTIME_SKIP_INSTALL=1` or `autoInstall: false` turns incompatibility into a startup error instead of running an old backend.
 
 ## macOS App Package
 
@@ -138,7 +140,7 @@ Desktop shell and PyInstaller intermediates remain under `desktop/tauri/src-taur
 
 ## Desktop Lite Packages
 
-Lite packages ship only the desktop shell. They do not bundle the PyInstaller backend or copied Web assets. On first launch, the desktop shell uses Python 3.11+ to create or repair an app-managed virtualenv, installs the configured Culvia runtime package when dependencies are missing, and then starts `python -m culvia.server`.
+Lite packages ship only the desktop shell. They do not bundle the PyInstaller backend or copied Web assets. On launch, the desktop shell uses Python 3.11+ to create or repair an app-managed virtualenv, installs or upgrades the configured Culvia runtime package when dependencies or the runtime contract are incompatible, enforces a matching version for the default managed package, and then starts `python -m culvia.server`.
 
 Use the generic entrypoint for the current OS:
 
@@ -162,7 +164,9 @@ Expected Lite output:
 
 ```text
 dist/macos-lite/Culvia.app
-dist/macos-lite/Culvia_<version>_<arch>.dmg
+dist/macos-lite/Culvia_<version>_<arch>-lite.dmg
+dist/macos-lite/Culvia_<version>_<arch>-lite.dmg.sha256
+dist/macos-lite/Culvia_<version>_<arch>-lite.dmg.evidence.json
 dist/windows-lite/culvia-<version>-windows-lite-x86_64-pc-windows-msvc.zip
 dist/linux-lite/culvia-<version>-linux-lite-x86_64-unknown-linux-gnu.tar.gz
 ```

@@ -14,7 +14,7 @@ WORKFLOW_PATH = ".github/workflows/desktop-release.yml"
 CONTRACT_TOOL_PATH = "tools/desktop_release_contract.py"
 ALLOWED_ARTIFACT_PATHS = (
     "dist/macos/*.dmg",
-    "dist/macos-lite/*.dmg",
+    "dist/macos-lite/*-lite.dmg",
     "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip",
     "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip",
     "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz",
@@ -22,7 +22,7 @@ ALLOWED_ARTIFACT_PATHS = (
 )
 ALLOWED_CHECKSUM_PATHS = (
     "dist/macos/*.dmg.sha256",
-    "dist/macos-lite/*.dmg.sha256",
+    "dist/macos-lite/*-lite.dmg.sha256",
     "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.sha256",
     "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip.sha256",
     "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.sha256",
@@ -30,7 +30,7 @@ ALLOWED_CHECKSUM_PATHS = (
 )
 ALLOWED_EVIDENCE_PATHS = (
     "dist/macos/*.dmg.evidence.json",
-    "dist/macos-lite/*.dmg.evidence.json",
+    "dist/macos-lite/*-lite.dmg.evidence.json",
     "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.evidence.json",
     "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip.evidence.json",
     "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.evidence.json",
@@ -194,9 +194,29 @@ def forbidden_upload_path_values(paths: Sequence[str]) -> list[str]:
     return [path for path in paths if path in FORBIDDEN_UPLOAD_PATHS]
 
 
+def workflow_dispatch_input_block(workflow: str, name: str) -> str:
+    match = re.search(
+        rf"(?ms)^      {re.escape(name)}:\n.*?(?=^      [a-zA-Z_][a-zA-Z0-9_-]*:\n|^  push:\n)",
+        workflow,
+    )
+    return match.group(0) if match else ""
+
+
+def workflow_step_block(workflow: str, name: str) -> str:
+    match = re.search(
+        rf"(?ms)^      - name: {re.escape(name)}\n.*?(?=^      - name: |^  [a-zA-Z_][a-zA-Z0-9_-]*:\n|\Z)",
+        workflow,
+    )
+    return match.group(0) if match else ""
+
+
 def collect_checks(root: Path = ROOT) -> list[CheckResult]:
     workflow = read_optional(root, WORKFLOW_PATH)
     contract_tool = read_optional(root, CONTRACT_TOOL_PATH)
+    platform_input = workflow_dispatch_input_block(workflow, "platform")
+    profile_input = workflow_dispatch_input_block(workflow, "profile")
+    lite_runtime_step = workflow_step_block(workflow, "Verify clean Desktop Lite runtime wheel")
+    publish_step = workflow_step_block(workflow, "Publish assets to GitHub Release")
     upload_paths = upload_artifact_paths(workflow)
     artifact_paths = matrix_artifact_paths(workflow)
     checksum_paths = matrix_checksum_paths(workflow)
@@ -215,6 +235,13 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
             "workflow_dispatch and contents: read are required",
         ),
         check(
+            "workflow serializes runs by target release tag or ref",
+            "group: desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}"
+            in workflow
+            and "cancel-in-progress: false" in workflow,
+            "manual release_tag must take priority over ref_name and same-target runs must queue instead of canceling",
+        ),
+        check(
             "workflow targets real Windows and Linux runners",
             all(
                 text in workflow
@@ -228,12 +255,28 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
             "Windows and Linux matrix targets must be explicit",
         ),
         check(
-            "workflow release default avoids oversized Linux full asset",
-            "|| 'release'" in workflow
-            and 'if selected_profile == "release":' in workflow
-            and 'job["platform"] == "linux"' in workflow
-            and 'return job["profile"] == "lite"' in workflow,
-            "tag-push releases must default to Linux Lite because Linux full exceeds GitHub Release asset limits",
+            "workflow manual publish defaults to complete release selection",
+            "default: all" in platform_input
+            and "default: release" in profile_input
+            and "- release" in profile_input
+            and "|| 'release'" in workflow
+            and 'selected_profile = os.environ["INPUT_PROFILE"] or "release"' in workflow,
+            "manual runs must expose and default to platform=all with profile=release",
+        ),
+        check(
+            "workflow release profile selects complete supported matrix",
+            'if selected_profile == "release":' in workflow
+            and 'return job["profile"] == "lite" or job["platform"] in {"macos", "windows"}' in workflow,
+            "release must include macOS Full/Lite arm64/x64, Windows Full/Lite x64, and Linux Lite x64 while excluding Linux Full",
+        ),
+        check(
+            "workflow manual publish rejects incomplete release selection",
+            "manual_publish = (" in workflow
+            and 'event_name == "workflow_dispatch" and os.environ["INPUT_PUBLISH_RELEASE"].lower() == "true"'
+            in workflow
+            and 'if manual_publish and (selected_platform != "all" or selected_profile != "release"):' in workflow
+            and "publish_release requires platform=all and profile=release." in workflow,
+            "publish_release must reject manual runs unless platform=all and profile=release",
         ),
         check(
             "workflow installs required toolchains",
@@ -258,6 +301,22 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
             and "--check-plan --json" in workflow
             and "--run --json" in workflow,
             "workflow must call the local desktop release contract plan and run modes",
+        ),
+        check(
+            "workflow verifies a clean dependency-resolved Desktop Lite runtime wheel",
+            bool(lite_runtime_step)
+            and "python -m venv" in lite_runtime_step
+            and 'pip install "${runtime_wheels[0]}[desktop-runtime]"' in lite_runtime_step
+            and "-m pip check" in lite_runtime_step
+            and "-m culvia.runtime_manager doctor" in lite_runtime_step
+            and "--profile desktop-lite" in lite_runtime_step
+            and 'report.get("serviceVersion") != expected_version' in lite_runtime_step
+            and 'report.get("runtimeContract") != expected_contract' in lite_runtime_step
+            and 'report.get("profile", {}).get("required_modules") != expected_modules' in lite_runtime_step
+            and 'report.get("missingModules")' in lite_runtime_step
+            and "import keyring" in lite_runtime_step
+            and "--no-deps" not in lite_runtime_step,
+            "the source job must install the built wheel[desktop-runtime] with dependencies in a fresh venv and verify service version, shell runtime contract, required modules, and the extra dependency",
         ),
         check(
             "contract tool runs the real release chain",
@@ -306,7 +365,20 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
             and not forbidden_uploads
             and "actions/upload-artifact@v4" in workflow
             and "if-no-files-found: error" in workflow,
-            "upload-artifact must use matrix artifact/checksum/evidence paths and Python distribution paths, and matrix paths must be final zip/tar.gz plus .sha256 and .evidence.json allowlist entries",
+            "upload-artifact must use final archive/checksum/evidence allowlists, including an explicit -lite basename for staged macOS Lite DMGs and sidecars",
+        ),
+        check(
+            "workflow rejects duplicate release asset basenames before upload",
+            bool(publish_step)
+            and "from collections import Counter" in publish_step
+            and "basenames = [Path(path).name for path in sys.argv[1:]]" in publish_step
+            and "if count > 1" in publish_step
+            and "if duplicates:" in publish_step
+            and "Release asset basenames must be unique:" in publish_step
+            and 0
+            <= publish_step.find("Release asset basenames must be unique:")
+            < publish_step.find('gh release upload --repo "${GITHUB_REPOSITORY}"'),
+            "all downloaded assets must have unique basenames before gh release upload",
         ),
         check(
             "workflow generates GitHub artifact attestations",
@@ -324,17 +396,26 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
             "release packages, checksums, evidence manifests, wheels, and sdists must have GitHub Artifact Attestations",
         ),
         check(
-            "workflow publishes release with explicit repository",
+            "workflow enforces synchronized release tag",
+            workflow.count('python tools/check_version_sync.py --tag "${{ needs.select.outputs.release_ref }}"') >= 2,
+            "desktop and Python distribution jobs must reject a release tag that differs from synchronized package versions",
+        ),
+        check(
+            "workflow creates immutable release with explicit repository",
             all(
                 text in workflow
                 for text in (
-                    'gh release view --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}"',
-                    'gh release edit --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}"',
-                    'gh release create --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}"',
+                    'gh release view --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" --json isDraft',
+                    'gh release create --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" --verify-tag --draft',
+                    'gh release delete --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" --yes',
                     'gh release upload --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}"',
+                    'gh release edit --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" --draft=false',
                 )
-            ),
-            "publish job must pass --repo because it does not check out the git repository",
+            )
+            and "Published Release ${RELEASE_TAG} already exists; refusing to replace" in workflow
+            and 'expected_runtime_wheel="culvia-${release_version}-py3-none-any.whl"' in workflow
+            and "--clobber" not in workflow,
+            "publish job must pass --repo, require the matching Lite runtime wheel, replace only an incomplete draft on retry, reject an existing published release, and never clobber assets",
         ),
         check(
             "workflow avoids raw cache artifacts",

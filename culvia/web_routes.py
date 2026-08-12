@@ -24,6 +24,7 @@ class WebRouteHandlers:
     health: RouteEndpoint
     host_config: RouteEndpoint
     api_capabilities: RouteEndpoint
+    api_update_check: RouteEndpoint
     api_state: RouteEndpoint
     api_filter: RouteEndpoint
     api_network: RouteEndpoint
@@ -66,6 +67,7 @@ APP_ROUTE_SPECS: tuple[RouteSpec, ...] = (
     RouteSpec("/health", "health"),
     RouteSpec("/api/host-config", "host_config"),
     RouteSpec("/api/capabilities", "api_capabilities"),
+    RouteSpec("/api/update/check", "api_update_check", ("POST",)),
     RouteSpec("/api/state", "api_state"),
     RouteSpec("/api/filter", "api_filter", ("POST",)),
     RouteSpec("/api/network", "api_network", ("POST",)),

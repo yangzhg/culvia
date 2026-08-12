@@ -12,6 +12,7 @@ from PIL import Image
 from starlette.testclient import TestClient
 
 import culvia_app
+from culvia import __version__
 from culvia import scoring
 from culvia.app_state import AppStateStore, create_initial_state
 from culvia import curation as photo_curation
@@ -343,6 +344,9 @@ class ServerApiTests(unittest.TestCase):
             self.assertEqual(payload["source"]["folders"], [str(root.absolute())])
             self.assertEqual(payload["summary"]["scored"], 0)
             self.assertEqual(payload["summary"]["showing"], 2)
+            self.assertIsNone(payload["summary"]["best"])
+            self.assertIsNone(payload["summary"]["average"])
+            self.assertIsNone(payload["summary"]["median"])
             self.assertEqual(
                 sorted(photo["path"] for photo in payload["photos"]),
                 sorted([str(first.absolute()), str(second.absolute())]),
@@ -1197,6 +1201,53 @@ class ServerApiTests(unittest.TestCase):
         self.assertFalse(payload["revealInFileManager"])
         self.assertFalse(payload["nativeFilePreview"])
 
+    def test_update_check_returns_release_status_without_mutating_app_state(self) -> None:
+        expected = {
+            "status": "updateAvailable",
+            "updateAvailable": True,
+            "currentVersion": "0.1.0",
+            "latestVersion": "0.2.0",
+            "releaseUrl": "https://github.com/yangzhg/culvia/releases/tag/v0.2.0",
+        }
+        with patch.object(culvia_app.UPDATE_CHECKER, "check", return_value=expected) as check:
+            response = self._client.post("/api/update/check", json={})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), expected)
+        self.assertEqual(check.call_args.kwargs["network_mode"], "direct")
+        self.assertEqual(check.call_args.kwargs["app_info"]["version"], __version__)
+
+    def test_update_check_returns_stable_retryable_error(self) -> None:
+        error = culvia_app.UpdateCheckError(
+            "updateCheckRateLimited",
+            "GitHub rate-limited the update check.",
+            status_code=503,
+            retryable=True,
+        )
+        with patch.object(culvia_app.UPDATE_CHECKER, "check", side_effect=error):
+            response = self._client.post("/api/update/check", json={})
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["errorCode"], "updateCheckRateLimited")
+        self.assertTrue(response.json()["retryable"])
+
+    def test_update_check_rejects_cross_site_and_non_json_requests_without_network(self) -> None:
+        with patch.object(culvia_app.UPDATE_CHECKER, "check") as check:
+            get_response = self._client.get("/api/update/check")
+            form_response = self._client.post("/api/update/check", data={})
+            cross_site_response = self._client.post(
+                "/api/update/check",
+                json={},
+                headers={"Sec-Fetch-Site": "cross-site"},
+            )
+
+        self.assertEqual(get_response.status_code, 405)
+        self.assertEqual(form_response.status_code, 415)
+        self.assertEqual(cross_site_response.status_code, 403)
+        self.assertEqual(form_response.json()["errorCode"], "updateCheckRequestRejected")
+        self.assertEqual(cross_site_response.json()["errorCode"], "updateCheckRequestRejected")
+        check.assert_not_called()
+
     def test_state_payload_includes_capabilities(self) -> None:
         response = self._client.get("/api/state")
 
@@ -1207,6 +1258,10 @@ class ServerApiTests(unittest.TestCase):
         self.assertIn("nativeFolderPicker", capabilities)
         self.assertIn("revealInFileManager", capabilities)
         self.assertIn("nativeFilePreview", capabilities)
+        app_info = response.json()["app"]
+        self.assertEqual(app_info["version"], __version__)
+        self.assertEqual(app_info["serviceVersion"], __version__)
+        self.assertEqual(app_info["distribution"], "python")
 
     def test_native_folder_picker_has_predictable_unsupported_response(self) -> None:
         with (

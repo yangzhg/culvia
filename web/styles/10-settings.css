@@ -102,7 +102,8 @@
   overflow: visible;
   text-overflow: clip;
   white-space: normal;
-  overflow-wrap: anywhere;
+  word-break: keep-all;
+  overflow-wrap: normal;
   line-height: 1.15;
   font-size: 13px;
   font-weight: 800;
@@ -113,6 +114,8 @@
   overflow: hidden;
   color: var(--muted);
   text-overflow: ellipsis;
+  word-break: keep-all;
+  overflow-wrap: normal;
   font-size: 11px;
   font-weight: 650;
   line-height: 1.25;
@@ -362,6 +365,7 @@ body.is-danger-confirm-open {
 
 .settings-drawer .settings-panel,
 .settings-drawer .history-panel,
+.settings-drawer .about-panel,
 .settings-drawer .maintenance-panel {
   margin-top: 12px;
 }
@@ -377,6 +381,102 @@ body.is-danger-confirm-open {
 .settings-drawer .llm-config {
   margin: 0;
   background: transparent;
+}
+
+.about-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.about-facts > div {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid rgba(60, 60, 67, 0.09);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.about-facts dt {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 720;
+}
+
+.about-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.about-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-drawer .about-actions .button {
+  width: auto;
+  margin: 0;
+  min-height: 38px;
+}
+
+.about-actions .icon.is-spinning {
+  animation: update-check-spin 0.9s linear infinite;
+}
+
+.update-check-status,
+.about-note,
+.version-mismatch {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.update-check-status.is-ready {
+  color: var(--success);
+}
+
+.update-check-status.is-available {
+  color: var(--accent-strong);
+  font-weight: 760;
+}
+
+.update-check-status.is-error,
+.version-mismatch {
+  color: var(--danger);
+}
+
+.version-mismatch {
+  padding: 9px 10px;
+  border: 1px solid rgba(var(--reject-rgb), 0.18);
+  border-radius: 13px;
+  background: rgba(var(--reject-rgb), 0.08);
+}
+
+@keyframes update-check-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 620px) {
+  .about-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-drawer .about-actions .button {
+    width: 100%;
+  }
 }
 
 body.is-llm-confirm-open {
@@ -1195,3 +1295,5 @@ body.is-batch-confirm-open {
   color: var(--muted);
   font-size: 11px;
   font-weight: 620;
+  line-height: 1.45;
+}

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from culvia import __version__
+from culvia.runtime_contract import DESKTOP_LITE_CONTRACT
 from culvia.runtime_dependencies import REQUIRED_RUNTIME_MODULES
 from culvia.settings import PROJECT_ROOT, user_data_dir
 
@@ -24,6 +25,9 @@ RUNTIME_PACKAGE_ENV = "CULVIA_RUNTIME_PACKAGE"
 RUNTIME_PROFILE_ENV = "CULVIA_RUNTIME_PROFILE"
 RUNTIME_SKIP_INSTALL_ENV = "CULVIA_RUNTIME_SKIP_INSTALL"
 DEFAULT_PROFILE = "desktop-lite"
+GITHUB_RELEASE_WHEEL_TEMPLATE = (
+    "https://github.com/yangzhg/culvia/releases/download/v{version}/culvia-{version}-py3-none-any.whl"
+)
 
 
 @dataclass(frozen=True)
@@ -227,14 +231,39 @@ def module_status(python: Path, modules: Sequence[str]) -> dict[str, object]:
             "ok": False,
             "python": str(python),
             "missing": list(modules),
+            "serviceVersion": None,
+            "runtimeContract": None,
             "error": "virtualenv python is missing",
         }
-    probe = (
-        "import importlib.util, json, sys; "
-        "modules = sys.argv[1:]; "
-        "missing = [item for item in modules if importlib.util.find_spec(item) is None]; "
-        "print(json.dumps({'missing': missing, 'ok': not missing}))"
-    )
+    probe = """
+import importlib
+import importlib.metadata
+import importlib.util
+import json
+import sys
+
+modules = sys.argv[1:]
+missing = [item for item in modules if importlib.util.find_spec(item) is None]
+service_version = None
+runtime_contract = None
+if importlib.util.find_spec("culvia") is not None:
+    try:
+        service_version = importlib.metadata.version("culvia")
+    except importlib.metadata.PackageNotFoundError:
+        service_version = getattr(importlib.import_module("culvia"), "__version__", None)
+    try:
+        runtime_contract = importlib.import_module(
+            "culvia.runtime_contract"
+        ).DESKTOP_LITE_CONTRACT
+    except (ImportError, AttributeError):
+        pass
+print(json.dumps({
+    "missing": missing,
+    "ok": not missing,
+    "serviceVersion": service_version,
+    "runtimeContract": runtime_contract,
+}))
+"""
     result = subprocess.run(
         [str(python), "-c", probe, *modules],
         text=True,
@@ -271,7 +300,8 @@ def package_install_args(
         return shlex.split(configured)
     if (PROJECT_ROOT / "pyproject.toml").exists():
         return ["-e", f"{PROJECT_ROOT}{extra}"]
-    return [f"culvia{extra}=={__version__}"]
+    wheel_url = GITHUB_RELEASE_WHEEL_TEMPLATE.format(version=__version__)
+    return [f"culvia{extra} @ {wheel_url}"]
 
 
 def doctor_payload(
@@ -279,6 +309,7 @@ def doctor_payload(
     profile: RuntimeProfile,
     venv_path: Path,
     env: Mapping[str, str] | None = None,
+    custom_package: bool = False,
 ) -> dict[str, object]:
     env = env or os.environ
     config = load_runtime_config(env=env)
@@ -287,8 +318,15 @@ def doctor_payload(
     venv_info = inspect_python((str(venv_python),)) if venv_python.exists() else None
     modules = module_status(venv_python, profile.required_modules)
     missing = list(modules.get("missing") or [])
+    desktop_lite = profile.name == DEFAULT_PROFILE
+    configured_package = str(env.get(RUNTIME_PACKAGE_ENV) or config.package or "").strip()
+    allow_version_mismatch = custom_package or bool(configured_package)
+    service_version = str(modules.get("serviceVersion") or "").strip() or None
+    runtime_contract = modules.get("runtimeContract")
+    contract_ok = not desktop_lite or runtime_contract == DESKTOP_LITE_CONTRACT
+    version_ok = not desktop_lite or allow_version_mismatch or service_version == __version__
     return {
-        "ok": bool(venv_python.exists() and not missing),
+        "ok": bool(venv_python.exists() and not missing and contract_ok and version_ok),
         "profile": asdict(profile),
         "runtimeHome": str(runtime_home(env)),
         "runtimeConfigPath": str(runtime_config_path(env)),
@@ -300,6 +338,12 @@ def doctor_payload(
         "venvInfo": asdict(venv_info) if venv_info else None,
         "modules": modules,
         "missingModules": missing,
+        "serviceVersion": service_version,
+        "expectedServiceVersion": __version__ if desktop_lite and not allow_version_mismatch else None,
+        "runtimeContract": runtime_contract,
+        "expectedRuntimeContract": DESKTOP_LITE_CONTRACT if desktop_lite else None,
+        "runtimeCompatible": contract_ok and version_ok,
+        "customPackage": allow_version_mismatch,
         "installArgs": package_install_args(profile, env=env, config=config),
         "skipInstall": env.get(RUNTIME_SKIP_INSTALL_ENV) == "1" or not config.auto_install,
     }
@@ -308,7 +352,9 @@ def doctor_payload(
 def run_checked(command: Sequence[str], *, cwd: Path | None = None) -> None:
     result = subprocess.run(list(command), cwd=cwd, text=True, check=False)
     if result.returncode != 0:
-        raise RuntimeError(f"Command failed with exit code {result.returncode}: {' '.join(command)}")
+        safe_prefix = " ".join(str(item) for item in command[:4])
+        suffix = " …" if len(command) > 4 else ""
+        raise RuntimeError(f"Command failed with exit code {result.returncode}: {safe_prefix}{suffix}")
 
 
 def create_runtime(*, venv_path: Path, base_python: PythonInfo | None = None) -> dict[str, object]:
@@ -339,7 +385,7 @@ def install_runtime(
     if upgrade_pip:
         run_checked([str(python), "-m", "pip", "install", "-U", "pip"])
     install_args = package_install_args(profile, package=package, editable_source=editable_source)
-    run_checked([str(python), "-m", "pip", "install", *install_args])
+    run_checked([str(python), "-m", "pip", "install", "--upgrade", *install_args])
     return {
         "action": "install",
         "profile": profile.name,
@@ -360,11 +406,19 @@ def ensure_runtime(
 ) -> dict[str, object]:
     env = env or os.environ
     config = load_runtime_config(env=env)
+    custom_package = bool(
+        package or editable_source or str(env.get(RUNTIME_PACKAGE_ENV) or config.package or "").strip()
+    )
     actions: list[dict[str, object]] = []
     python = venv_python_path(venv_path)
     if not python.exists():
         actions.append(create_runtime(venv_path=venv_path))
-    status = doctor_payload(profile=profile, venv_path=venv_path, env=env)
+    status = doctor_payload(
+        profile=profile,
+        venv_path=venv_path,
+        env=env,
+        custom_package=custom_package,
+    )
     if status["ok"]:
         status["actions"] = actions
         return status
@@ -374,7 +428,12 @@ def ensure_runtime(
     actions.append(
         install_runtime(profile=profile, venv_path=venv_path, package=package, editable_source=editable_source)
     )
-    status = doctor_payload(profile=profile, venv_path=venv_path, env=env)
+    status = doctor_payload(
+        profile=profile,
+        venv_path=venv_path,
+        env=env,
+        custom_package=custom_package,
+    )
     status["actions"] = actions
     return status
 
@@ -439,6 +498,12 @@ def print_payload(payload: Mapping[str, object], *, as_json: bool) -> None:
     missing = payload.get("missingModules")
     if missing:
         print(f"missingModules: {', '.join(str(item) for item in missing)}")
+    if payload.get("runtimeCompatible") is False:
+        print(
+            "runtimeCompatibility: "
+            f"service={payload.get('serviceVersion') or 'unknown'}, "
+            f"contract={payload.get('runtimeContract') or 'missing'}"
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -165,6 +165,25 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(payload["average"], "7.0")
         self.assertEqual(payload["median"], "7.0")
 
+    def test_summary_payload_leaves_empty_scores_for_frontend_localization(self) -> None:
+        source = pd.DataFrame([{"file_id": "a"}])
+
+        def enrich(df: pd.DataFrame, _filters: object) -> pd.DataFrame:
+            return df.assign(recommendation_0_10=[None], error=[""])
+
+        payload = summarize_scores(
+            source,
+            source.iloc[0:0],
+            source.iloc[0:0],
+            {},
+            enrich_scores_for_display=enrich,
+        )
+
+        self.assertEqual(payload["scored"], 0)
+        self.assertIsNone(payload["best"])
+        self.assertIsNone(payload["average"])
+        self.assertIsNone(payload["median"])
+
     def test_technical_tags_are_short_and_actionable(self) -> None:
         tags = technical_tags({"sharpness": 4.8, "exposure": 4.9, "contrast": 7.4, "cleanliness": 4.7})
 

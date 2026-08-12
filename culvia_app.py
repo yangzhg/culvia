@@ -9,6 +9,7 @@ from typing import Any, Iterable
 import pandas as pd
 import requests
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 
@@ -170,6 +171,7 @@ from culvia.source_service import (
     load_source_cache_action,
 )
 from culvia.state_payload import StatePayloadDependencies, build_state_payload
+from culvia.update_service import UPDATE_CHECKER, UpdateCheckError, application_info
 from culvia.curation_service import (
     CurationServiceError,
     accept_targets_action,
@@ -786,6 +788,7 @@ STATE_PAYLOAD_DEPENDENCIES = StatePayloadDependencies(
     load_analysis_insights=load_analysis_insights,
     serialize_photo=serialize_photo,
     curation_summary=curation_summary,
+    application_info=application_info,
     local_capabilities=local_capabilities,
     device_text=device_text,
     network_payload=network_payload,
@@ -817,6 +820,47 @@ async def host_config(_: Request) -> JSONResponse:
 
 async def api_capabilities(_: Request) -> JSONResponse:
     return JSONResponse(local_capabilities())
+
+
+async def api_update_check(request: Request) -> JSONResponse:
+    content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
+    if content_type != "application/json" or request.headers.get("sec-fetch-site", "").lower() == "cross-site":
+        return api_error_response(
+            "updateCheckRequestRejected",
+            "Update checks require a same-origin JSON request.",
+            status_code=415 if content_type != "application/json" else 403,
+        )
+    try:
+        payload = await request.json()
+    except (TypeError, ValueError):
+        return api_error_response(
+            "updateCheckRequestRejected",
+            "Update checks require a valid JSON object.",
+            status_code=400,
+        )
+    if not isinstance(payload, dict):
+        return api_error_response(
+            "updateCheckRequestRejected",
+            "Update checks require a valid JSON object.",
+            status_code=400,
+        )
+    state_store = request_state_store(request)
+    with state_store.lock:
+        network_mode = normalize_network_mode(state_store.data["network"].get("mode"))
+    try:
+        payload = await run_in_threadpool(
+            UPDATE_CHECKER.check,
+            network_mode=network_mode,
+            app_info=application_info(),
+        )
+    except UpdateCheckError as exc:
+        return api_error_response(
+            exc.code,
+            str(exc),
+            status_code=exc.status_code,
+            retryable=exc.retryable,
+        )
+    return JSONResponse(payload)
 
 
 async def api_state(request: Request) -> JSONResponse:
@@ -1695,6 +1739,7 @@ def route_handlers() -> WebRouteHandlers:
         health=health,
         host_config=host_config,
         api_capabilities=api_capabilities,
+        api_update_check=api_update_check,
         api_state=api_state,
         api_filter=api_filter,
         api_network=api_network,

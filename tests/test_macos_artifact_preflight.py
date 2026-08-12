@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from typing import Sequence
 
+from culvia import __version__
 from tools import check_macos_artifact_preflight
 
 
@@ -40,7 +41,7 @@ def create_app_bundle(root: Path, *, name: str = "Culvia.app") -> Path:
             {
                 "CFBundleExecutable": "culvia-desktop",
                 "CFBundleIdentifier": "io.github.culvia.culvia",
-                "CFBundleShortVersionString": "0.1.0",
+                "CFBundleShortVersionString": __version__,
                 "CFBundlePackageType": "APPL",
             }
         )
@@ -49,7 +50,7 @@ def create_app_bundle(root: Path, *, name: str = "Culvia.app") -> Path:
 
 
 def create_dmg(root: Path) -> Path:
-    dmg = root / "dmg" / "Culvia_0.1.0_aarch64.dmg"
+    dmg = root / "dmg" / f"Culvia_{__version__}_aarch64.dmg"
     dmg.parent.mkdir(parents=True, exist_ok=True)
     dmg.write_bytes(b"not-a-real-dmg")
     return dmg

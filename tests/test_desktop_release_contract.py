@@ -218,20 +218,145 @@ class DesktopReleaseContractTests(unittest.TestCase):
             "workflow uploads only verified final archives, checksums, and evidence manifests", payload["failed"]
         )
 
-    def test_workflow_checker_rejects_release_default_linux_full(self) -> None:
+    def test_workflow_checker_rejects_macos_lite_dmg_without_lite_basename(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             copy_workflow_fixture(root)
             workflow = root / ".github/workflows/desktop-release.yml"
             workflow.write_text(
-                workflow.read_text(encoding="utf-8").replace("|| 'release'", "|| 'full'"),
+                workflow.read_text(encoding="utf-8").replace("dist/macos-lite/*-lite.dmg", "dist/macos-lite/*.dmg"),
                 encoding="utf-8",
             )
 
             payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
 
         self.assertFalse(payload["ok"])
-        self.assertIn("workflow release default avoids oversized Linux full asset", payload["failed"])
+        self.assertIn(
+            "workflow uploads only verified final archives, checksums, and evidence manifests", payload["failed"]
+        )
+
+    def test_workflow_checker_rejects_ref_only_release_concurrency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    "github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name",
+                    "github.ref_name",
+                ),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow serializes runs by target release tag or ref", payload["failed"])
+
+    def test_workflow_checker_rejects_canceling_same_target_release(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace("cancel-in-progress: false", "cancel-in-progress: true"),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow serializes runs by target release tag or ref", payload["failed"])
+
+    def test_workflow_checker_rejects_unsafe_manual_publish_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace("        default: release\n", "        default: full\n"),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow manual publish defaults to complete release selection", payload["failed"])
+
+    def test_workflow_checker_rejects_incomplete_release_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    'return job["profile"] == "lite" or job["platform"] in {"macos", "windows"}',
+                    'return job["profile"] == "lite"',
+                ),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow release profile selects complete supported matrix", payload["failed"])
+
+    def test_workflow_checker_rejects_linux_full_in_release_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    'return job["profile"] == "lite" or job["platform"] in {"macos", "windows"}',
+                    "return True",
+                ),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow release profile selects complete supported matrix", payload["failed"])
+
+    def test_workflow_checker_rejects_manual_publish_without_complete_matrix_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    'if manual_publish and (selected_platform != "all" or selected_profile != "release"):',
+                    'if manual_publish and selected_platform != "all":',
+                ),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow manual publish rejects incomplete release selection", payload["failed"])
+
+    def test_workflow_checker_rejects_lite_runtime_wheel_install_without_extra(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    'pip install "${runtime_wheels[0]}[desktop-runtime]"',
+                    'pip install "${runtime_wheels[0]}"',
+                ),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn(
+            "workflow verifies a clean dependency-resolved Desktop Lite runtime wheel",
+            payload["failed"],
+        )
 
     def test_workflow_checker_rejects_direct_upload_path_without_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -324,7 +449,58 @@ class DesktopReleaseContractTests(unittest.TestCase):
             payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
 
         self.assertFalse(payload["ok"])
-        self.assertIn("workflow publishes release with explicit repository", payload["failed"])
+        self.assertIn("workflow creates immutable release with explicit repository", payload["failed"])
+
+    def test_workflow_checker_rejects_mutable_release_uploads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    '"${RELEASE_TAG}" "${assets[@]}"',
+                    '"${RELEASE_TAG}" "${assets[@]}" --clobber',
+                ),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow creates immutable release with explicit repository", payload["failed"])
+
+    def test_workflow_checker_rejects_missing_duplicate_asset_basename_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace("if duplicates:", "if False:"),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow rejects duplicate release asset basenames before upload", payload["failed"])
+
+    def test_workflow_checker_rejects_missing_version_tag_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    'python tools/check_version_sync.py --tag "${{ needs.select.outputs.release_ref }}"',
+                    "python -c \"print('version check removed')\"",
+                ),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow enforces synchronized release tag", payload["failed"])
 
     def test_workflow_checker_rejects_raw_actions_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

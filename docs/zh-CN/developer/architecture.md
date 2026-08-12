@@ -83,7 +83,7 @@ flowchart LR
 桌面 runtime 模式：
 
 - `full`：默认发布模式。桌面壳启动内置 backend runtime，不要求用户安装 Python。
-- `lite`：桌面壳查找 Python 3.11+，创建应用自己管理的 virtualenv，在依赖缺失时安装 `culvia[desktop-runtime]`，然后启动 `python -m culvia.server`。
+- `lite`：桌面壳查找 Python 3.11+，创建应用自己管理的 virtualenv，并在启动 `python -m culvia.server` 前检查必需模块、桌面 runtime contract 与正在运行的 Culvia 版本。默认托管 runtime 若缺失或不兼容，会从官方 GitHub Release 安装桌面壳完全同版本的 wheel；若用户显式配置了 package override，只会继续使用该 override，不会静默回退到官方 wheel。
 - `auto`：优先使用内置 backend；找不到内置 backend 时回落到 `lite`。
 - `dev`：使用开发服务 `http://127.0.0.1:8501`。
 

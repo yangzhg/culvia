@@ -34,6 +34,7 @@ For that reason, the first desktop shell must load the local HTTP backend. Direc
 - `productionBackendArgs`: starts the supervisor with `--port auto`, `--no-open`, and `--print-json`
 - `readyEvent`: the desktop shell reads a JSON line with `event`, `baseUrl`, and `healthUrl`
 - `runtimeProfiles`: `full` uses the bundled backend, `lite` uses an app-managed Python virtualenv, and `auto` falls back to `lite` when no bundled backend exists
+- `versionReporting`: the shell passes its version and runtime profile to the backend so the UI can report shell/service mismatches
 
 ## Build Direction
 
@@ -67,7 +68,11 @@ Activate the project's Python environment before running npm scripts so `python3
 
 `full` production packages `culvia.server:main` as a backend binary. The Rust shell resolves the bundled backend, starts it with `--port auto --no-open --print-json`, parses ready JSON from stdout, waits for `/health`, creates the main window with the returned `baseUrl`, and terminates the backend process on app exit. The full backend must not require the user to install Python separately.
 
-`lite` mode can be selected through the persisted runtime config or `CULVIA_DESKTOP_RUNTIME_MODE=lite`. The desktop shell reads `runtime.json` from the user runtime directory, then applies environment variables only as developer overrides. It finds the configured Python or a system Python 3.11+, creates a Culvia-managed virtualenv under the user data directory, installs the configured package or the default `culvia[desktop-runtime]==<app version>` when dependencies are missing, then starts `python -m culvia.server`. For source-checkout development, use `make runtime-configure CLI_ARGS="--mode lite --python <python>"` and `make runtime-ensure CLI_ARGS="--editable-source $PWD"`.
+For both `full` and `lite`, the shell sets `CULVIA_DESKTOP_APP=1`, `CULVIA_DESKTOP_SHELL_VERSION`, and `CULVIA_DESKTOP_RUNTIME_PROFILE` on the backend process. The settings UI uses these values together with the running Python package version. A mismatch is reported explicitly instead of treating the shell alone as proof that the whole app is current.
+
+Release links emitted by the update check are restricted to the official `https://github.com/yangzhg/culvia/releases/tag/<tag>` path. The desktop shell opens them in the system browser and keeps the local workbench on its backend URL.
+
+`lite` mode can be selected through the persisted runtime config or `CULVIA_DESKTOP_RUNTIME_MODE=lite`. The desktop shell reads `runtime.json` from the user runtime directory, then applies environment variables only as developer overrides. It finds the configured Python or a system Python 3.11+, creates a Culvia-managed virtualenv under the user data directory, and requires complete dependencies plus the current Desktop Lite runtime contract. The default managed package must also match the shell version. An explicit environment/config package override may use a different service version when it implements the same contract, which keeps editable and direct-URL development builds usable. When allowed, the shell installs or upgrades that same configured package, or the matching wheel from the official GitHub Release, before starting `python -m culvia.server`; when automatic installation is disabled, it fails instead of starting an incompatible service. For source-checkout development, use `make runtime-configure CLI_ARGS="--mode lite --python <python>"` and `make runtime-ensure CLI_ARGS="--editable-source $PWD"`.
 
 The production backend build entry is:
 
@@ -101,8 +106,8 @@ npm run windows:zip:build -- --target x86_64-pc-windows-msvc --desktop-binary sr
 After building Windows/Linux archives, run portable package artifact preflight against the final archive, not the staging directory:
 
 ```bash
-npm run windows:zip:preflight -- ../../dist/windows/culvia-0.1.0-windows-x86_64-pc-windows-msvc.zip
-npm run linux:tgz:preflight -- ../../dist/linux/culvia-0.1.0-linux-x86_64-unknown-linux-gnu.tar.gz
+npm run windows:zip:preflight -- ../../dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip
+npm run linux:tgz:preflight -- ../../dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 The authoritative Windows/Linux runner sequence lives in `../../tools/desktop_release_contract.py`, and the manual GitHub Actions entrypoint is `../../.github/workflows/desktop-release.yml`. The workflow checker is `../../tools/check_desktop_release_workflow.py`; it keeps upload paths limited to final `.zip` / `.tar.gz` archives and rejects release bypass or secret usage in those jobs.

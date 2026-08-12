@@ -112,6 +112,8 @@ class FrontendI18nTests(unittest.TestCase):
     def test_high_visibility_dynamic_notices_use_i18n_resources(self) -> None:
         app_js = (WEB / "app.js").read_text(encoding="utf-8")
         app_js += (WEB / "llm_config_panel.js").read_text(encoding="utf-8")
+        app_js += (WEB / "source_panel.js").read_text(encoding="utf-8")
+        app_js += (WEB / "filter_panel.js").read_text(encoding="utf-8")
 
         for stale_literal in (
             'curationHistoryError = "暂时无法读取最近操作"',
@@ -200,6 +202,84 @@ class FrontendI18nTests(unittest.TestCase):
         self.assertEqual(output["zhStart"], "评分")
         self.assertEqual(output["title"], "Culvia")
         self.assertEqual(output["lang"], "zh-CN")
+
+    def test_language_switch_refreshes_tooltip_derived_accessible_names(self) -> None:
+        script = textwrap.dedent(
+            f"""
+            const fs = require("fs");
+            const vm = require("vm");
+            class FakeElement {{
+              constructor(attributes) {{
+                this.attributes = {{ ...attributes }};
+                this.dataset = {{}};
+              }}
+              getAttribute(name) {{ return this.attributes[name] ?? null; }}
+              hasAttribute(name) {{ return Object.hasOwn(this.attributes, name); }}
+              setAttribute(name, value) {{ this.attributes[name] = String(value); }}
+              removeAttribute(name) {{ delete this.attributes[name]; }}
+            }}
+            const tooltipOnly = new FakeElement({{
+              "data-i18n-tooltip": "views.viewer",
+              "aria-label": "stale label",
+            }});
+            const explicitAria = new FakeElement({{
+              "data-i18n-tooltip": "views.viewer",
+              "data-i18n-aria-label": "viewer.prev",
+              "aria-label": "stale label",
+            }});
+            const sandbox = {{
+              console,
+              navigator: {{ language: "zh-CN" }},
+              localStorage: {{ getItem: () => null, setItem: () => {{}} }},
+              CustomEvent: function CustomEvent(name, init) {{ return {{ name, detail: init.detail }}; }},
+              document: {{
+                title: "",
+                readyState: "loading",
+                documentElement: {{}},
+                addEventListener: () => {{}},
+                querySelector: () => null,
+                querySelectorAll: (selector) => {{
+                  if (selector === "[data-i18n-tooltip]") return [tooltipOnly, explicitAria];
+                  if (selector === "[data-i18n-aria-label]") return [explicitAria];
+                  return [];
+                }},
+              }},
+              window: {{
+                addEventListener: () => {{}},
+                dispatchEvent: () => {{}},
+              }},
+            }};
+            vm.createContext(sandbox);
+            {load_locale_scripts_js()}
+            vm.runInContext(fs.readFileSync({json.dumps(str(WEB / "i18n_messages.js"))}, "utf8"), sandbox);
+            vm.runInContext(fs.readFileSync({json.dumps(str(WEB / "i18n.js"))}, "utf8"), sandbox);
+            const api = sandbox.window.CulviaI18n;
+            api.apply();
+            const zh = {{
+              tooltipOnly: tooltipOnly.getAttribute("aria-label"),
+              explicitAria: explicitAria.getAttribute("aria-label"),
+            }};
+            api.setLanguage("en");
+            console.log(JSON.stringify({{
+              zh,
+              en: {{
+                tooltipOnly: tooltipOnly.getAttribute("aria-label"),
+                explicitAria: explicitAria.getAttribute("aria-label"),
+                tooltip: explicitAria.dataset.uiTooltip,
+              }},
+            }}));
+            """
+        )
+
+        result = subprocess.run(["node", "-e", script], text=True, capture_output=True, check=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["zh"], {"tooltipOnly": "逐张审看", "explicitAria": "上一张"})
+        self.assertEqual(
+            output["en"],
+            {"tooltipOnly": "Review", "explicitAria": "Previous photo", "tooltip": "Review"},
+        )
 
     def test_language_messages_are_resource_driven(self) -> None:
         messages = load_i18n_messages()

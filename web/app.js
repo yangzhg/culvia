@@ -948,10 +948,11 @@ function renderStats(summary) {
 function setStatValue(selector, value) {
   const el = $(selector);
   if (!el) return;
-  el.textContent = value || t("stats.empty");
-  el.classList.toggle("is-empty", !value);
+  const empty = !value || value === "暂无";
+  el.textContent = empty ? t("stats.empty") : value;
+  el.classList.toggle("is-empty", empty);
   // applyI18n() would otherwise overwrite real values with the empty placeholder.
-  if (value) el.removeAttribute("data-i18n");
+  if (!empty) el.removeAttribute("data-i18n");
   else el.setAttribute("data-i18n", "stats.empty");
 }
 
@@ -1167,6 +1168,14 @@ const exportPanel = window.CulviaExportPanel.create({
   getActiveView: () => activeView,
 });
 
+const updatePanel = window.CulviaUpdatePanel.create({
+  $,
+  t,
+  postJson,
+  errorMessage,
+  getAppState: () => appState,
+});
+
 function renderExportList() {
   return exportPanel.renderExportList();
 }
@@ -1196,6 +1205,7 @@ function renderControls() {
   $("#devicePill").innerHTML = `${iconMarkup("cpu")}${escapeHtml(appState.app.device)}`;
   sourcePanel.renderControls();
   renderLlmConfig();
+  updatePanel.render();
   filterPanel.renderControls();
   setNetworkMode(appState.network?.mode || "direct", false);
   renderModelOptions();
@@ -2095,6 +2105,7 @@ function bindEvents() {
   sourcePanel.bindEvents();
   filterPanel.bindEvents();
   viewerPanel.bindEvents();
+  updatePanel.bindEvents();
 
   $$("[data-network]").forEach((button) => button.addEventListener("click", () => setNetworkMode(button.dataset.network)));
   $$(".view-tab").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));

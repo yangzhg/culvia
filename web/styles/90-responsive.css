@@ -32,6 +32,10 @@
     width: 100%;
   }
 
+  .export-result-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .topbar {
     align-items: stretch;
     flex-direction: column;
@@ -144,6 +148,11 @@
 
   .app-shell.is-focus-mode .sidebar-toggle {
     margin-left: 0;
+  }
+
+  .command-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -544,6 +553,23 @@
   }
 }
 
+@media (max-width: 620px) {
+  .settings-drawer {
+    left: 8px;
+    width: auto;
+  }
+
+  .llm-model-picker,
+  .llm-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .llm-model-picker .icon-button {
+    justify-self: stretch;
+    width: 100%;
+  }
+}
+
 @media (max-width: 560px) {
   .viewer-stage {
     --viewer-image-height: min(54dvh, 460px);
@@ -580,19 +606,6 @@
 
   .rating-tooltip::after {
     right: 22px;
-  }
-
-  .llm-model-picker {
-    grid-template-columns: 1fr;
-  }
-
-  .llm-model-picker .icon-button {
-    justify-self: stretch;
-    width: 100%;
-  }
-
-  .llm-actions {
-    grid-template-columns: 1fr;
   }
 
   .distribution-view-layout {

@@ -6,13 +6,13 @@
     <title>Culvia</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/styles/00-foundation.css" />
-    <link rel="stylesheet" href="/static/styles/10-settings.css" />
-    <link rel="stylesheet" href="/static/styles/20-workbench.css?v=20260609-source-list" />
+    <link rel="stylesheet" href="/static/styles/10-settings.css?v=20260812-width-audit" />
+    <link rel="stylesheet" href="/static/styles/20-workbench.css?v=20260812-width-audit" />
     <link rel="stylesheet" href="/static/styles/30-viewer.css?v=20260609-thumb-manual-badge" />
     <link rel="stylesheet" href="/static/styles/40-gallery.css?v=20260609-viewer-details-layout" />
-    <link rel="stylesheet" href="/static/styles/50-distribution.css" />
-    <link rel="stylesheet" href="/static/styles/60-export.css" />
-    <link rel="stylesheet" href="/static/styles/90-responsive.css?v=20260609-viewer-details-tall" />
+    <link rel="stylesheet" href="/static/styles/50-distribution.css?v=20260812-width-audit" />
+    <link rel="stylesheet" href="/static/styles/60-export.css?v=20260812-width-audit" />
+    <link rel="stylesheet" href="/static/styles/90-responsive.css?v=20260812-width-audit" />
   </head>
   <body>
     <div class="app-shell">
@@ -668,6 +668,45 @@
             </div>
           </section>
 
+          <section class="drawer-section about-panel" aria-labelledby="aboutCulviaTitle">
+            <div class="drawer-section-head">
+              <span class="drawer-section-icon" data-icon="circleHelp" aria-hidden="true"></span>
+              <div>
+                <strong id="aboutCulviaTitle" data-i18n="about.title"></strong>
+                <small data-i18n="about.copy"></small>
+              </div>
+            </div>
+            <dl class="about-facts">
+              <div>
+                <dt data-i18n="about.currentVersion"></dt>
+                <dd id="appVersionValue"></dd>
+              </div>
+              <div>
+                <dt data-i18n="about.runtime"></dt>
+                <dd id="appRuntimeValue"></dd>
+              </div>
+              <div>
+                <dt data-i18n="about.platform"></dt>
+                <dd id="appPlatformValue"></dd>
+              </div>
+              <div id="serviceVersionFact" class="is-hidden">
+                <dt data-i18n="about.serviceVersion"></dt>
+                <dd id="serviceVersionValue"></dd>
+              </div>
+            </dl>
+            <p id="versionMismatchNotice" class="version-mismatch is-hidden" role="status"></p>
+            <div class="about-actions">
+              <button id="checkUpdateBtn" class="button ghost" type="button" aria-describedby="updateCheckStatus">
+                <span class="icon" data-icon="refreshCw"></span><span id="checkUpdateLabel" data-i18n="update.check"></span>
+              </button>
+              <a id="openReleaseLink" class="button secondary is-hidden" target="_blank" rel="noopener noreferrer">
+                <span class="icon" data-icon="externalLink"></span><span data-i18n="update.openRelease"></span>
+              </a>
+            </div>
+            <p id="updateCheckStatus" class="update-check-status" role="status" aria-live="polite" data-i18n="update.idle"></p>
+            <p class="about-note" data-i18n="update.note"></p>
+          </section>
+
           <section class="drawer-section maintenance-panel" data-i18n-aria-label="maintenance.aria">
             <div class="drawer-section-head">
               <span class="drawer-section-icon" data-icon="hardDrive" aria-hidden="true"></span>
@@ -707,6 +746,6 @@
       </section>
     </div>
 
-    <script type="module" src="/static/main.js"></script>
+    <script type="module" src="/static/main.js?v=20260812-width-audit"></script>
   </body>
 </html>

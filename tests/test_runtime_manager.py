@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from culvia import runtime_manager
+from culvia.runtime_contract import DESKTOP_LITE_CONTRACT
 
 
 class RuntimeManagerTests(unittest.TestCase):
@@ -95,6 +97,16 @@ class RuntimeManagerTests(unittest.TestCase):
             ["-e", "/repo/culvia[desktop-runtime]"],
         )
 
+    def test_installed_lite_runtime_uses_matching_official_release_wheel(self) -> None:
+        profile = runtime_manager.profile_by_name("desktop-lite")
+        with tempfile.TemporaryDirectory() as tmp, patch.object(runtime_manager, "PROJECT_ROOT", Path(tmp)):
+            args = runtime_manager.package_install_args(profile, env={}, config=runtime_manager.RuntimeConfig())
+
+        self.assertEqual(len(args), 1)
+        self.assertIn(f"/releases/download/v{runtime_manager.__version__}/", args[0])
+        self.assertTrue(args[0].endswith(f"/culvia-{runtime_manager.__version__}-py3-none-any.whl"))
+        self.assertTrue(args[0].startswith("culvia[desktop-runtime] @ https://github.com/yangzhg/culvia/"))
+
     def test_module_status_reports_missing_modules_without_importing_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             python = Path(tmp) / "python"
@@ -133,6 +145,57 @@ class RuntimeManagerTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["missingModules"], ["culvia"])
         self.assertEqual(payload["profile"]["name"], "desktop-lite")
+
+    def test_doctor_requires_lite_contract_but_allows_custom_build_version(self) -> None:
+        profile = runtime_manager.profile_by_name("desktop-lite")
+        with tempfile.TemporaryDirectory() as tmp:
+            venv = Path(tmp) / "venv"
+            python = runtime_manager.venv_python_path(venv)
+            python.parent.mkdir(parents=True)
+            python.touch()
+            with (
+                patch("culvia.runtime_manager.find_base_python") as find_base,
+                patch("culvia.runtime_manager.inspect_python") as inspect_python,
+                patch("culvia.runtime_manager.module_status") as module_status,
+            ):
+                find_base.return_value = runtime_manager.PythonInfo(("python3.11",), None, "3.11.9", True)
+                inspect_python.return_value = runtime_manager.PythonInfo((str(python),), str(python), "3.11.9", True)
+                module_status.return_value = {
+                    "ok": True,
+                    "python": str(python),
+                    "missing": [],
+                    "serviceVersion": "9.9.9-dev",
+                    "runtimeContract": DESKTOP_LITE_CONTRACT,
+                }
+
+                managed = runtime_manager.doctor_payload(profile=profile, venv_path=venv, env={})
+                custom = runtime_manager.doctor_payload(
+                    profile=profile,
+                    venv_path=venv,
+                    env={},
+                    custom_package=True,
+                )
+                module_status.return_value["runtimeContract"] = None
+                incompatible = runtime_manager.doctor_payload(
+                    profile=profile,
+                    venv_path=venv,
+                    env={},
+                    custom_package=True,
+                )
+
+        self.assertFalse(managed["ok"])
+        self.assertTrue(custom["ok"])
+        self.assertFalse(incompatible["ok"])
+
+    def test_python_rust_and_desktop_contract_versions_are_synchronized(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        rust = (root / "desktop/tauri/src-tauri/src/main.rs").read_text(encoding="utf-8")
+        contract = json.loads((root / "desktop/tauri/desktop-shell.contract.json").read_text(encoding="utf-8"))
+        match = re.search(r"EXPECTED_LITE_RUNTIME_CONTRACT: u32 = (\d+);", rust)
+
+        self.assertIsNotNone(match)
+        self.assertEqual(int(match.group(1)), DESKTOP_LITE_CONTRACT)
+        self.assertEqual(contract["runtimeProfiles"]["modes"]["lite"]["runtimeContract"], DESKTOP_LITE_CONTRACT)
 
     def test_cli_runtime_subcommand_dispatches_from_culvia_cli(self) -> None:
         from culvia import cli

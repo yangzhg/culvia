@@ -49,9 +49,11 @@ Backend 构建使用 PyInstaller onedir 模式，把 `web/` 作为 `share/culvia
 桌面启动支持四种模式。桌面用户应依赖自动初始化或持久化的 `runtime.json`；环境变量只作为开发、CI 和故障排查 override。
 
 - `full`：默认发布模式。桌面壳启动内置 `culvia-server` runtime，不要求用户安装 Python。
-- `lite`：桌面壳使用用户指定或自动发现的 Python 3.11+，创建应用自己管理的 virtualenv，依赖缺失时把 Culvia 安装到该 virtualenv，然后启动 `python -m culvia.server`。
+- `lite`：桌面壳使用用户指定或自动发现的 Python 3.11+，创建应用自己管理的 virtualenv，修复缺失依赖或不兼容服务，然后启动 `python -m culvia.server`。
 - `auto`：优先使用内置 backend；找不到内置 backend 时回落到 `lite`。
 - `dev`：使用已有开发服务 `http://127.0.0.1:8501`。
+
+生产环境启动 backend 时，桌面壳还会设置 `CULVIA_DESKTOP_APP=1`、`CULVIA_DESKTOP_SHELL_VERSION` 和 `CULVIA_DESKTOP_RUNTIME_PROFILE`。backend 会把这些值与当前运行的 Python package 版本合并，用于“关于”区域和手动检查更新。Full 包和默认托管 Lite runtime 的桌面壳与服务版本应一致；显式指定的 Lite package 只有满足同一 runtime contract 时才允许使用不同服务版本，界面会分别展示两个版本。
 
 Lite 模式不会把依赖安装到全局 Python。默认 virtualenv 位于用户数据目录：
 
@@ -91,7 +93,7 @@ culvia runtime reset-config
 export CULVIA_DESKTOP_RUNTIME_MODE=lite
 export CULVIA_RUNTIME_PYTHON=/opt/homebrew/bin/python3.11
 export CULVIA_RUNTIME_VENV="$HOME/Library/Application Support/Culvia/runtime/venv"
-export CULVIA_RUNTIME_PACKAGE='culvia[desktop-runtime]==0.1.0'
+export CULVIA_RUNTIME_PACKAGE='-e /path/to/culvia[desktop-runtime]'
 ```
 
 源码开发时可以用同一套 runtime 命令检查或修复环境：
@@ -112,7 +114,7 @@ culvia runtime install --profile desktop-lite
 culvia runtime ensure --profile desktop-lite
 ```
 
-`doctor` 使用 `importlib.util.find_spec` 检查 Python、virtualenv 路径和依赖模块，不会真正导入较重的模型库。`ensure` 会在需要时创建 virtualenv，并在缺少依赖时安装；设置 `CULVIA_RUNTIME_SKIP_INSTALL=1` 时只检查不安装。
+`doctor` 会检查 Python、virtualenv 路径、依赖模块、服务版本和轻量的 Desktop Lite runtime contract，不会真正导入较重的模型库。`ensure` 会在需要时创建 virtualenv，并在缺少依赖时安装；设置 `CULVIA_RUNTIME_SKIP_INSTALL=1` 时只检查不安装。Desktop Lite 启动要求满足当前 runtime contract；默认托管 package 还必须与桌面壳版本一致，显式 package override 可使用不同版本但必须满足该 contract。允许安装时只升级已选 package 并再次检查；设置 `CULVIA_RUNTIME_SKIP_INSTALL=1` 或 `autoInstall: false` 时，不兼容会转为启动错误，而不会继续运行旧 backend。
 
 ## macOS App 包
 
@@ -136,7 +138,7 @@ dist/macos/Culvia_<version>_<arch>.dmg.evidence.json
 
 ## 桌面 Lite 包
 
-Lite 包只分发桌面壳，不内置 PyInstaller backend，也不复制 Web assets。首次启动时，桌面壳会使用 Python 3.11+ 创建或修复应用自己管理的 virtualenv，在缺少依赖时安装已配置的 Culvia runtime package，然后启动 `python -m culvia.server`。
+Lite 包只分发桌面壳，不内置 PyInstaller backend，也不复制 Web assets。每次启动时，桌面壳会使用 Python 3.11+ 创建或修复应用自己管理的 virtualenv，在依赖或 runtime contract 不兼容时安装或升级已配置的 Culvia runtime package，并对默认托管 package 强制版本一致，然后启动 `python -m culvia.server`。
 
 当前系统的通用入口：
 
@@ -160,7 +162,9 @@ Lite 预期产物：
 
 ```text
 dist/macos-lite/Culvia.app
-dist/macos-lite/Culvia_<version>_<arch>.dmg
+dist/macos-lite/Culvia_<version>_<arch>-lite.dmg
+dist/macos-lite/Culvia_<version>_<arch>-lite.dmg.sha256
+dist/macos-lite/Culvia_<version>_<arch>-lite.dmg.evidence.json
 dist/windows-lite/culvia-<version>-windows-lite-x86_64-pc-windows-msvc.zip
 dist/linux-lite/culvia-<version>-linux-lite-x86_64-unknown-linux-gnu.tar.gz
 ```

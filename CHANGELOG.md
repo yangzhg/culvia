@@ -6,6 +6,7 @@ The format is based on Keep a Changelog, and this project uses semantic versioni
 
 ## Unreleased
 
+- Added cross-form version details, manual stable GitHub Release checks, and Desktop Lite runtime compatibility repair.
 - Added GitHub-facing README preview images, project positioning copy, contribution guidance, and security reporting guidance.
 
 ## 0.1.0

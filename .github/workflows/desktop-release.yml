@@ -14,11 +14,12 @@ on:
           - linux
           - windows
       profile:
-        description: "Runtime profile. Full bundles Python; Lite uses an app-managed runtime."
+        description: "Runtime profile. Release builds every publishable Full/Lite target except Linux Full."
         required: true
-        default: full
+        default: release
         type: choice
         options:
+          - release
           - full
           - lite
           - all
@@ -28,7 +29,7 @@ on:
         default: true
         type: boolean
       publish_release:
-        description: "Create or update a GitHub Release. Requires a tag ref or release_tag."
+        description: "Create a new GitHub Release. Requires a tag ref or release_tag."
         required: true
         default: false
         type: boolean
@@ -45,8 +46,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
-  cancel-in-progress: true
+  group: desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   select:
@@ -81,7 +82,7 @@ jobs:
           ref_name = os.environ["REF_NAME"]
           ref_type = os.environ["REF_TYPE"]
           selected_platform = os.environ["INPUT_PLATFORM"] or "all"
-          selected_profile = os.environ["INPUT_PROFILE"] or "full"
+          selected_profile = os.environ["INPUT_PROFILE"] or "release"
           requested_release_tag = os.environ["INPUT_RELEASE_TAG"].strip()
           release_ref = requested_release_tag or (ref_name if ref_type == "tag" else "")
 
@@ -115,9 +116,9 @@ jobs:
                   "os": "macos-latest",
                   "arch": "arm64",
                   "artifact_name": "culvia-macos-lite-arm64",
-                  "artifact_path": "dist/macos-lite/*.dmg",
-                  "checksum_path": "dist/macos-lite/*.dmg.sha256",
-                  "evidence_path": "dist/macos-lite/*.dmg.evidence.json",
+                  "artifact_path": "dist/macos-lite/*-lite.dmg",
+                  "checksum_path": "dist/macos-lite/*-lite.dmg.sha256",
+                  "evidence_path": "dist/macos-lite/*-lite.dmg.evidence.json",
               },
               {
                   "name": "macOS Lite x64 app dmg",
@@ -126,9 +127,9 @@ jobs:
                   "os": "macos-15-intel",
                   "arch": "x64",
                   "artifact_name": "culvia-macos-lite-x64",
-                  "artifact_path": "dist/macos-lite/*.dmg",
-                  "checksum_path": "dist/macos-lite/*.dmg.sha256",
-                  "evidence_path": "dist/macos-lite/*.dmg.evidence.json",
+                  "artifact_path": "dist/macos-lite/*-lite.dmg",
+                  "checksum_path": "dist/macos-lite/*-lite.dmg.sha256",
+                  "evidence_path": "dist/macos-lite/*-lite.dmg.evidence.json",
               },
               {
                   "name": "Windows x64 portable zip",
@@ -173,9 +174,7 @@ jobs:
           ]
           def profile_matches(job):
               if selected_profile == "release":
-                  if job["platform"] == "linux":
-                      return job["profile"] == "lite"
-                  return job["profile"] == "full"
+                  return job["profile"] == "lite" or job["platform"] in {"macos", "windows"}
               return selected_profile == "all" or selected_profile == job["profile"]
 
           include = [
@@ -190,7 +189,13 @@ jobs:
 
           upload_artifacts = event_name == "push" or os.environ["INPUT_UPLOAD_ARTIFACTS"].lower() == "true"
           publish_release = event_name == "push" and ref_type == "tag"
-          if event_name == "workflow_dispatch" and os.environ["INPUT_PUBLISH_RELEASE"].lower() == "true":
+          manual_publish = (
+              event_name == "workflow_dispatch" and os.environ["INPUT_PUBLISH_RELEASE"].lower() == "true"
+          )
+          if manual_publish and (selected_platform != "all" or selected_profile != "release"):
+              print("publish_release requires platform=all and profile=release.", file=sys.stderr)
+              sys.exit(1)
+          if manual_publish:
               if not release_ref:
                   print("publish_release requires running on a tag or passing release_tag.", file=sys.stderr)
                   sys.exit(1)
@@ -231,6 +236,9 @@ jobs:
           cache-dependency-path: |
             pyproject.toml
             requirements.txt
+
+      - name: Verify package and release versions
+        run: python tools/check_version_sync.py --tag "${{ needs.select.outputs.release_ref }}"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -305,7 +313,7 @@ jobs:
     name: Python wheel and source archive
     needs: select
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       artifact-metadata: write
       attestations: write
@@ -325,11 +333,73 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      - name: Verify package and release versions
+        run: python tools/check_version_sync.py --tag "${{ needs.select.outputs.release_ref }}"
+
       - name: Install release build dependencies
         run: python -m pip install -e '.[release]'
 
       - name: Build and verify Python distributions
         run: python tools/release_smoke.py --build --wheelhouse dist/python --build-sdist --dist-dir dist/python --install --twine-check --strict
+
+      - name: Verify clean Desktop Lite runtime wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t runtime_wheels < <(find dist/python -maxdepth 1 -type f -name 'culvia-*.whl' -print)
+          if [ "${#runtime_wheels[@]}" -ne 1 ]; then
+            echo "Expected exactly one built Culvia wheel for the Desktop Lite runtime check." >&2
+            exit 1
+          fi
+
+          lite_venv="${RUNNER_TEMP}/culvia-lite-runtime"
+          if [ -e "${lite_venv}" ]; then
+            echo "Desktop Lite runtime check requires a fresh virtualenv path: ${lite_venv}" >&2
+            exit 1
+          fi
+          python -m venv "${lite_venv}"
+          lite_python="${lite_venv}/bin/python"
+          "${lite_python}" -m pip install "${runtime_wheels[0]}[desktop-runtime]"
+          "${lite_python}" -m pip check
+          (
+            cd "${RUNNER_TEMP}"
+            "${lite_python}" -m culvia.runtime_manager doctor \
+              --profile desktop-lite \
+              --venv "${lite_venv}" \
+              --json > "${RUNNER_TEMP}/culvia-lite-runtime-doctor.json"
+            "${lite_python}" -c "import keyring"
+          )
+
+          python - <<'PY'
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          from culvia.runtime_dependencies import REQUIRED_RUNTIME_MODULES
+
+          root = Path.cwd()
+          report = json.loads((Path(os.environ["RUNNER_TEMP"]) / "culvia-lite-runtime-doctor.json").read_text())
+          expected_version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
+          contract = json.loads((root / "desktop/tauri/desktop-shell.contract.json").read_text())
+          expected_contract = contract["runtimeProfiles"]["modes"]["lite"]["runtimeContract"]
+          expected_modules = list(REQUIRED_RUNTIME_MODULES)
+          issues = []
+          if report.get("serviceVersion") != expected_version:
+              issues.append(f"serviceVersion={report.get('serviceVersion')!r}; expected {expected_version!r}")
+          if report.get("runtimeContract") != expected_contract:
+              issues.append(f"runtimeContract={report.get('runtimeContract')!r}; expected {expected_contract!r}")
+          if report.get("profile", {}).get("required_modules") != expected_modules:
+              issues.append("installed required_modules do not match the release source")
+          if report.get("missingModules"):
+              issues.append(f"missingModules={report['missingModules']!r}")
+          if issues:
+              raise SystemExit("Desktop Lite runtime wheel check failed: " + "; ".join(issues))
+          print(
+              f"Desktop Lite runtime wheel OK: service={expected_version}, "
+              f"contract={expected_contract}, modules={len(expected_modules)}"
+          )
+          PY
 
       - name: Generate Python distribution attestations
         if: needs.select.outputs.upload_artifacts == 'true'
@@ -394,15 +464,42 @@ jobs:
           \`\`\`
           EOF
 
-          if gh release view --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release edit --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" --title "Culvia ${RELEASE_TAG}" --notes-file release-notes.md
-          else
-            gh release create --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" --verify-tag --title "Culvia ${RELEASE_TAG}" --notes-file release-notes.md
-          fi
-
           mapfile -d '' assets < <(find release-assets -type f -print0 | sort -z)
           if [ "${#assets[@]}" -eq 0 ]; then
             echo "No release assets were downloaded." >&2
             exit 1
           fi
-          gh release upload --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" "${assets[@]}" --clobber
+          python - "${assets[@]}" <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import sys
+
+          basenames = [Path(path).name for path in sys.argv[1:]]
+          duplicates = sorted(name for name, count in Counter(basenames).items() if count > 1)
+          if duplicates:
+              raise SystemExit("Release asset basenames must be unique: " + ", ".join(duplicates))
+          PY
+          release_version="${RELEASE_TAG#v}"
+          expected_runtime_wheel="culvia-${release_version}-py3-none-any.whl"
+          mapfile -t runtime_wheels < <(find release-assets -type f -name "${expected_runtime_wheel}" -print)
+          if [ "${#runtime_wheels[@]}" -ne 1 ]; then
+            echo "Expected exactly one Lite runtime wheel named ${expected_runtime_wheel}." >&2
+            exit 1
+          fi
+
+          existing_draft=""
+          if gh release view --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" --json isDraft --jq .isDraft > existing-release-state.txt 2>/dev/null; then
+            existing_draft="$(tr -d '\r\n' < existing-release-state.txt)"
+          fi
+          if [ "${existing_draft}" = "false" ]; then
+            echo "Published Release ${RELEASE_TAG} already exists; refusing to replace its notes or assets." >&2
+            exit 1
+          fi
+          if [ "${existing_draft}" = "true" ]; then
+            echo "Removing incomplete draft Release ${RELEASE_TAG} before retrying."
+            gh release delete --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" --yes
+          fi
+
+          gh release create --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" --verify-tag --draft --title "Culvia ${RELEASE_TAG}" --notes-file release-notes.md
+          gh release upload --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" "${assets[@]}"
+          gh release edit --repo "${GITHUB_REPOSITORY}" "${RELEASE_TAG}" --draft=false

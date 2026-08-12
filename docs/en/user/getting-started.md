@@ -58,3 +58,9 @@ LLM review is optional. Configure an OpenAI-compatible endpoint and model only w
 ## Exports
 
 Use selected-photo export for delivery candidates. Use CSV export when you need scoring evidence, manual status, color labels, and downstream mappings. See [Export Workflows](export-workflows.md).
+
+## Version and Updates
+
+Open **Settings → About Culvia** to see the version of the service currently serving the page, its runtime form, platform, and architecture. Desktop Full and Desktop Lite also show the desktop shell and Python service versions separately when they differ.
+
+Choose **Check for updates** to query the latest stable release from the official Culvia GitHub repository. Culvia does not check in the background and does not download or install an update automatically. When a newer version is available, follow the release link, choose the package that exactly matches your platform and runtime form, and verify its checksum or GitHub attestation before installing it. If that Release does not provide an exact match, do not substitute another platform or runtime form; keep the current installation and check the release notes for availability. Desktop Lite users should resolve any shell/service version mismatch and restart the app before relying on new-version behavior.

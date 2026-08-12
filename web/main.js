@@ -28,6 +28,7 @@ import "./export_list.js";
 import "./batch_actions.js";
 import "./clipboard.js";
 import "./api_client.js";
+import "./update_panel.js";
 import "./distribution_model.js";
 import "./app_config.js";
 import "./icons.js";

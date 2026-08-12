@@ -538,10 +538,15 @@ def copy_tree_without_extended_attributes(source: Path, destination: Path) -> No
             copy_path_without_extended_attributes(current_path / name, target_dir / name)
 
 
-def stage_macos_release_artifacts(*, app: Path, dmg: Path, output_dir: Path) -> tuple[Path, Path]:
+def stage_macos_release_artifacts(
+    *, app: Path, dmg: Path, output_dir: Path, runtime_profile: str = "full"
+) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     staged_app = output_dir / app.name
-    staged_dmg = output_dir / dmg.name
+    dmg_stem = dmg.stem
+    if is_lite_profile(runtime_profile) and not dmg_stem.lower().endswith("-lite"):
+        dmg_stem = f"{dmg_stem}-lite"
+    staged_dmg = output_dir / f"{dmg_stem}{dmg.suffix}"
     copy_tree_without_extended_attributes(app, staged_app)
     remove_existing_path(staged_dmg)
     copy_path_without_extended_attributes(dmg, staged_dmg)
@@ -702,7 +707,12 @@ def write_macos_lite_evidence(
         str(output_dir),
     )
     try:
-        app, dmg = stage_macos_release_artifacts(app=app, dmg=dmg, output_dir=output_dir)
+        app, dmg = stage_macos_release_artifacts(
+            app=app,
+            dmg=dmg,
+            output_dir=output_dir,
+            runtime_profile="lite",
+        )
     except OSError as exc:
         results.append(
             local_step_result(

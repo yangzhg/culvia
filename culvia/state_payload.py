@@ -41,6 +41,7 @@ class StatePayloadDependencies:
     load_analysis_insights: Callable[..., Iterable[Any]]
     serialize_photo: Callable[[pd.Series, Mapping[str, Any], Mapping[str, Any]], dict[str, Any]]
     curation_summary: Callable[[Mapping[str, Any], Sequence[str]], dict[str, Any]]
+    application_info: Callable[[], Mapping[str, Any]]
     local_capabilities: Callable[[], Mapping[str, Any]]
     device_text: Callable[[], Mapping[str, Any]]
     network_payload: Callable[[Mapping[str, Any]], Mapping[str, Any]]
@@ -89,13 +90,15 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
     ]
     all_curation = deps.curation_summary(mark_by_file_id, source_file_ids)
     visible_curation = deps.curation_summary(mark_by_file_id, filtered_file_ids)
+    app_payload = {
+        "name": deps.app_name,
+        "subtitle": deps.app_subtitle,
+        "deviceText": dict(deps.device_text()),
+        "heifAvailable": deps.heif_available,
+    }
+    app_payload.update(deps.application_info())
     return {
-        "app": {
-            "name": deps.app_name,
-            "subtitle": deps.app_subtitle,
-            "deviceText": dict(deps.device_text()),
-            "heifAvailable": deps.heif_available,
-        },
+        "app": app_payload,
         "capabilities": deps.local_capabilities(),
         "source": source,
         "sourcePreview": source_preview,
