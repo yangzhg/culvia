@@ -28,7 +28,12 @@
   }
 
   .command-actions {
-    flex-direction: row;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .command-center.is-compact .command-actions .button {
     width: 100%;
   }
 
@@ -61,6 +66,17 @@
     justify-content: flex-start;
     min-width: 0;
     max-width: 100%;
+  }
+
+  .model-tooltip {
+    right: auto;
+    left: 0;
+    transform-origin: top left;
+  }
+
+  .model-tooltip::before {
+    right: auto;
+    left: 22px;
   }
 
   .viewer-stage {
@@ -156,7 +172,7 @@
   }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 860px) {
   :root {
     --sidebar-width: 100%;
     --sidebar-focus-width: 100%;
@@ -166,17 +182,6 @@
 
   .app-shell {
     grid-template-columns: 1fr;
-    grid-template-areas:
-      "workspace"
-      "sidebar";
-  }
-
-  .app-shell > .sidebar {
-    grid-area: sidebar;
-  }
-
-  .app-shell > .workspace {
-    grid-area: workspace;
   }
 
   .app-shell::before {
@@ -192,18 +197,33 @@
   }
 
   .sidebar {
-    position: static;
-    height: auto;
-    overflow: visible;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+    position: fixed;
+    z-index: 60;
+    top: 8px;
+    bottom: 8px;
+    left: 8px;
+    width: min(420px, calc(100vw - 16px));
+    height: calc(100dvh - 16px);
+    min-height: 0;
+    max-height: calc(100dvh - 16px);
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: 24px;
     background: var(--surface-sidebar);
+    box-shadow: var(--shadow-popover);
+    transform: translateX(calc(-100% - 18px));
+    transition: transform 180ms ease;
     backdrop-filter: blur(22px) saturate(1.12);
   }
 
+  .app-shell.is-mobile-tools-open .sidebar {
+    transform: translateX(0);
+  }
+
   .sidebar-scroll {
-    height: auto;
-    overflow: visible;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
     padding: var(--sidebar-padding-y) var(--sidebar-padding-x);
     scrollbar-gutter: auto;
   }
@@ -213,7 +233,7 @@
   }
 
   .app-shell.is-focus-mode .sidebar-scroll {
-    padding: 14px;
+    padding: var(--sidebar-padding-y) var(--sidebar-padding-x);
   }
 
   .app-shell.is-focus-mode .brand {
@@ -227,6 +247,29 @@
 
   .app-shell.is-focus-mode .sidebar-toggle {
     margin-left: auto;
+  }
+
+  .app-shell.is-focus-mode .sidebar .panel {
+    display: block;
+  }
+
+  .mobile-global-action {
+    display: inline-flex;
+  }
+
+  .settings-drawer {
+    right: 8px;
+    width: min(640px, calc(100vw - 16px));
+    max-width: none;
+  }
+
+  .mobile-sidebar-scrim {
+    position: fixed;
+    z-index: 50;
+    inset: 0;
+    display: block;
+    background: rgba(246, 247, 249, 0.48);
+    backdrop-filter: blur(8px) saturate(1.08);
   }
 }
 
@@ -500,6 +543,24 @@
     grid-column: 1 / -1;
     width: 100%;
   }
+
+  .icon-button,
+  .sidebar-toggle {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .language-trigger,
+  .view-tab,
+  .command-center.is-compact .command-actions .button {
+    min-height: 44px;
+  }
+
+  .source-folder-add {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
 }
 
 @media (max-width: 620px), (max-height: 720px) {
@@ -507,7 +568,6 @@
     top: 8px;
     right: 8px;
     bottom: 8px;
-    width: min(464px, calc(100vw - 16px));
     border-radius: 22px;
   }
 
@@ -554,11 +614,6 @@
 }
 
 @media (max-width: 620px) {
-  .settings-drawer {
-    left: 8px;
-    width: auto;
-  }
-
   .llm-model-picker,
   .llm-actions {
     grid-template-columns: minmax(0, 1fr);
@@ -566,6 +621,20 @@
 
   .llm-model-picker .icon-button {
     justify-self: stretch;
+    width: 100%;
+  }
+}
+
+.llm-confirm-actions .button,
+.batch-confirm-actions .button,
+.danger-confirm-actions .button {
+  width: auto;
+}
+
+@media (max-width: 620px) {
+  .llm-confirm-actions .button,
+  .batch-confirm-actions .button,
+  .danger-confirm-actions .button {
     width: 100%;
   }
 }

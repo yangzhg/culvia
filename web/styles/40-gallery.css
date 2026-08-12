@@ -48,6 +48,11 @@
 
 .gallery-bulk-copy .batch-scope-pill {
   flex-basis: 100%;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gallery-source-status,

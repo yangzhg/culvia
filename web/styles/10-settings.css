@@ -136,7 +136,8 @@
 
 body.is-settings-drawer-open,
 body.is-shortcut-help-open,
-body.is-danger-confirm-open {
+body.is-danger-confirm-open,
+body.is-mobile-tools-open {
   overflow: hidden;
 }
 
@@ -277,7 +278,8 @@ body.is-danger-confirm-open {
   bottom: 14px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(464px, calc(100vw - 28px));
+  width: clamp(520px, 46vw, 640px);
+  max-width: calc(100vw - 28px);
   overflow: hidden;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.7);

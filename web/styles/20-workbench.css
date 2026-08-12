@@ -1000,6 +1000,11 @@ h1 {
   min-width: 0;
 }
 
+.mobile-global-action,
+.mobile-sidebar-scrim {
+  display: none;
+}
+
 .top-status {
   flex-wrap: nowrap;
 }
@@ -1178,10 +1183,6 @@ h1 {
   backdrop-filter: blur(18px) saturate(1.12);
 }
 
-.model-status:hover .model-tooltip,
-.model-status:focus .model-tooltip,
-.model-status:focus-visible .model-tooltip,
-.model-status:focus-within .model-tooltip,
 .model-status.is-tooltip-visible .model-tooltip {
   opacity: 1;
   transform: translateY(0) scale(1);
@@ -1367,6 +1368,7 @@ h1 {
 
 .command-center.is-compact .command-actions {
   flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
   width: auto;
 }
@@ -1394,9 +1396,13 @@ h1 {
 }
 
 .command-center.is-compact .command-actions .button {
+  flex: 0 0 auto;
+  width: auto;
   min-height: 34px;
   padding: 0 13px;
   font-size: 12px;
+  white-space: nowrap;
+  word-break: keep-all;
 }
 
 .command-progress {

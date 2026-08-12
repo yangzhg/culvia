@@ -98,7 +98,7 @@ window.CulviaUpdatePanel = (() => {
   function create({ $, t, postJson, errorMessage, getAppState }) {
     let checking = false;
     let result = null;
-    let error = "";
+    let lastError = null;
 
     function setText(selector, value) {
       const node = $(selector);
@@ -106,6 +106,7 @@ window.CulviaUpdatePanel = (() => {
     }
 
     function render() {
+      const error = lastError ? errorMessage(lastError) : "";
       const plan = viewState(getAppState()?.app || {}, { checking, result, error }, t);
       setText("#appVersionValue", plan.currentVersion);
       setText("#appRuntimeValue", plan.runtime);
@@ -148,15 +149,17 @@ window.CulviaUpdatePanel = (() => {
     async function checkForUpdates() {
       if (checking) return;
       checking = true;
-      error = "";
+      lastError = null;
       render();
       try {
         const payload = await postJson("/api/update/check", {});
-        if (!payload?.status || !payload?.latestVersion) throw new Error(t("apiError.updateCheckInvalidResponse"));
+        if (!payload?.status || !payload?.latestVersion) {
+          throw new Error(JSON.stringify({ errorCode: "updateCheckInvalidResponse" }));
+        }
         result = payload;
       } catch (requestError) {
         result = null;
-        error = errorMessage(requestError);
+        lastError = requestError;
       } finally {
         checking = false;
         render();

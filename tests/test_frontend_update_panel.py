@@ -104,6 +104,57 @@ class FrontendUpdatePanelTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
         self.assertEqual(json.loads(result.stdout), {"requestCount": 1})
 
+    def test_update_error_is_relocalized_when_the_interface_language_changes(self) -> None:
+        script = textwrap.dedent(
+            """
+            const fs = require("fs");
+            const vm = require("vm");
+            const context = { window: {}, URL };
+            vm.createContext(context);
+            vm.runInContext(fs.readFileSync("web/update_panel.js", "utf8"), context);
+            let language = "zh-CN";
+            const status = { className: "", textContent: "" };
+            const panel = context.window.CulviaUpdatePanel.create({
+              $: (selector) => selector === "#updateCheckStatus" ? status : null,
+              t: (key, params = {}) => {
+                if (key === "update.failed") {
+                  return language === "en"
+                    ? `Updates could not be checked: ${params.reason}`
+                    : `暂时无法检查更新：${params.reason}`;
+                }
+                return key;
+              },
+              postJson: async () => {
+                throw new Error(JSON.stringify({
+                  errorCode: "updateCheckRateLimited",
+                  error: "GitHub 暂时限制了检查频率",
+                }));
+              },
+              errorMessage: () => language === "en"
+                ? "GitHub temporarily limited update checks"
+                : "GitHub 暂时限制了检查频率",
+              getAppState: () => ({ app: { version: "0.1.1", serviceVersion: "0.1.1" } }),
+            });
+            panel.checkForUpdates().then(() => {
+              const zh = status.textContent;
+              language = "en";
+              panel.render();
+              console.log(JSON.stringify({ zh, en: status.textContent }));
+            });
+            """
+        )
+
+        result = subprocess.run(["node", "-e", script], text=True, capture_output=True, check=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        output = json.loads(result.stdout)
+        self.assertIn("GitHub 暂时限制", output["zh"])
+        self.assertEqual(
+            output["en"],
+            "Updates could not be checked: GitHub temporarily limited update checks",
+        )
+        self.assertNotRegex(output["en"], r"[\u4e00-\u9fff]")
+
 
 if __name__ == "__main__":
     unittest.main()

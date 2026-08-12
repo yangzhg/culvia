@@ -48,10 +48,15 @@ const VIEW_STORAGE_KEY = "culvia.activeView.v1";
 const VIEW_NAMES = ["viewer", "gallery", "distribution", "export"];
 let activeView = normalizeViewName(localStorage.getItem(VIEW_STORAGE_KEY));
 const SIDEBAR_COLLAPSED_KEY = "culvia.sidebarCollapsed";
+const MOBILE_TOOLS_QUERY = "(max-width: 860px)";
 let sidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+let mobileToolsOpen = false;
+let mobileToolsReturnSelector = "#openMobileToolsBtn";
 let settingsDrawerOpen = false;
+let settingsReturnSelector = "#openSettingsDrawerBtn";
 let uiTooltipAnchor = null;
 let uiTooltipRaf = 0;
+let uiTooltipKeyboardMode = false;
 let curationHistory = [];
 let curationHistoryLoading = false;
 let curationHistoryError = "";
@@ -195,9 +200,14 @@ function hideUiTooltip(anchor = null) {
 
 function bindUiTooltipPortal() {
   ensureUiTooltipPortal();
+  document.addEventListener("keydown", (event) => {
+    if (["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+      uiTooltipKeyboardMode = true;
+    }
+  }, true);
   document.addEventListener("pointerover", (event) => {
     const anchor = tooltipAnchorFromEventTarget(event.target);
-    if (anchor) showUiTooltip(anchor);
+    if (anchor && (!event.pointerType || event.pointerType === "mouse")) showUiTooltip(anchor);
   });
   document.addEventListener("pointerout", (event) => {
     const anchor = tooltipAnchorFromEventTarget(event.target);
@@ -205,7 +215,7 @@ function bindUiTooltipPortal() {
   });
   document.addEventListener("focusin", (event) => {
     const anchor = tooltipAnchorFromEventTarget(event.target);
-    if (anchor) showUiTooltip(anchor);
+    if (uiTooltipKeyboardMode && anchor?.matches?.(":focus-visible")) showUiTooltip(anchor);
   });
   document.addEventListener("focusout", (event) => {
     const anchor = tooltipAnchorFromEventTarget(event.target);
@@ -215,6 +225,10 @@ function bindUiTooltipPortal() {
     if (uiTooltipAnchor) positionUiTooltip();
   }, true);
   window.addEventListener("resize", () => hideUiTooltip());
+  document.addEventListener("pointerdown", () => {
+    uiTooltipKeyboardMode = false;
+    hideUiTooltip();
+  }, true);
 }
 
 const focusableSelector = [
@@ -241,6 +255,7 @@ function activeModalDialog() {
   if (batchStatusConfirmOpen) return $("#batchStatusConfirmDialog");
   if (shortcutHelpOpen) return $("#shortcutHelpDialog");
   if (settingsDrawerOpen) return $("#settingsDrawer");
+  if (mobileToolsOpen) return $("#workbenchSidebar");
   return null;
 }
 
@@ -1254,37 +1269,117 @@ function renderActiveView() {
   renderViewer();
 }
 
+function isMobileToolsLayout() {
+  return Boolean(window.matchMedia?.(MOBILE_TOOLS_QUERY).matches);
+}
+
 function applySidebarMode() {
-  $(".app-shell")?.classList.toggle("is-focus-mode", sidebarCollapsed);
+  const mobileLayout = isMobileToolsLayout();
+  const shell = $(".app-shell");
+  const sidebar = $("#workbenchSidebar");
+  if (!mobileLayout) mobileToolsOpen = false;
+  if (mobileLayout && !mobileToolsOpen && sidebar?.contains?.(document.activeElement)) {
+    $("#openMobileToolsBtn")?.focus();
+  }
+  shell?.classList.toggle("is-focus-mode", !mobileLayout && sidebarCollapsed);
+  shell?.classList.toggle("is-mobile-tools-open", mobileLayout && mobileToolsOpen);
+
+  if (sidebar) {
+    if (mobileLayout) {
+      sidebar.setAttribute("role", "dialog");
+      sidebar.setAttribute("aria-modal", "true");
+      sidebar.setAttribute("aria-hidden", mobileToolsOpen ? "false" : "true");
+      if (mobileToolsOpen) sidebar.removeAttribute("inert");
+      else sidebar.setAttribute("inert", "");
+    } else {
+      sidebar.removeAttribute("role");
+      sidebar.removeAttribute("aria-modal");
+      sidebar.removeAttribute("aria-hidden");
+      sidebar.removeAttribute("inert");
+    }
+  }
+
   const button = $("#sidebarToggleBtn");
-  if (!button) return;
-  const label = sidebarCollapsed ? t("app.expandSidebar") : t("app.collapseSidebar");
-  const tooltip = sidebarCollapsed ? t("app.expandSettings") : t("app.focusMode");
-  button.setAttribute("aria-pressed", sidebarCollapsed ? "true" : "false");
-  button.setAttribute("aria-label", label);
-  button.dataset.uiTooltip = tooltip;
-  button.removeAttribute("title");
+  if (button) {
+    const label = mobileLayout
+      ? t("app.closeTools")
+      : sidebarCollapsed ? t("app.expandSidebar") : t("app.collapseSidebar");
+    const tooltip = mobileLayout
+      ? t("app.closeTools")
+      : sidebarCollapsed ? t("app.expandSettings") : t("app.focusMode");
+    button.setAttribute("aria-pressed", mobileLayout ? "false" : sidebarCollapsed ? "true" : "false");
+    button.setAttribute("aria-label", label);
+    button.dataset.uiTooltip = tooltip;
+    button.removeAttribute("title");
+  }
+
+  const mobileTrigger = $("#openMobileToolsBtn");
+  mobileTrigger?.setAttribute("aria-expanded", mobileLayout && mobileToolsOpen ? "true" : "false");
+  $("#mobileSidebarScrim")?.classList.toggle("is-hidden", !(mobileLayout && mobileToolsOpen));
+  document.body.classList.toggle("is-mobile-tools-open", mobileLayout && mobileToolsOpen);
 }
 
 function toggleSidebarMode() {
+  if (isMobileToolsLayout()) {
+    closeMobileTools();
+    return;
+  }
   sidebarCollapsed = !sidebarCollapsed;
   localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? "true" : "false");
   applySidebarMode();
+}
+
+function openMobileTools(returnSelector = "#openMobileToolsBtn") {
+  if (!isMobileToolsLayout()) return;
+  mobileToolsOpen = true;
+  mobileToolsReturnSelector = returnSelector;
+  applySidebarMode();
+  window.setTimeout(() => $("#sidebarToggleBtn")?.focus(), 0);
+}
+
+function closeMobileTools(restoreFocus = true) {
+  if (!mobileToolsOpen) return;
+  mobileToolsOpen = false;
+  applySidebarMode();
+  if (restoreFocus) $(mobileToolsReturnSelector)?.focus();
+}
+
+function focusVisibleReturnTarget(preferredSelector, fallbackSelector) {
+  const layoutSelector = isMobileToolsLayout() ? "#openMobileSettingsBtn" : "#openSettingsDrawerBtn";
+  const target = [preferredSelector, layoutSelector, fallbackSelector]
+    .map((selector) => $(selector))
+    .find((node) => {
+      if (!node || node.closest?.("[inert], [aria-hidden='true']")) return false;
+      const rect = node.getBoundingClientRect?.();
+      return Boolean(
+        rect
+        && rect.width > 0
+        && rect.height > 0
+        && rect.right > 0
+        && rect.bottom > 0
+        && rect.left < window.innerWidth
+        && rect.top < window.innerHeight
+      );
+    });
+  target?.focus();
 }
 
 function applySettingsDrawerState() {
   const drawer = $("#settingsDrawer");
   const scrim = $("#settingsScrim");
   const trigger = $("#openSettingsDrawerBtn");
+  const mobileTrigger = $("#openMobileSettingsBtn");
   drawer?.classList.toggle("is-hidden", !settingsDrawerOpen);
   scrim?.classList.toggle("is-hidden", !settingsDrawerOpen);
   drawer?.setAttribute("aria-hidden", settingsDrawerOpen ? "false" : "true");
   trigger?.setAttribute("aria-expanded", settingsDrawerOpen ? "true" : "false");
+  mobileTrigger?.setAttribute("aria-expanded", settingsDrawerOpen ? "true" : "false");
   document.body.classList.toggle("is-settings-drawer-open", settingsDrawerOpen);
 }
 
-function openSettingsDrawer() {
+function openSettingsDrawer(returnSelector = "#openSettingsDrawerBtn") {
   settingsDrawerOpen = true;
+  settingsReturnSelector = returnSelector;
   applySettingsDrawerState();
   loadCurationHistory();
   window.setTimeout(() => $("#closeSettingsDrawerBtn")?.focus(), 0);
@@ -1295,7 +1390,10 @@ function closeSettingsDrawer() {
   settingsDrawerOpen = false;
   llmConfigPanel.setLlmModelMenuOpen(false);
   applySettingsDrawerState();
-  $("#openSettingsDrawerBtn")?.focus();
+  window.setTimeout(
+    () => focusVisibleReturnTarget(settingsReturnSelector, "#openSettingsDrawerBtn"),
+    0,
+  );
 }
 
 function shortcutCatalog() {
@@ -2112,7 +2210,17 @@ function bindEvents() {
   $$("[data-network]").forEach((button) => button.addEventListener("click", () => setNetworkMode(button.dataset.network)));
   $$(".view-tab").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
   $("#sidebarToggleBtn").addEventListener("click", toggleSidebarMode);
-  $("#openSettingsDrawerBtn").addEventListener("click", openSettingsDrawer);
+  $("#openMobileToolsBtn").addEventListener("click", () => openMobileTools());
+  $("#mobileSidebarScrim").addEventListener("click", () => closeMobileTools());
+  $("#openMobileSettingsBtn").addEventListener("click", () => openSettingsDrawer("#openMobileSettingsBtn"));
+  $("#openSettingsDrawerBtn").addEventListener("click", () => {
+    if (isMobileToolsLayout()) {
+      closeMobileTools(false);
+      openSettingsDrawer("#openMobileSettingsBtn");
+      return;
+    }
+    openSettingsDrawer();
+  });
   $("#closeSettingsDrawerBtn").addEventListener("click", closeSettingsDrawer);
   $("#settingsScrim").addEventListener("click", closeSettingsDrawer);
   $("#openShortcutHelpBtn").addEventListener("click", openShortcutHelp);
@@ -2150,12 +2258,16 @@ function bindEvents() {
   $("#saveLlmConfigBtn").addEventListener("click", saveLlmConfig);
   $("#clearLlmKeyBtn").addEventListener("click", clearLlmKey);
   const modelStatusPill = $("#modelStatusPill");
-  ["mouseenter", "focus"].forEach((eventName) => {
-    modelStatusPill.addEventListener(eventName, () => modelStatusPill.classList.add("is-tooltip-visible"));
+  modelStatusPill.addEventListener("pointerenter", (event) => {
+    if (event.pointerType === "mouse") modelStatusPill.classList.add("is-tooltip-visible");
   });
-  ["mouseleave", "blur"].forEach((eventName) => {
-    modelStatusPill.addEventListener(eventName, () => modelStatusPill.classList.remove("is-tooltip-visible"));
+  modelStatusPill.addEventListener("pointerleave", (event) => {
+    if (event.pointerType === "mouse") modelStatusPill.classList.remove("is-tooltip-visible");
   });
+  modelStatusPill.addEventListener("focus", () => {
+    if (uiTooltipKeyboardMode) modelStatusPill.classList.add("is-tooltip-visible");
+  });
+  modelStatusPill.addEventListener("blur", () => modelStatusPill.classList.remove("is-tooltip-visible"));
   $("#acceptFilteredModelBtn").addEventListener("click", () => acceptPhotoResult("model", "filtered", galleryBatchTarget(appState?.photos || [])));
   $("#acceptFilteredLlmBtn").addEventListener("click", () => acceptPhotoResult("llm", "filtered", galleryBatchTarget(appState?.photos || [])));
   $("#deliveryReviewBtn").addEventListener("click", () => openManualStatusView("pending"));
@@ -2182,6 +2294,7 @@ function bindEvents() {
   $("#exportResult").addEventListener("click", handleExportResultClick);
   $("#exportSelectedBtn").addEventListener("click", exportSelectedPhotos);
   window.addEventListener("culvia:languagechange", () => render());
+  window.addEventListener("resize", applySidebarMode);
 
   window.addEventListener("keydown", (event) => {
     if (trapActiveDialogFocus(event)) return;
@@ -2210,6 +2323,11 @@ function bindEvents() {
       return;
     }
     if (settingsDrawerOpen) return;
+    if (event.key === "Escape" && mobileToolsOpen) {
+      closeMobileTools();
+      return;
+    }
+    if (mobileToolsOpen) return;
     if (isEditableShortcutTarget(event.target)) return;
     if (isShortcutHelpKey(event)) {
       event.preventDefault();

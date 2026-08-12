@@ -2,8 +2,8 @@
 // the import order below is the only place load order is declared.
 
 // Locale resources and i18n runtime.
-import "./locales/zh-CN.js";
-import "./locales/en.js";
+import "./locales/zh-CN.js?v=20260812-responsive-nav";
+import "./locales/en.js?v=20260812-responsive-nav";
 import "./i18n_messages.js";
 import "./i18n.js";
 
@@ -17,7 +17,7 @@ import "./viewer_keyboard.js";
 import "./manual_status.js";
 
 // View factories.
-import "./llm_config_view.js";
+import "./llm_config_view.js?v=20260812-responsive-nav";
 import "./command_view.js";
 import "./export_preflight.js";
 import "./export_preflight_state.js";
@@ -28,7 +28,7 @@ import "./export_list.js";
 import "./batch_actions.js";
 import "./clipboard.js";
 import "./api_client.js";
-import "./update_panel.js";
+import "./update_panel.js?v=20260812-responsive-nav";
 import "./distribution_model.js";
 import "./app_config.js";
 import "./icons.js";
@@ -45,4 +45,4 @@ import "./filter_panel.js";
 import "./viewer_inspector.js";
 
 // Orchestrator: wires state, rendering, and events together.
-import "./app.js?v=20260812-live-i18n";
+import "./app.js?v=20260812-responsive-nav";

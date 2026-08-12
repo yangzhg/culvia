@@ -24,6 +24,8 @@ const context = {
     querySelector: () => null,
     querySelectorAll: () => [],
   },
+  addEventListener: () => {},
+  dispatchEvent: () => {},
 };
 context.window = context;
 vm.createContext(context);
@@ -62,7 +64,7 @@ class FrontendLlmConfigViewTests(unittest.TestCase):
                 { value: "retouching", label: "修图", prompt: "修图默认提示词" },
               ],
             };
-            if (view.promptPresetLabel(llm) !== "修图") throw new Error("prompt preset label is wrong");
+            if (view.promptPresetLabel(llm) !== "精修建议") throw new Error("prompt preset label is wrong");
             if (view.promptPresetPrompt(llm) !== "修图默认提示词") throw new Error("prompt preset text is wrong");
             if (view.promptPresetPrompt(llm, "balanced") !== "综合默认提示词") {
               throw new Error("explicit prompt preset text is wrong");
@@ -70,6 +72,11 @@ class FrontendLlmConfigViewTests(unittest.TestCase):
             if (view.promptPresetLabel({ promptPreset: "unknown", promptPresets: [] }) !== "unknown") {
               throw new Error("unknown prompt preset should pass through");
             }
+            context.window.CulviaI18n.setLanguage("en");
+            if (view.promptPresetLabel(llm) !== "Retouching guidance") {
+              throw new Error("built-in prompt preset label was not relocalized");
+            }
+            context.window.CulviaI18n.setLanguage("zh-CN");
             if (view.customPromptSummary("   ") !== "") throw new Error("blank custom prompt should stay empty");
             if (view.customPromptSummary("1234567890123456789012345678") !== "123456789012345678901234...") {
               throw new Error("custom prompt summary should truncate");
@@ -161,6 +168,22 @@ class FrontendLlmConfigViewTests(unittest.TestCase):
             if (promptViews[1].prompt !== "修图提示词") {
               throw new Error("prompt option should carry default prompt text");
             }
+            if (promptViews[1].label !== "精修建议" || promptViews[1].description !== "更重视可修空间和后期方向") {
+              throw new Error("built-in prompt option should use localized metadata");
+            }
+            context.window.CulviaI18n.setLanguage("en");
+            const englishViews = view.promptOptionViews({
+              promptPreset: "retouching",
+              promptPresets: [
+                { value: "retouching", label: "精修建议", description: "更重视可修空间和后期方向" },
+              ],
+            });
+            if (englishViews[0].label !== "Retouching guidance") {
+              throw new Error("English prompt label was not localized");
+            }
+            if (/[^\\x00-\\x7F]/.test(englishViews[0].description)) {
+              throw new Error("English prompt description still contains localized backend text");
+            }
             """
         )
 
@@ -242,7 +265,7 @@ class FrontendLlmConfigViewTests(unittest.TestCase):
               throw new Error("editing visibility state is wrong");
             }
             if (configuredState.readonly.source !== "本地库") throw new Error("readonly source is wrong");
-            if (!configuredState.readonly.prompt.includes("修图") || !configuredState.readonly.prompt.includes("强调人物肤色")) {
+            if (!configuredState.readonly.prompt.includes("精修建议") || !configuredState.readonly.prompt.includes("强调人物肤色")) {
               throw new Error("readonly prompt summary is wrong");
             }
             if (configuredState.inputs.apiKeyPlaceholder !== "sk-3****3931，输入新密钥可替换") {

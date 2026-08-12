@@ -28,10 +28,17 @@ window.CulviaLlmConfigView = (() => {
     return knownSourceLabels.has(value) ? t(`llm.source.${value}`) : value;
   }
 
+  function promptPresetText(preset, field) {
+    const value = String(preset?.value || "").trim();
+    const key = value ? `llm.promptPreset.${value}.${field}` : "";
+    const localized = key ? t(key) : "";
+    return localized && localized !== key ? localized : String(preset?.[field] || "");
+  }
+
   function promptPresetLabel(llm) {
     const selected = llm?.promptPreset || "balanced";
     const preset = (llm?.promptPresets || []).find((option) => option.value === selected);
-    return preset?.label || selected || t("llm.promptDefault");
+    return promptPresetText(preset, "label") || selected || t("llm.promptDefault");
   }
 
   function promptPresetPrompt(llm, selectedPrompt = "") {
@@ -100,8 +107,8 @@ window.CulviaLlmConfigView = (() => {
       return {
         ariaChecked: active ? "true" : "false",
         className: `llm-prompt-option ${active ? "is-active" : ""}`.trim(),
-        description: option.description || "",
-        label: option.label,
+        description: promptPresetText(option, "description"),
+        label: promptPresetText(option, "label"),
         prompt: option.prompt || "",
         value: option.value,
       };
