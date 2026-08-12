@@ -24,9 +24,11 @@ Core columns:
 | score columns | `REAL` | Derived from `ScoreFieldGroup.cache_columns` |
 | text columns | `TEXT` | File metadata and error fields from `CSV_COLUMNS` |
 | `recommendation_0_10` | `REAL` | Combined recommendation score |
+| `llm_review_generation` | `REAL` | Generation shared with the matching LLM insight; stale or partially published review scores are ignored |
 | `updated_at` | `REAL` | Unix timestamp |
 
 Score columns include local aesthetic, technical, CLIP reference, CLIP-IQA, and LLM review dimensions defined in `culvia.schema`.
+Existing score tables are extended in place when new cache columns are introduced.
 
 ## `photo_analysis_insights`
 
@@ -58,6 +60,11 @@ Columns:
 | `suggestions_json` | `TEXT` |
 | `raw_json` | `TEXT` |
 | `created_at` | `REAL` |
+
+For LLM review, `created_at` is also the result generation stored in `culvia_scores.llm_review_generation`.
+The UI and cache reuse a review only when the latest insight identity and generation both match the score row.
+After upgrading an older database, rows without a generation are treated as stale and reviewed again. This avoids
+binding unrelated per-dimension scores merely because two review generations happened to share the same overall score.
 
 ## `photo_app_config`
 

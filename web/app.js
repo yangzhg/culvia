@@ -1213,6 +1213,9 @@ function renderControls() {
 
 function render() {
   if (!appState) return;
+  // Translate static placeholders before view renderers write live counts and
+  // workflow status. Reversing this order lets data-i18n overwrite real state.
+  applyI18n();
   applyWorkbenchMode();
   applySidebarMode();
   applyActiveViewState();
@@ -1224,7 +1227,6 @@ function render() {
   renderFilterScope();
   renderCurationHistory();
   renderActiveView();
-  applyI18n();
 }
 
 function applyWorkbenchMode() {

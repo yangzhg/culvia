@@ -45,4 +45,4 @@ import "./filter_panel.js";
 import "./viewer_inspector.js";
 
 // Orchestrator: wires state, rendering, and events together.
-import "./app.js";
+import "./app.js?v=20260812-live-i18n";

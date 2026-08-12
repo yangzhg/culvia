@@ -135,17 +135,18 @@ class LLMConfigServiceTests(unittest.TestCase):
         self.assertEqual(env.persisted, {})
         self.assertEqual(env.secure, {})
 
-    def test_refresh_clears_layers_when_sqlite_or_keychain_load_fails(self) -> None:
+    def test_refresh_stops_without_replacing_layers_when_sqlite_load_fails(self) -> None:
         env = FakeLLMConfigEnvironment()
         env.persisted = {"model": "old"}
         env.secure = {"api_key": "old-key"}
         env.load_persisted_error = RuntimeError("broken sqlite")
         env.load_api_key_error = SecretStoreUnavailable("missing")
 
-        refresh_persisted_llm_config_action("scores.sqlite", env.dependencies())
+        with self.assertRaisesRegex(RuntimeError, "broken sqlite"):
+            refresh_persisted_llm_config_action("scores.sqlite", env.dependencies())
 
-        self.assertEqual(env.persisted, {})
-        self.assertEqual(env.secure, {})
+        self.assertEqual(env.persisted, {"model": "old"})
+        self.assertEqual(env.secure, {"api_key": "old-key"})
 
     def test_apply_persists_api_key_to_keychain_not_sqlite(self) -> None:
         env = FakeLLMConfigEnvironment()

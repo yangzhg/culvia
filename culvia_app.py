@@ -65,6 +65,7 @@ from culvia.llm_review_runner import (
     LlmReviewRunnerDependencies,
     run_llm_review_job as run_llm_review_job_with_dependencies,
 )
+from culvia.llm_provenance import resolve_llm_score_dataframe
 from culvia.llm_config_requests import llm_config_from_payload as _llm_config_from_payload
 from culvia.llm_config_service import (
     LLMConfigServiceDependencies,
@@ -128,6 +129,7 @@ from culvia.schema import (
     LLM_OVERALL_TECHNICAL_WEIGHT,
     LLM_PROMPT_PRESETS,
     LLM_REVIEW_FIELDS,
+    LLM_REVIEW_GENERATION_COLUMN,
     LLM_REVIEW_LABELS,
     MODEL_BASIC_TECHNICAL,
     MODEL_CAPABILITIES,
@@ -215,12 +217,15 @@ from culvia.scoring import (
     llm_review_custom_prompt,
     llm_review_endpoint,
     llm_review_model_name,
+    llm_review_prompt_version,
     llm_review_prompt_preset,
+    llm_review_provider,
     llm_review_status,
     llm_review_timeout,
     load_llm_config_from_sqlite,
     load_source_config_from_sqlite,
     load_analysis_insights,
+    load_latest_matching_analysis_insight_results,
     load_cache_records,
     mask_llm_api_key,
     normalize_score_dataframe,
@@ -550,6 +555,30 @@ def refresh_persisted_llm_config_for_state(cache_path: str | Path) -> None:
         set_persisted_llm_config({})
 
 
+def current_llm_score_dataframe(source_df: pd.DataFrame, cache_path: str | Path) -> pd.DataFrame:
+    normalized = normalize_score_dataframe(source_df)
+    refresh_persisted_llm_config_for_state(cache_path)
+    matches = {}
+    path = Path(cache_path).expanduser()
+    if path.suffix.lower() in SQLITE_CACHE_EXTENSIONS:
+        model = llm_review_model_name()
+        matches = load_latest_matching_analysis_insight_results(
+            path,
+            file_ids=frame_file_ids(normalized),
+            analyzer_key=MODEL_LLM_REVIEW,
+            provider=llm_review_provider(),
+            model=model,
+            model_version=model,
+            prompt_version=llm_review_prompt_version(),
+        )
+    return resolve_llm_score_dataframe(
+        normalized,
+        matches,
+        generation_column=LLM_REVIEW_GENERATION_COLUMN,
+        score_columns=tuple(f"{field}_0_10" for field in LLM_REVIEW_FIELDS),
+    ).dataframe
+
+
 def apply_llm_config(payload: dict[str, Any], cache_path: str | Path) -> None:
     apply_llm_config_action(payload, cache_path, llm_config_service_dependencies())
 
@@ -785,7 +814,13 @@ STATE_PAYLOAD_DEPENDENCIES = StatePayloadDependencies(
     load_photo_marks=load_photo_marks,
     dataframe_for_display=dataframe_for_display,
     selected_preview_for_display=selected_preview_for_display,
+    load_latest_matching_analysis_insight_results=load_latest_matching_analysis_insight_results,
     load_analysis_insights=load_analysis_insights,
+    llm_review_score_columns=tuple(f"{field}_0_10" for field in LLM_REVIEW_FIELDS),
+    llm_review_generation_column=LLM_REVIEW_GENERATION_COLUMN,
+    llm_review_provider=llm_review_provider,
+    llm_review_model_name=llm_review_model_name,
+    llm_review_prompt_version=llm_review_prompt_version,
     serialize_photo=serialize_photo,
     curation_summary=curation_summary,
     application_info=application_info,
@@ -1229,6 +1264,7 @@ def scoring_runner_dependencies() -> ScoringRunnerDependencies:
 def llm_review_runner_dependencies() -> LlmReviewRunnerDependencies:
     return LlmReviewRunnerDependencies(
         default_cache_path=DEFAULT_CACHE_PATH,
+        refresh_persisted_llm_config=refresh_persisted_llm_config,
         llm_review_configured=llm_review_configured,
         llm_review_status=llm_review_status,
         sanitize_uploaded_paths=sanitize_uploaded_paths,
@@ -1239,7 +1275,7 @@ def llm_review_runner_dependencies() -> LlmReviewRunnerDependencies:
         apply_llm_review_scores=apply_llm_review_scores,
         load_cache_records=load_cache_records,
         save_cache_records=save_cache_records,
-        load_analysis_insights=load_analysis_insights,
+        load_latest_matching_analysis_insight_results=load_latest_matching_analysis_insight_results,
         save_analysis_insights=save_analysis_insights,
         thumbnail_url=thumbnail_url,
     )
@@ -1392,6 +1428,7 @@ async def api_mark_color(request: Request) -> JSONResponse:
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
         filters = dict(state["filters"])
         cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+    source_df = current_llm_score_dataframe(source_df, cache_path)
     try:
         action = color_targets_action(cache_path, source_df, filters, payload, dataframe_for_display)
     except CurationServiceError as error:
@@ -1411,6 +1448,7 @@ async def api_mark_status(request: Request) -> JSONResponse:
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
         filters = dict(state["filters"])
         cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+    source_df = current_llm_score_dataframe(source_df, cache_path)
     try:
         action = status_targets_action(cache_path, source_df, filters, payload, dataframe_for_display)
     except CurationServiceError as error:
@@ -1448,6 +1486,7 @@ async def api_accept_marks(request: Request) -> JSONResponse:
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
         filters = dict(state["filters"])
         cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+    source_df = current_llm_score_dataframe(source_df, cache_path)
     try:
         action = accept_targets_action(cache_path, source_df, filters, payload, dataframe_for_display)
     except CurationServiceError as error:
@@ -1525,6 +1564,7 @@ async def api_export(request: Request) -> Response:
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
         filters = dict(state["filters"])
         cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+    source_df = current_llm_score_dataframe(source_df, cache_path)
     csv_bytes = filtered_export_csv_action(
         source_df,
         filters,
@@ -1543,7 +1583,9 @@ async def api_export_selected_csv(request: Request) -> Response:
     with state_store.lock:
         state = state_store.data
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
+        filters = dict(state["filters"])
         cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+    source_df = enrich_scores_for_display(current_llm_score_dataframe(source_df, cache_path), filters)
     csv_bytes = selected_export_csv_action(source_df, cache_path, normalize_dataframe=normalize_score_dataframe)
     headers = {"Content-Disposition": 'attachment; filename="culvia_scores_selected.csv"'}
     return Response(csv_bytes, media_type="text/csv; charset=utf-8", headers=headers)

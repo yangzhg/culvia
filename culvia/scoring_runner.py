@@ -46,6 +46,20 @@ def run_scoring_job(
     job_service.bind_thread_job(job_id)
     try:
         source_request = source_request_from_payload(payload, default_cache_path=dependencies.default_cache_path)
+        mode = source_request.mode
+        folders = source_request.folders
+        cache_path = source_request.cache_path
+        uploaded_paths = dependencies.sanitize_uploaded_paths(source_request.uploaded_paths)
+        network_mode = dependencies.normalize_network_mode(payload.get("networkMode"))
+        selected_models = dependencies.normalize_selected_models(payload.get("selectedModels"))
+        dependencies.refresh_persisted_llm_config(cache_path)
+        if dependencies.llm_review_model_key in selected_models and not dependencies.llm_review_configured():
+            selected_models = [
+                model_key for model_key in selected_models if model_key != dependencies.llm_review_model_key
+            ]
+
+        _write_source_state(state_store, mode, folders, cache_path, uploaded_paths, network_mode, selected_models)
+        dependencies.save_source_config(_source_payload(mode, folders, cache_path, uploaded_paths), cache_path)
     except Exception as exc:
         job_service.update(
             running=False,
@@ -65,18 +79,6 @@ def run_scoring_job(
         job_service.reset_control(job_id)
         job_service.clear_thread_job()
         return
-    mode = source_request.mode
-    folders = source_request.folders
-    cache_path = source_request.cache_path
-    uploaded_paths = dependencies.sanitize_uploaded_paths(source_request.uploaded_paths)
-    network_mode = dependencies.normalize_network_mode(payload.get("networkMode"))
-    selected_models = dependencies.normalize_selected_models(payload.get("selectedModels"))
-    dependencies.refresh_persisted_llm_config(cache_path)
-    if dependencies.llm_review_model_key in selected_models and not dependencies.llm_review_configured():
-        selected_models = [model_key for model_key in selected_models if model_key != dependencies.llm_review_model_key]
-
-    _write_source_state(state_store, mode, folders, cache_path, uploaded_paths, network_mode, selected_models)
-    dependencies.save_source_config(_source_payload(mode, folders, cache_path, uploaded_paths), cache_path)
 
     job_service.update(
         running=True,
@@ -154,6 +156,11 @@ def run_scoring_job(
             job_service.wait_if_paused(path)
             job_service.raise_if_cancelled()
 
+        def publish_result(result_df: pd.DataFrame) -> None:
+            with state_store.lock:
+                state_store.data["scores_df"] = result_df
+                state_store.data["source"].update(_source_payload(mode, folders, cache_path, uploaded_paths))
+
         scored_df, device = dependencies.score_image_paths(
             paths,
             cache_path=active_cache_path,
@@ -170,10 +177,9 @@ def run_scoring_job(
             ),
             selected_models=selected_models,
             progress_callback=update_score_progress,
+            publish_result=publish_result,
         )
-        with state_store.lock:
-            state_store.data["scores_df"] = scored_df
-            state_store.data["source"].update(_source_payload(mode, folders, cache_path, uploaded_paths))
+        publish_result(scored_df)
         job_service.update(
             running=False,
             phase="done",

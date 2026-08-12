@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
 from culvia import scoring
 from culvia.curation import save_photo_mark
 from culvia.insight_store import AnalysisInsight
+from culvia.llm_runtime import llm_prompt_signature
 from culvia.photo_scan import build_file_id
 
 
@@ -184,9 +185,13 @@ def write_fixture(root: Path, *, count: int = DEFAULT_COUNT, force: bool = False
         create_fixture_image(path, index=index)
         records.append(score_record(path, index=index))
 
+    insights = runtime_insights(records)
+    generation_by_file_id = {insight.file_id: insight.created_at for insight in insights}
+    for record in records:
+        record[scoring.LLM_REVIEW_GENERATION_COLUMN] = generation_by_file_id[str(record["file_id"])]
     df = pd.DataFrame(records, columns=scoring.CSV_COLUMNS)
     scoring.save_cache_records(df, cache_path)
-    scoring.save_analysis_insights(runtime_insights(records), cache_path)
+    scoring.save_analysis_insights(insights, cache_path)
 
     statuses = ("pick", "hold", "reject", "")
     colors = ("red", "yellow", "green", "blue", "purple", "")
@@ -223,6 +228,14 @@ def write_fixture(root: Path, *, count: int = DEFAULT_COUNT, force: bool = False
 
 
 def runtime_insights(records: Sequence[dict[str, object]]) -> list[AnalysisInsight]:
+    prompt_preset = scoring.DEFAULT_LLM_PROMPT_PRESET
+    prompt_text = str(scoring.LLM_PROMPT_PRESETS[prompt_preset]["prompt"])
+    prompt_version = llm_prompt_signature(
+        scoring.LLM_REVIEW_PROMPT_VERSION,
+        "image",
+        prompt_preset,
+        prompt_text,
+    )
     insights: list[AnalysisInsight] = []
     for index, record in enumerate(records):
         score = round(7.2 + (index % 4) * 0.2, 1)
@@ -231,10 +244,10 @@ def runtime_insights(records: Sequence[dict[str, object]]) -> list[AnalysisInsig
             AnalysisInsight(
                 file_id=str(record["file_id"]),
                 analyzer_key=scoring.MODEL_LLM_REVIEW,
-                provider="runtime-fixture",
-                model="fixture-vision-reviewer",
-                model_version="fixture-vision-reviewer",
-                prompt_version=scoring.LLM_REVIEW_PROMPT_VERSION,
+                provider="openai-compatible",
+                model=scoring.DEFAULT_LLM_MODEL,
+                model_version=scoring.DEFAULT_LLM_MODEL,
+                prompt_version=prompt_version,
                 score=score,
                 confidence=0.86,
                 title=LONG_INSIGHT_TITLE if long_text else "Quiet portrait with a clean natural rhythm",

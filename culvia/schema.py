@@ -235,6 +235,7 @@ MODEL_REPO_CACHE_DIRS = sorted(
 )
 
 RECOMMENDATION_COLUMN = "recommendation_0_10"
+LLM_REVIEW_GENERATION_COLUMN = "llm_review_generation"
 SORT_FIELD_LABELS = {
     RECOMMENDATION_COLUMN: "推荐指数",
     "overall_0_10": "综合表现",
@@ -261,6 +262,7 @@ BASE_RECORD_COLUMNS = ("file_id", "path", "folder", "filename", "error")
 CSV_COLUMNS = [
     *BASE_RECORD_COLUMNS,
     RECOMMENDATION_COLUMN,
+    LLM_REVIEW_GENERATION_COLUMN,
     *(column for group in FIELD_GROUPS for column in group.cache_columns),
 ]
 

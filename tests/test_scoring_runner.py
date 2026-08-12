@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -84,6 +85,35 @@ def _unused_score_image_paths(*_args: object, **_kwargs: object) -> tuple[pd.Dat
 
 
 class ScoringRunnerTests(unittest.TestCase):
+    def test_config_refresh_failure_ends_job_without_starting_scoring(self) -> None:
+        cache_path = "/tmp/broken-config.sqlite"
+        store = make_store(cache_path)
+        service = ScoringJobService(store)
+        job_id = service.reserve()
+        self.assertTrue(job_id)
+
+        def fail_refresh(_cache_path: str) -> None:
+            raise RuntimeError("broken llm config")
+
+        dependencies = replace(
+            make_dependencies(),
+            refresh_persisted_llm_config=fail_refresh,
+            scan_image_paths=lambda _folders: (_ for _ in ()).throw(AssertionError("scan must not run")),
+        )
+        run_scoring_job(
+            job_id,
+            {"mode": "folders", "folders": ["/photos"], "cachePath": cache_path},
+            store,
+            service,
+            dependencies,
+        )
+
+        with store.lock:
+            self.assertFalse(store.data["job"]["running"])
+            self.assertEqual(store.data["job"]["phase"], "error")
+            self.assertIn("broken llm config", store.data["job"]["error"])
+        self.assertEqual(service.active_thread_job_id(), "")
+
     def test_empty_folder_source_updates_injected_state_and_filters_unconfigured_llm(self) -> None:
         calls: dict[str, Any] = {}
         cache_path = "/tmp/empty.sqlite"
@@ -143,19 +173,20 @@ class ScoringRunnerTests(unittest.TestCase):
                 kwargs["progress_callback"](0, 1, image_path, "started")
                 kwargs["model_loader"]("cpu")
                 kwargs["clip_reference_loader"]("cpu")
-                return (
-                    pd.DataFrame(
-                        [
-                            {
-                                "file_id": "photo-1",
-                                "path": str(image_path),
-                                "filename": image_path.name,
-                                "error": "",
-                            }
-                        ]
-                    ),
-                    "mps",
+                result = pd.DataFrame(
+                    [
+                        {
+                            "file_id": "photo-1",
+                            "path": str(image_path),
+                            "filename": image_path.name,
+                            "error": "",
+                        }
+                    ]
                 )
+                kwargs["publish_result"](result)
+                with store.lock:
+                    calls["published_before_return"] = store.data["scores_df"].equals(result)
+                return result, "mps"
 
             run_scoring_job(
                 job_id,
@@ -186,6 +217,7 @@ class ScoringRunnerTests(unittest.TestCase):
             )
             self.assertEqual(store.data["job"]["currentFile"], "")
         self.assertEqual(calls["paths"], [image_path])
+        self.assertTrue(calls["published_before_return"])
         self.assertFalse(calls["use_cache"])
         self.assertEqual(calls["cache_path"], cache_path)
         self.assertEqual(calls["source_configs"][0][0]["mode"], "uploads")

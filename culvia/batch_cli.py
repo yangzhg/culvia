@@ -72,9 +72,21 @@ def print_top_scores(df: Any, limit: int = 20, *, runtime: Any | None = None) ->
     print(successful.head(limit)[columns].to_string(index=False))
 
 
+def refresh_cache_llm_config(cache_path: str, *, runtime: Any) -> None:
+    if not cache_path:
+        return
+    config = runtime.load_llm_config_from_sqlite(cache_path)
+    runtime.set_persisted_llm_config(config)
+
+
 def main(argv: list[str] | None = None, *, runtime: Any | None = None) -> int:
     scoring = runtime or load_scoring_runtime()
     args = parse_args(argv, runtime=scoring)
+    try:
+        refresh_cache_llm_config(args.cache, runtime=scoring)
+    except Exception:
+        print("Error: failed to read LLM configuration from the cache; scoring was not started.", file=sys.stderr)
+        return 2
     folders = args.folders or scoring.DEFAULT_PHOTO_DIRS
 
     paths, warnings = scoring.scan_image_paths(folders)

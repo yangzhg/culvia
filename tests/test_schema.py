@@ -10,6 +10,7 @@ class SchemaTests(unittest.TestCase):
         self.assertNotIn(schema.MODEL_LLM_REVIEW, schema.DEFAULT_SELECTED_MODELS)
         self.assertIn("llm_review_overall_0_10", schema.CSV_COLUMNS)
         self.assertIn("llm_composition_0_10", schema.CSV_COLUMNS)
+        self.assertIn(schema.LLM_REVIEW_GENERATION_COLUMN, schema.CSV_COLUMNS)
         self.assertEqual(schema.MODEL_CAPABILITIES[schema.MODEL_LLM_REVIEW].provider, "openai-compatible")
         self.assertTrue(schema.MODEL_CAPABILITIES[schema.MODEL_LLM_REVIEW].supports_text_insights)
 

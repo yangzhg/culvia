@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import os
 import tempfile
 import unittest
@@ -863,6 +865,7 @@ class ServerApiTests(unittest.TestCase):
                         "filename": pick_path.name,
                         "error": "",
                         "overall_0_10": 6.1,
+                        scoring.LLM_REVIEW_GENERATION_COLUMN: 1.0,
                         "llm_review_overall_0_10": 8.2,
                     },
                     {
@@ -872,6 +875,7 @@ class ServerApiTests(unittest.TestCase):
                         "filename": reject_path.name,
                         "error": "",
                         "overall_0_10": 8.8,
+                        scoring.LLM_REVIEW_GENERATION_COLUMN: 2.0,
                         "llm_review_overall_0_10": 5.2,
                     },
                     {
@@ -884,6 +888,33 @@ class ServerApiTests(unittest.TestCase):
                         "llm_review_overall_0_10": None,
                     },
                 ]
+            )
+            culvia_app.refresh_persisted_llm_config_for_state(cache_path)
+            current_model = scoring.llm_review_model_name()
+            scoring.save_analysis_insights(
+                [
+                    scoring.AnalysisInsight(
+                        file_id="image-1",
+                        analyzer_key=scoring.MODEL_LLM_REVIEW,
+                        provider=scoring.llm_review_provider(),
+                        model=current_model,
+                        model_version=current_model,
+                        prompt_version=scoring.llm_review_prompt_version(),
+                        score=8.2,
+                        created_at=1.0,
+                    ),
+                    scoring.AnalysisInsight(
+                        file_id="image-2",
+                        analyzer_key=scoring.MODEL_LLM_REVIEW,
+                        provider=scoring.llm_review_provider(),
+                        model=current_model,
+                        model_version=current_model,
+                        prompt_version=scoring.llm_review_prompt_version(),
+                        score=5.2,
+                        created_at=2.0,
+                    ),
+                ],
+                cache_path,
             )
             store = AppStateStore(
                 create_initial_state(
@@ -951,6 +982,113 @@ class ServerApiTests(unittest.TestCase):
             self.assertEqual(history_response.json()["actions"][1]["undoState"], "undone")
             self.assertEqual(no_picks_response.status_code, 400)
             self.assertEqual(no_picks_response.json()["errorCode"], "exportNoPicks")
+
+    def test_stale_llm_scores_are_excluded_from_mutations_and_csv_exports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = str(Path(tmp) / "scores.sqlite")
+            culvia_app.refresh_persisted_llm_config_for_state(cache_path)
+            current_model = scoring.llm_review_model_name()
+            source_df = pd.DataFrame(
+                [
+                    {
+                        "file_id": "current",
+                        "path": "/photos/current.jpg",
+                        "folder": "/photos",
+                        "filename": "current.jpg",
+                        "error": "",
+                        "overall_0_10": 4.0,
+                        scoring.LLM_REVIEW_GENERATION_COLUMN: 10.0,
+                        "llm_review_overall_0_10": 9.0,
+                        "llm_aesthetic_overall_0_10": 9.0,
+                        "llm_technical_overall_0_10": 9.0,
+                    },
+                    {
+                        "file_id": "stale",
+                        "path": "/photos/stale.jpg",
+                        "folder": "/photos",
+                        "filename": "stale.jpg",
+                        "error": "",
+                        "overall_0_10": 4.0,
+                        scoring.LLM_REVIEW_GENERATION_COLUMN: 1.0,
+                        "llm_review_overall_0_10": 9.7,
+                        "llm_aesthetic_overall_0_10": 10.0,
+                        "llm_technical_overall_0_10": 10.0,
+                    },
+                ]
+            )
+            scoring.save_analysis_insights(
+                [
+                    scoring.AnalysisInsight(
+                        file_id="current",
+                        analyzer_key=scoring.MODEL_LLM_REVIEW,
+                        provider=scoring.llm_review_provider(),
+                        model=current_model,
+                        model_version=current_model,
+                        prompt_version=scoring.llm_review_prompt_version(),
+                        score=9.0,
+                        created_at=10.0,
+                    )
+                ],
+                cache_path,
+            )
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=source_df,
+                    default_photo_dirs=["/photos"],
+                    default_cache_path=cache_path,
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[scoring.MODEL_LLM_REVIEW],
+                )
+            )
+            with store.lock:
+                store.data["filters"]["minLlmReview"] = 8.5
+            client = TestClient(culvia_app.create_app(store))
+
+            state_response = client.get("/api/state")
+            color_response = client.post("/api/mark/color", json={"scope": "filtered", "colorLabel": "red"})
+            status_response = client.post("/api/mark/status", json={"scope": "filtered", "status": "pick"})
+            batch_marks = photo_curation.load_photo_marks(cache_path, ["current", "stale"])
+            stale_llm_response = client.post(
+                "/api/mark/accept",
+                json={"scope": "selected", "fileIds": ["stale"], "basis": "llm"},
+            )
+            current_llm_response = client.post(
+                "/api/mark/accept",
+                json={"scope": "selected", "fileIds": ["current"], "basis": "llm"},
+            )
+            stale_model_response = client.post(
+                "/api/mark/accept",
+                json={"scope": "selected", "fileIds": ["stale"], "basis": "model"},
+            )
+            stale_model_mark = photo_curation.load_photo_marks(cache_path, ["stale"])["stale"]
+            client.post("/api/mark", json={"fileId": "stale", "status": "pick"})
+            filtered_response = client.get("/api/export")
+            selected_response = client.get("/api/export/selected")
+
+            self.assertEqual([photo["fileId"] for photo in state_response.json()["photos"]], ["current"])
+            self.assertEqual(color_response.json()["action"]["colored"], 1)
+            self.assertEqual(status_response.json()["action"]["marked"], 1)
+            self.assertEqual(batch_marks["current"].color_label, "red")
+            self.assertNotIn("stale", batch_marks)
+            self.assertEqual(stale_llm_response.json()["action"]["accepted"], 0)
+            self.assertEqual(stale_llm_response.json()["action"]["skipped"], 1)
+            self.assertEqual(current_llm_response.json()["action"]["accepted"], 1)
+            self.assertEqual(stale_model_response.json()["action"]["accepted"], 1)
+            self.assertEqual(stale_model_mark.status, "reject")
+            self.assertEqual(float(stale_model_mark.accepted_score or 0), 4.0)
+
+            filtered_rows = list(csv.DictReader(io.StringIO(filtered_response.content.decode("utf-8-sig"))))
+            self.assertEqual([row["file_id"] for row in filtered_rows], ["current"])
+            selected_rows = {
+                row["file_id"]: row
+                for row in csv.DictReader(io.StringIO(selected_response.content.decode("utf-8-sig")))
+            }
+            self.assertEqual(set(selected_rows), {"current", "stale"})
+            self.assertEqual(selected_rows["current"]["llm_review_overall_0_10"], "9.0")
+            self.assertEqual(selected_rows["current"][scoring.LLM_REVIEW_GENERATION_COLUMN], "10.0")
+            self.assertEqual(selected_rows["stale"]["llm_review_overall_0_10"], "")
+            self.assertEqual(selected_rows["stale"][scoring.LLM_REVIEW_GENERATION_COLUMN], "")
+            self.assertEqual(float(selected_rows["stale"]["recommendation_0_10"]), 4.0)
 
     def test_accept_marks_can_apply_to_selected_photo_ids(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

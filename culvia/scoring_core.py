@@ -8,18 +8,24 @@ from typing import Any
 import pandas as pd
 
 from culvia.cache_schema import is_sqlite_cache_path
-from culvia.insight_store import AnalysisInsight
+from culvia.insight_store import AnalysisInsight, AnalysisInsightMatch
+from culvia.llm_provenance import resolve_llm_score_dataframe
 from culvia.schema import (
     CSV_COLUMNS,
+    LLM_REVIEW_FIELDS,
+    LLM_REVIEW_GENERATION_COLUMN,
+    MODEL_BASIC_TECHNICAL,
     MODEL_CLIP_AESTHETIC,
     MODEL_CLIP_IQA,
     MODEL_CORE_AESTHETIC,
     MODEL_LLM_REVIEW,
-    MODEL_BASIC_TECHNICAL,
+    RECOMMENDATION_COLUMN,
+    score_column,
 )
 
 ProgressCallback = Callable[[int, int, Path, str], None]
 ModelLoader = Callable[[str], object]
+ResultPublisher = Callable[[pd.DataFrame], None]
 
 
 @dataclass
@@ -53,8 +59,8 @@ class ScoreImagePathDependencies:
     score_clip_reference_image: Callable[[Path, object], dict[str, float]]
     apply_clip_reference_scores: Callable[[dict[str, object], dict[str, float]], dict[str, object]]
     score_llm_review_image: Callable[..., Any]
-    apply_llm_review_scores: Callable[[dict[str, object], Mapping[str, float]], dict[str, object]]
-    load_analysis_insights: Callable[..., list[AnalysisInsight]]
+    apply_llm_review_scores: Callable[..., dict[str, object]]
+    load_latest_matching_analysis_insight_results: Callable[..., Mapping[str, AnalysisInsightMatch]]
     save_analysis_insights: Callable[[Iterable[AnalysisInsight], str | Path], None]
     llm_review_prompt_version: Callable[[], str]
     llm_review_provider: Callable[[], str]
@@ -71,6 +77,7 @@ def score_image_paths(
     clip_reference_loader: ModelLoader,
     selected_models: Iterable[str] | None = None,
     progress_callback: ProgressCallback | None = None,
+    publish_result: ResultPublisher | None = None,
 ) -> tuple[pd.DataFrame, str]:
     path_list = [Path(path).expanduser() for path in paths]
     active_models = dependencies.normalize_selected_models(selected_models)
@@ -92,13 +99,13 @@ def score_image_paths(
         use_cache=use_cache,
         dependencies=dependencies,
     )
-    _refresh_llm_review_needs(
+    current_llm_file_ids = _resolve_cached_llm_reviews(
         entries,
-        active_models,
         cache_path=cache_path,
         use_cache=use_cache,
         dependencies=dependencies,
     )
+    _refresh_llm_review_needs(entries, active_models, current_llm_file_ids=current_llm_file_ids)
 
     loaded_model: object | None = None
     if pending_core_count:
@@ -164,7 +171,12 @@ def score_image_paths(
                         file_id=entry.file_id,
                         score_context=record,
                     )
-                    record = dependencies.apply_llm_review_scores(record, llm_output.scores)
+                    generation = _llm_output_generation(llm_output)
+                    record = dependencies.apply_llm_review_scores(
+                        record,
+                        llm_output.scores,
+                        generation=generation,
+                    )
                     insights.extend(llm_output.insights)
                     status = "reviewed"
                     if progress_callback is not None:
@@ -181,6 +193,9 @@ def score_image_paths(
     result_df = dependencies.normalize_score_dataframe(pd.DataFrame(rows))
     if cache_path:
         dependencies.save_cache_records(result_df, cache_path, existing_cache)
+    if publish_result is not None:
+        publish_result(result_df)
+    if cache_path:
         if insights:
             dependencies.save_analysis_insights(insights, cache_path)
 
@@ -216,50 +231,79 @@ def _build_entries(
     return entries, pending_core_count, pending_clip_count
 
 
-def _refresh_llm_review_needs(
+def _resolve_cached_llm_reviews(
     entries: list[ScoreEntry],
-    active_models: Iterable[str],
     *,
     cache_path: str | Path | None,
     use_cache: bool,
     dependencies: ScoreImagePathDependencies,
-) -> None:
-    active_model_set = set(active_models)
-    if MODEL_LLM_REVIEW not in active_model_set or not cache_path or not use_cache:
-        return
+) -> frozenset[str]:
+    if not cache_path or not use_cache:
+        return frozenset()
 
-    matching_llm_review_file_ids = _matching_llm_review_file_ids(entries, cache_path, dependencies)
+    matching_llm_review_results = _matching_llm_review_results(entries, cache_path, dependencies)
+    cached_entries = [entry for entry in entries if not entry.pre_error and entry.cached_record is not None]
+    resolution = resolve_llm_score_dataframe(
+        pd.DataFrame([entry.cached_record for entry in cached_entries]),
+        matching_llm_review_results,
+        generation_column=LLM_REVIEW_GENERATION_COLUMN,
+        score_columns=tuple(score_column(field) for field in LLM_REVIEW_FIELDS),
+        derived_columns=(RECOMMENDATION_COLUMN,),
+    )
+    resolved_by_id = {
+        str(row["file_id"]): row.to_dict()
+        for _, row in resolution.dataframe.iterrows()
+        if str(row.get("file_id") or "")
+    }
     for entry in entries:
-        if (
-            not entry.pre_error
-            and entry.cached_record is not None
-            and not entry.needs.get(MODEL_LLM_REVIEW)
-            and entry.file_id not in matching_llm_review_file_ids
-        ):
+        if entry.cached_record is not None and entry.file_id in resolved_by_id:
+            entry.cached_record = resolved_by_id[entry.file_id]
+    return resolution.current_file_ids
+
+
+def _refresh_llm_review_needs(
+    entries: list[ScoreEntry],
+    active_models: Iterable[str],
+    *,
+    current_llm_file_ids: frozenset[str],
+) -> None:
+    if MODEL_LLM_REVIEW not in set(active_models):
+        return
+    for entry in entries:
+        if not entry.pre_error and entry.cached_record is not None and entry.file_id not in current_llm_file_ids:
             entry.needs[MODEL_LLM_REVIEW] = True
 
 
-def _matching_llm_review_file_ids(
+def _matching_llm_review_results(
     entries: Iterable[ScoreEntry],
     cache_path: str | Path,
     dependencies: ScoreImagePathDependencies,
-) -> set[str]:
+) -> Mapping[str, AnalysisInsightMatch]:
     cache_path_obj = Path(cache_path).expanduser()
     if not is_sqlite_cache_path(cache_path_obj) or not cache_path_obj.exists():
-        return set()
+        return {}
 
     current_prompt_version = dependencies.llm_review_prompt_version()
     current_provider = dependencies.llm_review_provider()
     current_model = dependencies.llm_review_model_name()
     file_ids = [entry.file_id for entry in entries if not entry.pre_error]
-    matching_file_ids: set[str] = set()
-    for insight in dependencies.load_analysis_insights(cache_path_obj, file_ids=file_ids):
-        if (
-            insight.analyzer_key == MODEL_LLM_REVIEW
-            and insight.provider == current_provider
-            and insight.model == current_model
-            and insight.model_version == current_model
-            and insight.prompt_version == current_prompt_version
-        ):
-            matching_file_ids.add(insight.file_id)
-    return matching_file_ids
+    return dependencies.load_latest_matching_analysis_insight_results(
+        cache_path_obj,
+        file_ids=file_ids,
+        analyzer_key=MODEL_LLM_REVIEW,
+        provider=current_provider,
+        model=current_model,
+        model_version=current_model,
+        prompt_version=current_prompt_version,
+    )
+
+
+def _llm_output_generation(output: Any) -> float:
+    generations = {
+        float(insight.created_at)
+        for insight in output.insights
+        if insight.analyzer_key == MODEL_LLM_REVIEW and not pd.isna(insight.created_at)
+    }
+    if len(generations) != 1:
+        raise ValueError("LLM review output must contain exactly one generation")
+    return generations.pop()

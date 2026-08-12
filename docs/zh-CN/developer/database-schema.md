@@ -24,9 +24,11 @@ Culvia 使用 SQLite 保存评分结果、人工选片数据、大模型 insight
 | score columns | `REAL` | 由 `ScoreFieldGroup.cache_columns` 生成 |
 | text columns | `TEXT` | `CSV_COLUMNS` 中的文件元数据和错误字段 |
 | `recommendation_0_10` | `REAL` | 综合推荐分 |
+| `llm_review_generation` | `REAL` | 与对应大模型 insight 共享的结果代次；过期或未完整发布的评审分数会被忽略 |
 | `updated_at` | `REAL` | Unix 时间戳 |
 
 评分字段包含 `culvia.schema` 中定义的本地审美、技术、CLIP 参考、CLIP-IQA 和大模型评审维度。
+新增缓存字段时，现有评分表会原地扩展。
 
 ## `photo_analysis_insights`
 
@@ -58,6 +60,11 @@ Culvia 使用 SQLite 保存评分结果、人工选片数据、大模型 insight
 | `suggestions_json` | `TEXT` |
 | `raw_json` | `TEXT` |
 | `created_at` | `REAL` |
+
+对大模型评审而言，`created_at` 同时也是写入 `culvia_scores.llm_review_generation` 的结果代次。
+只有最新 insight 的身份与代次都和评分行一致时，界面与缓存才会复用这次评审。
+旧数据库升级后，缺少代次的评分行会视为过期并重新评审，避免因为两次评审碰巧总分相同，
+就把不属于同一代次的各维度分数错误绑定在一起。
 
 ## `photo_app_config`
 

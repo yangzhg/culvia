@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Mapping
 
 from culvia.cache_schema import APP_CONFIG_TABLE, ensure_cache_schema
-from culvia.insight_store import AnalysisInsight, AnalysisInsightStore, AppConfigStore
+from culvia.insight_store import AnalysisInsight, AnalysisInsightMatch, AnalysisInsightStore, AppConfigStore
 
 
 SCORE_COLUMNS = ("file_id", "path", "folder", "filename", "error")
@@ -83,6 +83,68 @@ class InsightStoreTests(unittest.TestCase):
 
             self.assertEqual(store.load(cache_path), [])
             self.assertFalse(cache_path.exists())
+
+    def test_analysis_insight_store_matches_latest_identity_in_bounded_batches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "scores.sqlite"
+            writer = AnalysisInsightStore(schema_ensurer=ensure_test_schema)
+            writer.save(
+                [
+                    AnalysisInsight(
+                        file_id="image-current",
+                        analyzer_key="llm_review",
+                        provider="unit",
+                        model="mock-vlm",
+                        model_version="mock-vlm",
+                        prompt_version="current",
+                        score=8.0,
+                        created_at=2.0,
+                    ),
+                    AnalysisInsight(
+                        file_id="image-stale",
+                        analyzer_key="llm_review",
+                        provider="unit",
+                        model="mock-vlm",
+                        model_version="mock-vlm",
+                        prompt_version="stale",
+                        created_at=2.0,
+                    ),
+                    AnalysisInsight(
+                        file_id="image-stale",
+                        analyzer_key="llm_review",
+                        provider="unit",
+                        model="mock-vlm",
+                        model_version="mock-vlm",
+                        prompt_version="current",
+                        created_at=1.0,
+                    ),
+                ],
+                cache_path,
+            )
+
+            def ensure_limited_schema(conn: sqlite3.Connection) -> None:
+                ensure_test_schema(conn)
+                conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 7)
+
+            store = AnalysisInsightStore(schema_ensurer=ensure_limited_schema, query_batch_size=2)
+
+            file_ids = [f"missing-{index}" for index in range(1001)]
+            file_ids.extend(["image-current", "image-stale"])
+            matches = store.latest_matching_results(
+                cache_path,
+                file_ids=file_ids,
+                analyzer_key="llm_review",
+                provider="unit",
+                model="mock-vlm",
+                model_version="mock-vlm",
+                prompt_version="current",
+            )
+
+            self.assertEqual(matches, {"image-current": AnalysisInsightMatch(2.0)})
+            self.assertEqual(
+                {insight.file_id for insight in store.load(cache_path, file_ids=file_ids)},
+                {"image-current", "image-stale"},
+            )
 
     def test_app_config_store_does_not_persist_api_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

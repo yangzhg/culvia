@@ -8,14 +8,16 @@ from typing import Any
 import pandas as pd
 
 from culvia.app_state import AppStateStore
-from culvia.insight_store import AnalysisInsight
+from culvia.insight_store import AnalysisInsight, AnalysisInsightMatch
 from culvia.job_service import JobCancelled, ScoringJobService
 from culvia.job_text import exception_text, text_ref
+from culvia.llm_provenance import resolve_llm_score_dataframe
 from culvia.llm_runtime import AnalyzerOutput
 from culvia.schema import (
     CSV_COLUMNS,
     FIELD_GROUPS,
     LLM_REVIEW_FIELDS,
+    LLM_REVIEW_GENERATION_COLUMN,
     MODEL_LLM_REVIEW,
     RECOMMENDATION_COLUMN,
     score_column,
@@ -30,6 +32,7 @@ ScoreLlmReviewImage = Callable[[str | Path, str, Mapping[str, object] | None], A
 @dataclass(frozen=True)
 class LlmReviewRunnerDependencies:
     default_cache_path: str
+    refresh_persisted_llm_config: Callable[[str], None]
     llm_review_configured: Callable[[], bool]
     llm_review_status: Callable[[], Mapping[str, object]]
     sanitize_uploaded_paths: Callable[[object], list[Path]]
@@ -37,10 +40,10 @@ class LlmReviewRunnerDependencies:
     build_file_id: Callable[[str | Path], str]
     normalize_score_dataframe: Callable[[pd.DataFrame], pd.DataFrame]
     score_llm_review_image: ScoreLlmReviewImage
-    apply_llm_review_scores: Callable[[dict[str, object], Mapping[str, float]], dict[str, object]]
+    apply_llm_review_scores: Callable[..., dict[str, object]]
     load_cache_records: Callable[[str | Path], pd.DataFrame]
     save_cache_records: Callable[[pd.DataFrame, str | Path, pd.DataFrame | None], None]
-    load_analysis_insights: Callable[[str | Path, list[str] | None], list[AnalysisInsight]]
+    load_latest_matching_analysis_insight_results: Callable[..., Mapping[str, AnalysisInsightMatch]]
     save_analysis_insights: Callable[[Sequence[AnalysisInsight], str | Path], None]
     thumbnail_url: Callable[[str, int], str]
 
@@ -54,6 +57,9 @@ def run_llm_review_job(
 ) -> None:
     job_service.bind_thread_job(job_id)
     try:
+        source_request = source_request_from_payload(payload, default_cache_path=dependencies.default_cache_path)
+        cache_path = source_request.cache_path
+        dependencies.refresh_persisted_llm_config(cache_path)
         if not dependencies.llm_review_configured():
             job_service.update(
                 running=False,
@@ -65,8 +71,6 @@ def run_llm_review_job(
             job_service.reset_control(job_id)
             return
 
-        source_request = source_request_from_payload(payload, default_cache_path=dependencies.default_cache_path)
-        cache_path = source_request.cache_path
         uploaded_paths = dependencies.sanitize_uploaded_paths(source_request.uploaded_paths)
         status = dependencies.llm_review_status()
         provider = str(status.get("provider") or "")
@@ -86,15 +90,26 @@ def run_llm_review_job(
 
         existing_cache = dependencies.load_cache_records(cache_path)
         file_ids = [str(value) for value in source_df.get("file_id", pd.Series(dtype=object)).tolist() if str(value)]
-        insights = dependencies.load_analysis_insights(cache_path, file_ids)
-        current_insight_ids = _current_llm_insight_ids(
-            insights,
+        current_insight_results = dependencies.load_latest_matching_analysis_insight_results(
+            cache_path,
+            file_ids=file_ids,
+            analyzer_key=MODEL_LLM_REVIEW,
             provider=provider,
             model=model,
+            model_version=model,
             prompt_version=prompt_version,
         )
+        resolution = resolve_llm_score_dataframe(
+            source_df,
+            current_insight_results,
+            generation_column=LLM_REVIEW_GENERATION_COLUMN,
+            score_columns=tuple(score_column(field) for field in LLM_REVIEW_FIELDS),
+        )
+        source_df = dependencies.normalize_score_dataframe(resolution.dataframe)
         pending_rows = [
-            row.to_dict() for _, row in source_df.iterrows() if _needs_llm_review(row.to_dict(), current_insight_ids)
+            row.to_dict()
+            for _, row in source_df.iterrows()
+            if _needs_llm_review(row.to_dict(), resolution.current_file_ids)
         ]
 
         total = len(pending_rows)
@@ -152,13 +167,19 @@ def run_llm_review_job(
                 completedEvaluations=[],
             )
             output = dependencies.score_llm_review_image(path, file_id, record)
-            updated_record = dependencies.apply_llm_review_scores(dict(record), output.scores)
-            scored_df = _replace_record(scored_df, updated_record, dependencies.normalize_score_dataframe)
-            if output.insights:
-                dependencies.save_analysis_insights(output.insights, cache_path)
-            dependencies.save_cache_records(scored_df, cache_path, existing_cache)
+            generation = _llm_output_generation(output)
+            updated_record = dependencies.apply_llm_review_scores(
+                dict(record),
+                output.scores,
+                generation=generation,
+            )
+            updated_df = _replace_record(scored_df, updated_record, dependencies.normalize_score_dataframe)
+            dependencies.save_cache_records(updated_df, cache_path, existing_cache)
+            scored_df = updated_df
             with state_store.lock:
                 state_store.data["scores_df"] = scored_df
+            if output.insights:
+                dependencies.save_analysis_insights(output.insights, cache_path)
             job_service.update(
                 detailText=text_ref("jobText.llmCompletedDetail", index=index, total=total, file=path.name),
                 progress=index / max(total, 1),
@@ -264,27 +285,12 @@ def _replace_record(
     return normalize_score_dataframe(pd.concat([current, pd.DataFrame([dict(record)])], ignore_index=True))
 
 
-def _current_llm_insight_ids(
-    insights: Sequence[AnalysisInsight],
-    *,
-    provider: str,
-    model: str,
-    prompt_version: str,
-) -> set[str]:
-    return {
-        insight.file_id
-        for insight in insights
-        if insight.analyzer_key == MODEL_LLM_REVIEW
-        and insight.provider == provider
-        and insight.model == model
-        and insight.model_version == model
-        and insight.prompt_version == prompt_version
-    }
-
-
-def _needs_llm_review(record: Mapping[str, object], current_insight_ids: set[str]) -> bool:
+def _needs_llm_review(
+    record: Mapping[str, object],
+    current_file_ids: frozenset[str],
+) -> bool:
     file_id = str(record.get("file_id") or "")
-    if not file_id or file_id not in current_insight_ids:
+    if not file_id or file_id not in current_file_ids:
         return True
     for field in LLM_REVIEW_FIELDS:
         value = record.get(score_column(field, "0_10"))
@@ -295,3 +301,14 @@ def _needs_llm_review(record: Mapping[str, object], current_insight_ids: set[str
         if pd.isna(number):
             return True
     return False
+
+
+def _llm_output_generation(output: AnalyzerOutput) -> float:
+    generations = {
+        float(insight.created_at)
+        for insight in output.insights
+        if insight.analyzer_key == MODEL_LLM_REVIEW and not pd.isna(insight.created_at)
+    }
+    if len(generations) != 1:
+        raise ValueError("LLM review output must contain exactly one generation")
+    return generations.pop()

@@ -30,12 +30,8 @@ def refresh_persisted_llm_config_action(
     cache_path: str | Path,
     dependencies: LLMConfigServiceDependencies,
 ) -> None:
-    persisted: Mapping[str, object] = {}
-    try:
-        persisted = dependencies.load_persisted_config(cache_path)
-        dependencies.set_persisted_config(persisted)
-    except Exception:
-        dependencies.set_persisted_config({})
+    persisted = dependencies.load_persisted_config(cache_path)
+    dependencies.set_persisted_config(persisted)
 
     if not persisted:
         # The LLM service was never configured, so there is no key to look up.

@@ -71,6 +71,22 @@ def ensure_scores_table(
         column_defs.append(f'"{column}" {column_type}{primary}')
     column_defs.append('"updated_at" REAL')
     conn.execute(f"CREATE TABLE IF NOT EXISTS {SCORE_TABLE} ({', '.join(column_defs)})")
+    existing_columns = {row[1] for row in conn.execute(f"PRAGMA table_info({SCORE_TABLE})").fetchall()}
+    for column in columns:
+        if column in existing_columns:
+            continue
+        column_type = "TEXT" if column in text_columns else "REAL"
+        try:
+            conn.execute(f'ALTER TABLE {SCORE_TABLE} ADD COLUMN "{column}" {column_type}')
+        except sqlite3.OperationalError as exc:
+            if "readonly" not in str(exc).lower() and "read-only" not in str(exc).lower():
+                raise
+    if "updated_at" not in existing_columns:
+        try:
+            conn.execute(f'ALTER TABLE {SCORE_TABLE} ADD COLUMN "updated_at" REAL')
+        except sqlite3.OperationalError as exc:
+            if "readonly" not in str(exc).lower() and "read-only" not in str(exc).lower():
+                raise
 
 
 def ensure_insights_table(conn: sqlite3.Connection) -> None:

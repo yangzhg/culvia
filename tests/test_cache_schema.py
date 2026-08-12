@@ -48,6 +48,35 @@ class CacheSchemaHelperTests(unittest.TestCase):
         self.assertIn(INSIGHT_TABLE, tables)
         self.assertIn(APP_CONFIG_TABLE, tables)
 
+    def test_ensure_cache_schema_adds_new_score_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "scores.sqlite"
+            with sqlite3.connect(cache_path) as conn:
+                ensure_cache_schema(conn, ["file_id", "path"], {"file_id", "path"})
+                ensure_cache_schema(
+                    conn,
+                    ["file_id", "path", "llm_review_generation"],
+                    {"file_id", "path"},
+                )
+                columns = {row[1]: row[2] for row in conn.execute(f"PRAGMA table_info({SCORE_TABLE})").fetchall()}
+
+        self.assertEqual(columns["llm_review_generation"], "REAL")
+
+    def test_readonly_legacy_schema_remains_readable_without_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "scores.sqlite"
+            with sqlite3.connect(cache_path) as conn:
+                ensure_cache_schema(conn, ["file_id", "path"], {"file_id", "path"})
+            with sqlite3.connect(f"file:{cache_path}?mode=ro", uri=True) as conn:
+                ensure_cache_schema(
+                    conn,
+                    ["file_id", "path", "llm_review_generation"],
+                    {"file_id", "path"},
+                )
+                columns = {row[1] for row in conn.execute(f"PRAGMA table_info({SCORE_TABLE})").fetchall()}
+
+        self.assertNotIn("llm_review_generation", columns)
+
     def test_json_helpers_and_sqlite_value(self) -> None:
         payload = {"z": 1, "a": ["建议"]}
 

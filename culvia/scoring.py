@@ -28,7 +28,7 @@ from culvia.image_io import (
     open_image_rgb,
     resized_image_cache_path,
 )
-from culvia.insight_store import AnalysisInsight, AnalysisInsightStore, AppConfigStore
+from culvia.insight_store import AnalysisInsight, AnalysisInsightMatch, AnalysisInsightStore, AppConfigStore
 from culvia.llm_config import (
     LLMConfigEnvironment,
     LLM_CONFIG_FIELDS,
@@ -131,6 +131,7 @@ from culvia.schema import (
     LLM_OVERALL_TECHNICAL_WEIGHT,
     LLM_PROMPT_PRESETS,
     LLM_REVIEW_FIELDS,
+    LLM_REVIEW_GENERATION_COLUMN,
     LLM_REVIEW_GROUP,
     LLM_REVIEW_LABELS,
     LLM_REVIEW_PROMPT_VERSION,
@@ -343,7 +344,7 @@ def llm_review_status() -> dict[str, object]:
         "inputMode": llm_review_input_mode(),
         "promptPreset": llm_review_prompt_preset(),
         "customPrompt": llm_review_custom_prompt(),
-        "promptVersion": LLM_REVIEW_PROMPT_VERSION,
+        "promptVersion": llm_review_prompt_version(),
         "sources": {
             "apiKey": llm_config_source("api_key"),
             "baseUrl": llm_config_source("base_url"),
@@ -420,6 +421,27 @@ def save_analysis_insights(insights: Iterable[AnalysisInsight], cache_path: str 
 
 def load_analysis_insights(cache_path: str | Path, file_ids: Iterable[str] | None = None) -> list[AnalysisInsight]:
     return ANALYSIS_INSIGHT_STORE.load(cache_path, file_ids=file_ids)
+
+
+def load_latest_matching_analysis_insight_results(
+    cache_path: str | Path,
+    *,
+    file_ids: Iterable[str],
+    analyzer_key: str,
+    provider: str,
+    model: str,
+    model_version: str,
+    prompt_version: str,
+) -> dict[str, AnalysisInsightMatch]:
+    return ANALYSIS_INSIGHT_STORE.latest_matching_results(
+        cache_path,
+        file_ids=file_ids,
+        analyzer_key=analyzer_key,
+        provider=provider,
+        model=model,
+        model_version=model_version,
+        prompt_version=prompt_version,
+    )
 
 
 def load_llm_config_from_sqlite(cache_path: str | Path) -> dict[str, str]:
@@ -644,12 +666,27 @@ def _apply_clip_reference_scores(record: dict[str, object], scores: dict[str, fl
     )
 
 
-def _apply_llm_review_scores(record: dict[str, object], scores: Mapping[str, float]) -> dict[str, object]:
-    return apply_single_scale_scores(record, fields=LLM_REVIEW_FIELDS, scores=scores, only_present=True)
+def _apply_llm_review_scores(
+    record: dict[str, object],
+    scores: Mapping[str, float],
+    *,
+    generation: float,
+) -> dict[str, object]:
+    cleared = dict(record)
+    for field in LLM_REVIEW_FIELDS:
+        cleared[f"{field}_0_10"] = pd.NA
+    updated = apply_single_scale_scores(cleared, fields=LLM_REVIEW_FIELDS, scores=scores, only_present=True)
+    updated[LLM_REVIEW_GENERATION_COLUMN] = generation
+    return updated
 
 
-def apply_llm_review_scores(record: dict[str, object], scores: Mapping[str, float]) -> dict[str, object]:
-    return _apply_llm_review_scores(record, scores)
+def apply_llm_review_scores(
+    record: dict[str, object],
+    scores: Mapping[str, float],
+    *,
+    generation: float,
+) -> dict[str, object]:
+    return _apply_llm_review_scores(record, scores, generation=generation)
 
 
 def _score_image_path_dependencies() -> ScoreImagePathDependencies:
@@ -671,7 +708,7 @@ def _score_image_path_dependencies() -> ScoreImagePathDependencies:
         apply_clip_reference_scores=_apply_clip_reference_scores,
         score_llm_review_image=score_llm_review_image,
         apply_llm_review_scores=_apply_llm_review_scores,
-        load_analysis_insights=load_analysis_insights,
+        load_latest_matching_analysis_insight_results=load_latest_matching_analysis_insight_results,
         save_analysis_insights=save_analysis_insights,
         llm_review_prompt_version=llm_review_prompt_version,
         llm_review_provider=llm_review_provider,
@@ -687,7 +724,10 @@ def score_image_paths(
     clip_reference_loader: ClipReferenceLoader = load_clip_reference_model,
     selected_models: Iterable[str] | None = None,
     progress_callback: ProgressCallback | None = None,
+    publish_result: Callable[[pd.DataFrame], None] | None = None,
 ) -> tuple[pd.DataFrame, str]:
+    if cache_path:
+        set_persisted_llm_config(load_llm_config_from_sqlite(cache_path))
     return _run_score_image_paths(
         paths,
         dependencies=_score_image_path_dependencies(),
@@ -697,6 +737,7 @@ def score_image_paths(
         clip_reference_loader=clip_reference_loader,
         selected_models=selected_models,
         progress_callback=progress_callback,
+        publish_result=publish_result,
     )
 
 

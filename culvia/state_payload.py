@@ -10,6 +10,8 @@ import pandas as pd
 
 from culvia.app_state import AppStateStore
 from culvia.cache_schema import SQLITE_CACHE_EXTENSIONS
+from culvia.insight_store import AnalysisInsightMatch
+from culvia.llm_provenance import resolve_llm_score_dataframe
 
 
 @dataclass(frozen=True)
@@ -38,7 +40,13 @@ class StatePayloadDependencies:
         [pd.DataFrame, Mapping[str, Any], Mapping[str, Any]], tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
     ]
     selected_preview_for_display: Callable[..., pd.DataFrame]
+    load_latest_matching_analysis_insight_results: Callable[..., Mapping[str, AnalysisInsightMatch]]
     load_analysis_insights: Callable[..., Iterable[Any]]
+    llm_review_score_columns: Sequence[str]
+    llm_review_generation_column: str
+    llm_review_provider: Callable[[], str]
+    llm_review_model_name: Callable[[], str]
+    llm_review_prompt_version: Callable[[], str]
     serialize_photo: Callable[[pd.Series, Mapping[str, Any], Mapping[str, Any]], dict[str, Any]]
     curation_summary: Callable[[Mapping[str, Any], Sequence[str]], dict[str, Any]]
     application_info: Callable[[], Mapping[str, Any]]
@@ -68,18 +76,55 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
 
     deps.refresh_persisted_llm_config(str(source.get("cachePath") or deps.default_cache_path))
     cache_path = str(source.get("cachePath") or "")
-    source_file_ids_for_marks = deps.frame_file_ids(source_df)
-    mark_by_file_id = deps.load_photo_marks(cache_path, source_file_ids_for_marks) if cache_path else {}
-    working, filtered, errors = deps.dataframe_for_display(source_df, filters, mark_by_file_id)
-    insight_by_file_id: dict[str, Any] = {}
-    source_file_ids = deps.frame_file_ids(working)
+    source_file_ids = deps.frame_file_ids(source_df)
+    current_llm_provider = deps.llm_review_provider()
+    current_llm_model = deps.llm_review_model_name()
+    current_llm_prompt_version = deps.llm_review_prompt_version()
+    is_sqlite_cache = bool(cache_path and Path(cache_path).expanduser().suffix.lower() in SQLITE_CACHE_EXTENSIONS)
+    current_llm_results: dict[str, AnalysisInsightMatch] = {}
+    if is_sqlite_cache:
+        current_llm_results = dict(
+            deps.load_latest_matching_analysis_insight_results(
+                cache_path,
+                file_ids=source_file_ids,
+                analyzer_key=deps.model_llm_review,
+                provider=current_llm_provider,
+                model=current_llm_model,
+                model_version=current_llm_model,
+                prompt_version=current_llm_prompt_version,
+            )
+        )
+    resolution = resolve_llm_score_dataframe(
+        source_df,
+        generation_column=deps.llm_review_generation_column,
+        matches=current_llm_results,
+        score_columns=deps.llm_review_score_columns,
+    )
+    current_llm_file_ids = resolution.current_file_ids
+    display_source_df = resolution.dataframe
+    mark_by_file_id = deps.load_photo_marks(cache_path, source_file_ids) if cache_path else {}
+    working, filtered, errors = deps.dataframe_for_display(display_source_df, filters, mark_by_file_id)
     filtered_file_ids = deps.frame_file_ids(filtered)
     selected_preview = deps.selected_preview_for_display(working, mark_by_file_id, limit=80)
     selected_preview_file_ids = deps.frame_file_ids(selected_preview)
-    insight_file_ids = list(dict.fromkeys([*filtered_file_ids, *selected_preview_file_ids]))
-    if cache_path and Path(cache_path).expanduser().suffix.lower() in SQLITE_CACHE_EXTENSIONS:
-        for insight in deps.load_analysis_insights(cache_path, file_ids=insight_file_ids):
-            if insight.analyzer_key != deps.model_llm_review:
+    visible_file_ids = [
+        file_id
+        for file_id in dict.fromkeys([*filtered_file_ids, *selected_preview_file_ids])
+        if file_id in current_llm_file_ids
+    ]
+    insight_by_file_id: dict[str, Any] = {}
+    if is_sqlite_cache and visible_file_ids:
+        for insight in deps.load_analysis_insights(cache_path, file_ids=visible_file_ids):
+            if not _is_current_llm_insight(
+                insight,
+                analyzer_key=deps.model_llm_review,
+                provider=current_llm_provider,
+                model=current_llm_model,
+                prompt_version=current_llm_prompt_version,
+            ):
+                continue
+            match = current_llm_results.get(insight.file_id)
+            if match is None or float(insight.created_at) != match.generation:
                 continue
             previous = insight_by_file_id.get(insight.file_id)
             if previous is None or insight.created_at >= previous.created_at:
@@ -118,7 +163,7 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         "models": models,
         "model": deps.model_payload(network, deps.normalize_selected_models(models.get("selected"))),
         "job": job,
-        "summary": deps.summarize_scores(source_df, filtered, errors, filters),
+        "summary": deps.summarize_scores(display_source_df, filtered, errors, filters),
         "curation": {
             "all": all_curation,
             "visible": visible_curation,
@@ -128,3 +173,20 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         "selectedPhotos": selected_photos,
         "errors": int(len(errors)),
     }
+
+
+def _is_current_llm_insight(
+    insight: Any,
+    *,
+    analyzer_key: str,
+    provider: str,
+    model: str,
+    prompt_version: str,
+) -> bool:
+    return (
+        insight.analyzer_key == analyzer_key
+        and insight.provider == provider
+        and insight.model == model
+        and insight.model_version == model
+        and insight.prompt_version == prompt_version
+    )

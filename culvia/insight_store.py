@@ -38,6 +38,11 @@ class AnalysisInsight:
     created_at: float = field(default_factory=time.time)
 
 
+@dataclass(frozen=True)
+class AnalysisInsightMatch:
+    generation: float
+
+
 SchemaEnsurer = Callable[[sqlite3.Connection], None]
 ConfigCleaner = Callable[[Mapping[str, object] | None], dict[str, str]]
 
@@ -47,6 +52,7 @@ class AnalysisInsightStore:
     schema_ensurer: SchemaEnsurer
     table_name: str = INSIGHT_TABLE
     columns: Mapping[str, str] = field(default_factory=lambda: INSIGHT_COLUMNS)
+    query_batch_size: int = 800
 
     def save(self, insights: Iterable[AnalysisInsight], cache_path: str | Path) -> None:
         path = Path(cache_path).expanduser()
@@ -82,15 +88,66 @@ class AnalysisInsightStore:
             if file_ids is None:
                 rows = conn.execute(f"SELECT * FROM {self.table_name}").fetchall()
             else:
-                ids = [str(file_id) for file_id in file_ids]
+                ids = self._normalized_file_ids(file_ids)
                 if not ids:
                     return []
-                placeholders = ", ".join(["?"] * len(ids))
-                rows = conn.execute(
-                    f"SELECT * FROM {self.table_name} WHERE file_id IN ({placeholders})", ids
-                ).fetchall()
+                rows = []
+                for batch in self._file_id_batches(ids):
+                    placeholders = ", ".join(["?"] * len(batch))
+                    rows.extend(
+                        conn.execute(
+                            f"SELECT * FROM {self.table_name} WHERE file_id IN ({placeholders})", batch
+                        ).fetchall()
+                    )
             columns = [row[1] for row in conn.execute(f"PRAGMA table_info({self.table_name})").fetchall()]
         return [self._from_mapping(dict(zip(columns, row))) for row in rows]
+
+    def latest_matching_results(
+        self,
+        cache_path: str | Path,
+        *,
+        file_ids: Iterable[str],
+        analyzer_key: str,
+        provider: str,
+        model: str,
+        model_version: str,
+        prompt_version: str,
+    ) -> dict[str, AnalysisInsightMatch]:
+        path = Path(cache_path).expanduser()
+        ids = self._normalized_file_ids(file_ids)
+        if not is_sqlite_cache_path(path) or not path.exists() or not ids:
+            return {}
+        matches: dict[str, AnalysisInsightMatch] = {}
+        identity = (analyzer_key, provider, model, model_version, prompt_version)
+        with sqlite3.connect(path) as conn:
+            self.schema_ensurer(conn)
+            for batch in self._file_id_batches(ids):
+                placeholders = ", ".join(["?"] * len(batch))
+                rows = conn.execute(
+                    f'SELECT current."file_id", current."created_at" '
+                    f"FROM {self.table_name} AS current "
+                    f'WHERE current."file_id" IN ({placeholders}) AND current."analyzer_key" = ? '
+                    'AND current."provider" = ? AND current."model" = ? '
+                    'AND current."model_version" = ? AND current."prompt_version" = ? '
+                    f"AND current.rowid = (SELECT candidate.rowid FROM {self.table_name} AS candidate "
+                    'WHERE candidate."file_id" = current."file_id" '
+                    'AND candidate."analyzer_key" = current."analyzer_key" '
+                    'ORDER BY candidate."created_at" DESC, candidate.rowid DESC LIMIT 1)',
+                    [*batch, analyzer_key, *identity[1:]],
+                ).fetchall()
+                for row in rows:
+                    if row[1] is None or pd.isna(row[1]):
+                        continue
+                    matches[str(row[0])] = AnalysisInsightMatch(generation=float(row[1]))
+        return matches
+
+    def _normalized_file_ids(self, file_ids: Iterable[str]) -> list[str]:
+        return list(dict.fromkeys(str(file_id) for file_id in file_ids if str(file_id)))
+
+    def _file_id_batches(self, file_ids: list[str]) -> Iterable[list[str]]:
+        batch_size = max(1, int(self.query_batch_size))
+        for start in range(0, len(file_ids), batch_size):
+            yield file_ids[start : start + batch_size]
 
     def _to_values(self, insight: AnalysisInsight) -> list[object]:
         return [

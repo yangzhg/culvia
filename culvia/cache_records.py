@@ -41,7 +41,7 @@ class ScoreCacheStore:
             if column == "error":
                 normalized[column] = normalized[column].fillna("").astype(str)
             else:
-                normalized[column] = normalized[column].astype(str)
+                normalized[column] = normalized[column].fillna("").astype(str)
         normalized[self.recommendation_column] = pd.to_numeric(normalized[self.recommendation_column], errors="coerce")
 
         for group in self.field_groups:
@@ -70,7 +70,11 @@ class ScoreCacheStore:
         try:
             with sqlite3.connect(path) as conn:
                 self.ensure_schema(conn)
-                columns = ", ".join(f'"{column}"' for column in self.csv_columns)
+                available = {row[1] for row in conn.execute(f"PRAGMA table_info({SCORE_TABLE})").fetchall()}
+                selected_columns = [column for column in self.csv_columns if column in available]
+                if not selected_columns:
+                    return self.empty_dataframe()
+                columns = ", ".join(f'"{column}"' for column in selected_columns)
                 return self.normalize_dataframe(pd.read_sql_query(f"SELECT {columns} FROM {SCORE_TABLE}", conn))
         except Exception:
             return self.empty_dataframe()

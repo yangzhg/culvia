@@ -7,6 +7,7 @@ import sys
 import tomllib
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlparse
 from unittest.mock import patch
 
@@ -185,6 +186,57 @@ class EntrypointAndPackagingTests(unittest.TestCase):
             sys.modules.pop("culvia.scoring", None)
             if original is not None:
                 sys.modules["culvia.scoring"] = original
+
+    def test_batch_cli_loads_cache_llm_identity_before_processing(self) -> None:
+        import pandas as pd
+
+        from culvia import batch_cli
+
+        calls: dict[str, object] = {}
+        runtime = SimpleNamespace(
+            DEFAULT_OUTPUT_PATH="scores.csv",
+            DEFAULT_PHOTO_DIRS=[],
+            HEIF_AVAILABLE=True,
+            CSV_COLUMNS=["file_id"],
+            pd=pd,
+            load_llm_config_from_sqlite=lambda path: calls.setdefault("loaded", (path, {"provider": "cache-provider"}))[
+                1
+            ],
+            set_persisted_llm_config=lambda config: calls.setdefault("configured", dict(config)),
+            scan_image_paths=lambda folders: ([], []),
+            get_device=lambda: "cpu",
+            write_csv=lambda frame, path: calls.setdefault("write", (frame.copy(), path)),
+        )
+
+        with patch("sys.stdout", io.StringIO()):
+            result = batch_cli.main(["--cache", "cache.sqlite", "--out", "result.csv"], runtime=runtime)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls["loaded"], ("cache.sqlite", {"provider": "cache-provider"}))
+        self.assertEqual(calls["configured"], {"provider": "cache-provider"})
+
+    def test_batch_cli_stops_before_scanning_when_cache_llm_config_cannot_be_read(self) -> None:
+        import pandas as pd
+
+        from culvia import batch_cli
+
+        runtime = SimpleNamespace(
+            DEFAULT_OUTPUT_PATH="scores.csv",
+            DEFAULT_PHOTO_DIRS=[],
+            HEIF_AVAILABLE=True,
+            CSV_COLUMNS=["file_id"],
+            pd=pd,
+            load_llm_config_from_sqlite=lambda _path: (_ for _ in ()).throw(RuntimeError("broken sqlite")),
+            set_persisted_llm_config=lambda _config: None,
+            scan_image_paths=lambda _folders: (_ for _ in ()).throw(AssertionError("scan must not run")),
+        )
+
+        stderr = io.StringIO()
+        with patch("sys.stderr", stderr):
+            result = batch_cli.main(["--cache", "cache.sqlite"], runtime=runtime)
+
+        self.assertEqual(result, 2)
+        self.assertIn("scoring was not started", stderr.getvalue())
 
 
 if __name__ == "__main__":

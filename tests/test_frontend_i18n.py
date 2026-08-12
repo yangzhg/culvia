@@ -281,6 +281,43 @@ class FrontendI18nTests(unittest.TestCase):
             {"tooltipOnly": "Review", "explicitAria": "Previous photo", "tooltip": "Review"},
         )
 
+    def test_render_keeps_live_state_after_static_translation(self) -> None:
+        script = textwrap.dedent(
+            """
+            const fs = require("fs");
+            const vm = require("vm");
+            const source = fs.readFileSync("web/app.js", "utf8");
+            const start = source.indexOf("function render() {");
+            const end = source.indexOf("\\nfunction applyWorkbenchMode()", start);
+            if (start < 0 || end < 0) throw new Error("render function not found");
+            const renderSource = source.slice(start, end);
+            const liveNode = { textContent: "" };
+            const context = {
+              appState: { curation: { all: { selected: 5 } } },
+              applyI18n() { liveNode.textContent = "0 photos"; },
+              applyWorkbenchMode() {},
+              applySidebarMode() {},
+              applyActiveViewState() {},
+              renderControls() {},
+              renderModel() {},
+              renderCommand() {},
+              renderProgress() {},
+              renderStats() {},
+              renderFilterScope() {},
+              renderCurationHistory() {},
+              renderActiveView() { liveNode.textContent = `${context.appState.curation.all.selected} photos`; },
+            };
+            vm.createContext(context);
+            vm.runInContext(`${renderSource}\\nrender();`, context);
+            if (liveNode.textContent !== "5 photos") {
+              throw new Error(`live state was overwritten: ${liveNode.textContent}`);
+            }
+            """
+        )
+        result = subprocess.run(["node", "-e", script], cwd=ROOT, text=True, capture_output=True, check=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
     def test_language_messages_are_resource_driven(self) -> None:
         messages = load_i18n_messages()
         for locale, dictionary in messages.items():

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
+import sqlite3
 
 import pandas as pd
 
@@ -99,6 +100,21 @@ class CacheRecordStoreTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "SQLite"):
                 store.save(pd.DataFrame([{"file_id": "image-1"}]), cache_path)
+
+    def test_load_backfills_columns_missing_from_an_older_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "scores.sqlite"
+            with sqlite3.connect(cache_path) as conn:
+                conn.execute("CREATE TABLE culvia_scores (file_id TEXT PRIMARY KEY, path TEXT, updated_at REAL)")
+                conn.execute(
+                    "INSERT INTO culvia_scores (file_id, path, updated_at) VALUES (?, ?, ?)",
+                    ("image-1", "/legacy.jpg", 1.0),
+                )
+            loaded = make_store().load(cache_path)
+
+        self.assertEqual(loaded.loc[0, "file_id"], "image-1")
+        self.assertEqual(loaded.loc[0, "path"], "/legacy.jpg")
+        self.assertTrue(pd.isna(loaded.loc[0, "overall_0_10"]))
 
 
 if __name__ == "__main__":

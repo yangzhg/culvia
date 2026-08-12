@@ -71,6 +71,23 @@ class CacheSchemaTests(unittest.TestCase):
             self.assertIn("clip_aesthetic_0_10", score_columns)
             self.assertIn(scoring.INSIGHT_TABLE, tables)
 
+    def test_llm_score_update_clears_fields_omitted_by_a_new_generation(self) -> None:
+        record = {
+            "llm_review_overall_0_10": 8.0,
+            "llm_color_0_10": 9.0,
+            scoring.LLM_REVIEW_GENERATION_COLUMN: 1.0,
+        }
+
+        updated = scoring.apply_llm_review_scores(
+            record,
+            {"llm_review_overall": 7.0},
+            generation=2.0,
+        )
+
+        self.assertEqual(float(updated["llm_review_overall_0_10"]), 7.0)
+        self.assertTrue(pd.isna(updated["llm_color_0_10"]))
+        self.assertEqual(float(updated[scoring.LLM_REVIEW_GENERATION_COLUMN]), 2.0)
+
     def test_curation_marks_roundtrip_and_export_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache_path = Path(tmp) / "scores.sqlite"
@@ -557,10 +574,21 @@ class ModelPlanningTests(unittest.TestCase):
         self.assertTrue(plan[scoring.MODEL_LLM_REVIEW])
         self.assertFalse(plan[scoring.MODEL_CORE_AESTHETIC])
 
+    def test_llm_review_status_uses_the_full_cache_prompt_signature(self) -> None:
+        status = scoring.llm_review_status()
+
+        self.assertEqual(status["promptVersion"], scoring.llm_review_prompt_version())
+        self.assertNotEqual(status["promptVersion"], scoring.LLM_REVIEW_PROMPT_VERSION)
+
     def test_score_image_paths_persists_llm_insight(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             image_path = make_image(Path(tmp) / "source.jpg")
             cache_path = Path(tmp) / "scores.sqlite"
+            scoring.save_llm_config_to_sqlite(
+                {"provider": "custom-provider", "model": "custom-vlm"},
+                cache_path,
+            )
+            layers = scoring.llm_config_layers()
             original = scoring.score_llm_review_image
 
             def fake_review(
@@ -588,8 +616,10 @@ class ModelPlanningTests(unittest.TestCase):
                         scoring.AnalysisInsight(
                             file_id=file_id,
                             analyzer_key=scoring.MODEL_LLM_REVIEW,
-                            provider="unit-test",
-                            model="mock-vlm",
+                            provider=scoring.llm_review_provider(),
+                            model=scoring.llm_review_model_name(),
+                            model_version=scoring.llm_review_model_name(),
+                            prompt_version=scoring.llm_review_prompt_version(),
                             title="层次不错",
                             summary="主体明确，后期可加强明暗层次。",
                             suggestions=("修图：压暗背景",),
@@ -600,6 +630,9 @@ class ModelPlanningTests(unittest.TestCase):
 
             scoring.score_llm_review_image = fake_review
             try:
+                scoring.clear_session_llm_config()
+                scoring.clear_secure_llm_config()
+                scoring.set_persisted_llm_config({"provider": "wrong-provider", "model": "wrong-model"})
                 df, _device = scoring.score_image_paths(
                     [image_path],
                     cache_path=cache_path,
@@ -608,15 +641,17 @@ class ModelPlanningTests(unittest.TestCase):
                 )
             finally:
                 scoring.score_llm_review_image = original
+                restore_llm_config_layers(layers)
 
             self.assertAlmostEqual(float(df.loc[0, "llm_aesthetic_overall_0_10"]), 7.2)
             self.assertAlmostEqual(float(df.loc[0, "llm_review_overall_0_10"]), 6.9)
             self.assertAlmostEqual(float(df.loc[0, "llm_sharpness_0_10"]), 6.2)
             insights = scoring.load_analysis_insights(cache_path, file_ids=[df.loc[0, "file_id"]])
             self.assertEqual(len(insights), 1)
-            self.assertEqual(insights[0].model, "mock-vlm")
+            self.assertEqual(insights[0].provider, "custom-provider")
+            self.assertEqual(insights[0].model, "custom-vlm")
 
-    def test_llm_review_cache_depends_on_prompt_signature(self) -> None:
+    def test_llm_review_cache_recomputes_when_matching_history_is_not_latest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             image_path = make_image(Path(tmp) / "source.jpg")
             cache_path = Path(tmp) / "scores.sqlite"
@@ -630,6 +665,7 @@ class ModelPlanningTests(unittest.TestCase):
             }
             for field in scoring.LLM_REVIEW_FIELDS:
                 stale_record[f"{field}_0_10"] = 4.0
+            stale_record[scoring.LLM_REVIEW_GENERATION_COLUMN] = 2.0
             scoring.save_cache_records(pd.DataFrame([stale_record]), cache_path)
             scoring.save_analysis_insights(
                 [
@@ -639,9 +675,20 @@ class ModelPlanningTests(unittest.TestCase):
                         provider=scoring.llm_review_provider(),
                         model=scoring.llm_review_model_name(),
                         model_version=scoring.llm_review_model_name(),
+                        prompt_version=scoring.llm_review_prompt_version(),
+                        score=8.0,
+                        created_at=1.0,
+                    ),
+                    scoring.AnalysisInsight(
+                        file_id=file_id,
+                        analyzer_key=scoring.MODEL_LLM_REVIEW,
+                        provider=scoring.llm_review_provider(),
+                        model=scoring.llm_review_model_name(),
+                        model_version=scoring.llm_review_model_name(),
                         prompt_version="old-prompt",
                         score=4.0,
-                    )
+                        created_at=2.0,
+                    ),
                 ],
                 cache_path,
             )
@@ -689,6 +736,63 @@ class ModelPlanningTests(unittest.TestCase):
 
             self.assertEqual(calls["count"], 1)
             self.assertAlmostEqual(float(df.loc[0, "llm_review_overall_0_10"]), 8.0)
+
+    def test_local_only_cache_run_uses_persisted_llm_identity_before_masking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = make_image(Path(tmp) / "source.jpg")
+            cache_path = Path(tmp) / "scores.sqlite"
+            file_id = scoring.build_file_id(image_path)
+            scoring.save_llm_config_to_sqlite(
+                {"provider": "custom-provider", "model": "custom-vlm"},
+                cache_path,
+            )
+            scoring.save_cache_records(
+                pd.DataFrame(
+                    [
+                        {
+                            "file_id": file_id,
+                            "path": str(image_path),
+                            "folder": str(image_path.parent),
+                            "filename": image_path.name,
+                            "error": "",
+                            scoring.LLM_REVIEW_GENERATION_COLUMN: 4.0,
+                            "llm_review_overall_0_10": 9.0,
+                        }
+                    ]
+                ),
+                cache_path,
+            )
+            scoring.save_analysis_insights(
+                [
+                    scoring.AnalysisInsight(
+                        file_id=file_id,
+                        analyzer_key=scoring.MODEL_LLM_REVIEW,
+                        provider="custom-provider",
+                        model="custom-vlm",
+                        model_version="custom-vlm",
+                        prompt_version=scoring.llm_review_prompt_version(),
+                        score=9.0,
+                        created_at=4.0,
+                    )
+                ],
+                cache_path,
+            )
+            layers = scoring.llm_config_layers()
+            try:
+                scoring.set_persisted_llm_config({"provider": "wrong-provider", "model": "wrong-model"})
+                df, _device = scoring.score_image_paths(
+                    [image_path],
+                    cache_path=cache_path,
+                    use_cache=True,
+                    selected_models=[scoring.MODEL_BASIC_TECHNICAL],
+                )
+            finally:
+                restore_llm_config_layers(layers)
+
+            reloaded = scoring.load_cache_records(cache_path)
+
+        self.assertEqual(float(df.loc[0, "llm_review_overall_0_10"]), 9.0)
+        self.assertEqual(float(reloaded.loc[0, scoring.LLM_REVIEW_GENERATION_COLUMN]), 4.0)
 
 
 class LlmReviewParsingTests(unittest.TestCase):
