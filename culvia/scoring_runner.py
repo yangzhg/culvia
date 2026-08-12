@@ -105,7 +105,7 @@ def run_scoring_job(
             paths = [path for path in uploaded_paths if path.exists()]
             warnings: list[dict[str, Any]] = []
             active_cache_path = cache_path
-            use_cache = False
+            use_cache = True
         else:
             paths, warnings = dependencies.scan_image_paths(folders)
             active_cache_path = cache_path

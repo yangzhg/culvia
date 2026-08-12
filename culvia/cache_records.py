@@ -4,7 +4,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Self
 
 import pandas as pd
 
@@ -15,6 +15,35 @@ from culvia.job_text import TranslatableValueError
 
 class FieldGroup(Protocol):
     cache_columns: tuple[str, ...]
+
+
+class ScoreCacheCheckpointWriter:
+    def __init__(self, store: ScoreCacheStore, cache_path: str | Path) -> None:
+        self.store = store
+        self.path = store._sqlite_path(cache_path)
+        self.connection: sqlite3.Connection | None = None
+        self.sql = ""
+
+    def __enter__(self) -> Self:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.connection = sqlite3.connect(self.path)
+        self.store.ensure_schema(self.connection)
+        self.connection.commit()
+        self.sql = self.store._upsert_sql()
+        return self
+
+    def upsert(self, records_df: pd.DataFrame) -> None:
+        if self.connection is None:
+            raise RuntimeError("Score cache checkpoint writer is not open")
+        normalized = self.store._normalized_upsert_records(records_df)
+        rows = self.store._sqlite_rows(normalized)
+        self.connection.executemany(self.sql, rows)
+        self.connection.commit()
+
+    def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+        if self.connection is not None:
+            self.connection.close()
+            self.connection = None
 
 
 @dataclass(frozen=True)
@@ -86,27 +115,50 @@ class ScoreCacheStore:
         existing_df: pd.DataFrame | None = None,
     ) -> None:
         path = self._sqlite_path(cache_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-
         merged = self._merged_dataframe(current_df, existing_df)
+        self._write_sqlite_rows(merged, path)
+
+    def upsert_sqlite(self, records_df: pd.DataFrame, cache_path: str | Path) -> None:
+        path = self._sqlite_path(cache_path)
+        normalized = self._normalized_upsert_records(records_df)
+        self._write_sqlite_rows(normalized, path)
+
+    def checkpoint_writer(self, cache_path: str | Path) -> ScoreCacheCheckpointWriter:
+        return ScoreCacheCheckpointWriter(self, cache_path)
+
+    def _normalized_upsert_records(self, records_df: pd.DataFrame) -> pd.DataFrame:
+        normalized = self.normalize_dataframe(records_df)
+        if normalized["file_id"].str.strip().eq("").any():
+            raise ValueError("Score cache records require a non-empty file_id")
+        return normalized
+
+    def _write_sqlite_rows(self, records_df: pd.DataFrame, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        rows = self._sqlite_rows(records_df)
+        with sqlite3.connect(path) as conn:
+            self.ensure_schema(conn)
+            conn.executemany(self._upsert_sql(), rows)
+            conn.commit()
+
+    def _upsert_sql(self) -> str:
         columns = list(self.csv_columns)
         insert_columns = columns + ["updated_at"]
         placeholders = ", ".join(["?"] * len(insert_columns))
         quoted_insert_columns = ", ".join(f'"{column}"' for column in insert_columns)
         update_columns = [column for column in insert_columns if column != "file_id"]
         update_clause = ", ".join(f'"{column}" = excluded."{column}"' for column in update_columns)
-        sql = (
+        return (
             f"INSERT INTO {SCORE_TABLE} ({quoted_insert_columns}) VALUES ({placeholders}) "
             f'ON CONFLICT("file_id") DO UPDATE SET {update_clause}'
         )
 
+    def _sqlite_rows(self, records_df: pd.DataFrame) -> list[list[object]]:
+        columns = list(self.csv_columns)
         now = time.time()
-        with sqlite3.connect(path) as conn:
-            self.ensure_schema(conn)
-            for row in merged.to_dict(orient="records"):
-                values = [sqlite_value(row.get(column)) for column in columns]
-                conn.execute(sql, values + [now])
-            conn.commit()
+        return [
+            [sqlite_value(row.get(column)) for column in columns] + [now]
+            for row in records_df.to_dict(orient="records")
+        ]
 
     def load(self, cache_path: str | Path) -> pd.DataFrame:
         return self.load_sqlite(cache_path)
@@ -118,6 +170,9 @@ class ScoreCacheStore:
         existing_df: pd.DataFrame | None = None,
     ) -> None:
         self.save_sqlite(current_df, cache_path, existing_df)
+
+    def upsert(self, records_df: pd.DataFrame, cache_path: str | Path) -> None:
+        self.upsert_sqlite(records_df, cache_path)
 
     def _merged_dataframe(self, current_df: pd.DataFrame, existing_df: pd.DataFrame | None = None) -> pd.DataFrame:
         pieces = []

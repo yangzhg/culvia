@@ -131,7 +131,7 @@ culvia --help
 
 - `culvia-supervisor`：推荐的本地 Web 启动方式，包含健康检查和自动打开浏览器。
 - `culvia-web`：直接启动 Web 服务。
-- `culvia`：命令行批量评分入口。
+- `culvia`：命令行批量评分入口，默认增量写入 SQLite 缓存；需要全新且不可恢复的评分时可传 `--no-cache`。
 
 ### Windows
 

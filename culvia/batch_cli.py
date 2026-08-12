@@ -32,17 +32,32 @@ def load_scoring_runtime() -> Any:
     return scoring
 
 
-def help_parser(*, default_output: str = "") -> argparse.ArgumentParser:
+def help_parser(*, default_output: str = "", default_cache: str = "") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("folders", nargs="*", help="要递归扫描的照片目录。为空时使用默认目录。")
     parser.add_argument("--out", default=default_output, help="输出 CSV 路径。")
-    parser.add_argument("--cache", default="", help="可选 SQLite 缓存路径，用于复用已评分结果。")
+    cache_group = parser.add_mutually_exclusive_group()
+    cache_group.add_argument(
+        "--cache",
+        default=default_cache,
+        help="SQLite 缓存路径，用于增量保存和复用评分结果。",
+    )
+    cache_group.add_argument(
+        "--no-cache",
+        action="store_const",
+        const="",
+        dest="cache",
+        help="本次不读取或保存评分缓存，强制重新评分。",
+    )
     return parser
 
 
 def parse_args(argv: list[str] | None = None, *, runtime: Any | None = None) -> argparse.Namespace:
     scoring = runtime or load_scoring_runtime()
-    return help_parser(default_output=scoring.DEFAULT_OUTPUT_PATH).parse_args(argv)
+    return help_parser(
+        default_output=scoring.DEFAULT_OUTPUT_PATH,
+        default_cache=scoring.DEFAULT_CACHE_PATH,
+    ).parse_args(argv)
 
 
 def print_top_scores(df: Any, limit: int = 20, *, runtime: Any | None = None) -> None:

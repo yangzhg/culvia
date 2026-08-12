@@ -131,7 +131,7 @@ culvia --help
 
 - `culvia-supervisor`: recommended local Web entrypoint with health checks and browser opening.
 - `culvia-web`: direct Web server entrypoint.
-- `culvia`: command-line batch scoring entrypoint.
+- `culvia`: command-line batch scoring entrypoint. It checkpoints into the default SQLite cache; pass `--no-cache` for a fresh, non-resumable run.
 
 ### Windows
 

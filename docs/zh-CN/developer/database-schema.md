@@ -29,6 +29,7 @@ Culvia 使用 SQLite 保存评分结果、人工选片数据、大模型 insight
 
 评分字段包含 `culvia.schema` 中定义的本地审美、技术、CLIP 参考、CLIP-IQA 和大模型评审维度。
 新增缓存字段时，现有评分表会原地扩展。
+评分 checkpoint 仅对传入的 `file_id` 执行完整记录 UPSERT，不会用旧的内存快照重写其它行。显式 `NULL` 仍有清除过期模型结果的语义。
 
 ## `photo_analysis_insights`
 

@@ -55,7 +55,7 @@ flowchart LR
 - `culvia.app_state`: stores current results, source, filters, network/model/task state, and UI-facing state.
 - `culvia.job_service`: manages scoring tasks, pause/resume state, and concurrency guards.
 - `culvia.scoring_runner`: orchestrates source resolution, model preparation, progress reporting, scoring, and result refresh.
-- `culvia.scoring`: owns local model scoring, LLM scoring, SQLite read/write, and batch scoring facade behavior.
+- `culvia.scoring`: owns local model scoring, LLM scoring, SQLite read/write, and batch scoring facade behavior. Completed model stages are checkpointed per photo before progress is reported, so cancellation or a worker failure can resume from durable work.
 - `culvia.recommendation`: owns recommendation scores, filter decisions, and weighting presets.
 - `culvia.gallery_display` / `culvia.payloads`: convert DataFrames, manual labels, LLM insights, and file metadata into UI payloads.
 - `culvia.curation_*`: owns manual pick/review/reject decisions, star ratings, color labels, history, and undo.

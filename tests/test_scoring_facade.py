@@ -16,6 +16,7 @@ from starlette.datastructures import QueryParams
 import culvia_app
 from culvia import scoring
 from culvia import curation as photo_curation
+from culvia.job_service import JobCancelled
 
 
 def make_image(path: Path, size: tuple[int, int] = (1600, 900)) -> Path:
@@ -437,6 +438,116 @@ class CacheSchemaTests(unittest.TestCase):
 
         self.assertEqual(masked, "unit****3931")
         self.assertNotIn("test-api-key-000000000000", masked)
+
+
+class ScoringCheckpointTests(unittest.TestCase):
+    @staticmethod
+    def technical_scores(value: float = 7.0) -> dict[str, float]:
+        return {field: value for field in scoring.TECHNICAL_FIELDS}
+
+    @staticmethod
+    def aesthetic_scores(value: float = 4.0) -> dict[str, float]:
+        return {field: value for field in scoring.SCORE_FIELDS}
+
+    def test_cancelled_batch_checkpoints_completed_photos_and_reuses_them(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = [make_image(root / f"photo-{index}.jpg") for index in range(1, 4)]
+            cache_path = root / "scores.sqlite"
+            scored_names: list[str] = []
+
+            def analyze(path: Path) -> dict[str, float]:
+                scored_names.append(path.name)
+                return self.technical_scores()
+
+            def cancel_before_third(done: int, _total: int, path: Path, state: str) -> None:
+                if done == 2 and path == paths[2] and state == "started":
+                    raise JobCancelled
+
+            with patch.object(scoring, "analyze_technical_quality", side_effect=analyze):
+                with self.assertRaises(JobCancelled):
+                    scoring.score_image_paths(
+                        paths,
+                        cache_path=cache_path,
+                        selected_models=[scoring.MODEL_BASIC_TECHNICAL],
+                        progress_callback=cancel_before_third,
+                    )
+
+                checkpointed = scoring.load_cache_records(cache_path)
+                self.assertEqual(set(checkpointed["filename"]), {"photo-1.jpg", "photo-2.jpg"})
+
+                scored_names.clear()
+                result, _device = scoring.score_image_paths(
+                    paths,
+                    cache_path=cache_path,
+                    selected_models=[scoring.MODEL_BASIC_TECHNICAL],
+                )
+
+        self.assertEqual(scored_names, ["photo-3.jpg"])
+        self.assertEqual(len(result), 3)
+        self.assertTrue(result["error"].eq("").all())
+
+    def test_cancel_after_aesthetic_stage_reuses_that_stage_on_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = make_image(Path(tmp) / "photo.jpg")
+            cache_path = Path(tmp) / "scores.sqlite"
+
+            def cancel_after_aesthetic(_done: int, _total: int, _path: Path, state: str) -> None:
+                if state == "aesthetic_done":
+                    raise JobCancelled
+
+            with patch.object(scoring, "score_image", return_value=self.aesthetic_scores()):
+                with self.assertRaises(JobCancelled):
+                    scoring.score_image_paths(
+                        [image_path],
+                        cache_path=cache_path,
+                        model_loader=lambda _device: SimpleNamespace(device="cpu"),
+                        selected_models=[scoring.MODEL_CORE_AESTHETIC, scoring.MODEL_BASIC_TECHNICAL],
+                        progress_callback=cancel_after_aesthetic,
+                    )
+
+            checkpointed = scoring.load_cache_records(cache_path).iloc[0]
+            self.assertFalse(pd.isna(checkpointed["overall_0_10"]))
+            self.assertTrue(pd.isna(checkpointed["technical_overall_0_10"]))
+
+            with (
+                patch.object(scoring, "score_image", side_effect=AssertionError("aesthetic score was recomputed")),
+                patch.object(scoring, "analyze_technical_quality", return_value=self.technical_scores()) as technical,
+            ):
+                result, _device = scoring.score_image_paths(
+                    [image_path],
+                    cache_path=cache_path,
+                    model_loader=lambda _device: self.fail("core model should not reload"),
+                    selected_models=[scoring.MODEL_CORE_AESTHETIC, scoring.MODEL_BASIC_TECHNICAL],
+                )
+
+        technical.assert_called_once_with(image_path)
+        self.assertFalse(pd.isna(result.loc[0, "overall_0_10"]))
+        self.assertFalse(pd.isna(result.loc[0, "technical_overall_0_10"]))
+
+    def test_successful_retry_clears_the_checkpointed_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = make_image(Path(tmp) / "photo.jpg")
+            cache_path = Path(tmp) / "scores.sqlite"
+
+            with patch.object(scoring, "analyze_technical_quality", side_effect=RuntimeError("decode failed")):
+                failed, _device = scoring.score_image_paths(
+                    [image_path],
+                    cache_path=cache_path,
+                    selected_models=[scoring.MODEL_BASIC_TECHNICAL],
+                )
+            self.assertIn("decode failed", failed.loc[0, "error"])
+
+            with patch.object(scoring, "analyze_technical_quality", return_value=self.technical_scores()):
+                recovered, _device = scoring.score_image_paths(
+                    [image_path],
+                    cache_path=cache_path,
+                    selected_models=[scoring.MODEL_BASIC_TECHNICAL],
+                )
+            persisted = scoring.load_cache_records(cache_path)
+
+        self.assertEqual(recovered.loc[0, "error"], "")
+        self.assertEqual(persisted.loc[0, "error"], "")
 
 
 class ModelPlanningTests(unittest.TestCase):

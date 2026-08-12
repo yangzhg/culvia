@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ContextManager, Protocol
 
 import pandas as pd
 
 from culvia.cache_schema import is_sqlite_cache_path
 from culvia.insight_store import AnalysisInsight, AnalysisInsightMatch
+from culvia.job_service import JobCancelled
 from culvia.llm_provenance import resolve_llm_score_dataframe
 from culvia.schema import (
     CSV_COLUMNS,
@@ -28,6 +30,10 @@ ModelLoader = Callable[[str], object]
 ResultPublisher = Callable[[pd.DataFrame], None]
 
 
+class ScoreCheckpointWriter(Protocol):
+    def upsert(self, records_df: pd.DataFrame) -> None: ...
+
+
 @dataclass
 class ScoreEntry:
     path: Path
@@ -35,6 +41,7 @@ class ScoreEntry:
     cached_record: dict[str, object] | None
     pre_error: str | None
     needs: dict[str, bool]
+    cache_dirty: bool = False
 
     @property
     def should_score(self) -> bool:
@@ -49,7 +56,7 @@ class ScoreImagePathDependencies:
     model_recompute_plan: Callable[[Mapping[str, object] | pd.Series | None, Iterable[str] | None], dict[str, bool]]
     model_output_fields: Callable[[str], tuple[str, ...]]
     load_cache_records: Callable[[str | Path], pd.DataFrame]
-    save_cache_records: Callable[[pd.DataFrame, str | Path, pd.DataFrame | None], None]
+    open_checkpoint_writer: Callable[[str | Path], ContextManager[ScoreCheckpointWriter]]
     normalize_score_dataframe: Callable[[pd.DataFrame], pd.DataFrame]
     make_empty_record: Callable[[Path, str, str], dict[str, object]]
     score_aesthetic_image: Callable[[Path, object], dict[str, float]]
@@ -118,88 +125,153 @@ def score_image_paths(
         device = getattr(loaded_clip_reference_model, "device", device)
 
     rows: list[dict[str, object]] = []
-    insights: list[AnalysisInsight] = []
     total = len(entries)
-    for index, entry in enumerate(entries, start=1):
-        status = "cached" if entry.cached_record is not None and not entry.should_score else "scored"
-        if entry.pre_error:
-            rows.append(dependencies.make_empty_record(entry.path, entry.file_id, entry.pre_error))
-            status = "error"
-        else:
-            record = (
-                dict(entry.cached_record)
-                if entry.cached_record is not None
-                else dependencies.make_empty_record(entry.path, entry.file_id, "")
-            )
-            try:
+    checkpoint_context = dependencies.open_checkpoint_writer(cache_path) if cache_path else nullcontext(None)
+    with checkpoint_context as checkpoint_writer:
+        for index, entry in enumerate(entries, start=1):
+            status = "cached" if entry.cached_record is not None and not entry.should_score else "scored"
+            record_checkpointed = False
+            if entry.pre_error:
+                record = dependencies.make_empty_record(entry.path, entry.file_id, entry.pre_error)
+                status = "error"
+                _checkpoint_record(record, checkpoint_writer)
+                record_checkpointed = True
+            else:
+                record = (
+                    dict(entry.cached_record)
+                    if entry.cached_record is not None
+                    else dependencies.make_empty_record(entry.path, entry.file_id, "")
+                )
                 if progress_callback is not None and entry.should_score:
                     progress_callback(index - 1, total, entry.path, "started")
-                if entry.needs.get(MODEL_CORE_AESTHETIC):
-                    assert loaded_model is not None
-                    record = dependencies.apply_aesthetic_scores(
-                        record,
-                        dependencies.score_aesthetic_image(entry.path, loaded_model),
-                    )
-                    if progress_callback is not None:
-                        progress_callback(index - 1, total, entry.path, "aesthetic_done")
-                if entry.needs.get(MODEL_BASIC_TECHNICAL):
-                    record = dependencies.apply_technical_scores(
-                        record,
-                        dependencies.analyze_technical_quality(entry.path),
-                    )
-                    status = (
-                        "inspected"
-                        if entry.cached_record is not None and not entry.needs.get(MODEL_CORE_AESTHETIC)
-                        else status
-                    )
-                    if progress_callback is not None:
-                        progress_callback(index - 1, total, entry.path, "technical_done")
-                if entry.needs.get(MODEL_CLIP_IQA) or entry.needs.get(MODEL_CLIP_AESTHETIC):
-                    assert loaded_clip_reference_model is not None
-                    clip_scores = dependencies.score_clip_reference_image(entry.path, loaded_clip_reference_model)
-                    requested_clip_fields: set[str] = set()
-                    for model_key in (MODEL_CLIP_IQA, MODEL_CLIP_AESTHETIC):
-                        if entry.needs.get(model_key):
-                            requested_clip_fields.update(dependencies.model_output_fields(model_key))
-                    clip_scores = {key: value for key, value in clip_scores.items() if key in requested_clip_fields}
-                    record = dependencies.apply_clip_reference_scores(record, clip_scores)
-                    if progress_callback is not None:
-                        progress_callback(index - 1, total, entry.path, "clip_done")
-                if entry.needs.get(MODEL_LLM_REVIEW):
-                    llm_output = dependencies.score_llm_review_image(
-                        entry.path,
-                        file_id=entry.file_id,
-                        score_context=record,
-                    )
-                    generation = _llm_output_generation(llm_output)
-                    record = dependencies.apply_llm_review_scores(
-                        record,
-                        llm_output.scores,
-                        generation=generation,
-                    )
-                    insights.extend(llm_output.insights)
-                    status = "reviewed"
-                    if progress_callback is not None:
-                        progress_callback(index - 1, total, entry.path, "llm_done")
-                rows.append(record)
-            except Exception as exc:
-                record["error"] = repr(exc)
-                rows.append(record)
-                status = "error"
+                if entry.should_score:
+                    record["error"] = ""
 
-        if progress_callback is not None:
-            progress_callback(index, total, entry.path, status)
+                failure: Exception | None = None
+
+                if entry.needs.get(MODEL_CORE_AESTHETIC):
+                    try:
+                        assert loaded_model is not None
+                        record = dependencies.apply_aesthetic_scores(
+                            record,
+                            dependencies.score_aesthetic_image(entry.path, loaded_model),
+                        )
+                    except JobCancelled:
+                        raise
+                    except Exception as exc:
+                        failure = exc
+                    else:
+                        _checkpoint_record(record, checkpoint_writer)
+                        record_checkpointed = True
+                        if progress_callback is not None:
+                            progress_callback(index - 1, total, entry.path, "aesthetic_done")
+
+                if failure is None and entry.needs.get(MODEL_BASIC_TECHNICAL):
+                    try:
+                        record = dependencies.apply_technical_scores(
+                            record,
+                            dependencies.analyze_technical_quality(entry.path),
+                        )
+                    except JobCancelled:
+                        raise
+                    except Exception as exc:
+                        failure = exc
+                    else:
+                        status = (
+                            "inspected"
+                            if entry.cached_record is not None and not entry.needs.get(MODEL_CORE_AESTHETIC)
+                            else status
+                        )
+                        _checkpoint_record(record, checkpoint_writer)
+                        record_checkpointed = True
+                        if progress_callback is not None:
+                            progress_callback(index - 1, total, entry.path, "technical_done")
+
+                if failure is None and (entry.needs.get(MODEL_CLIP_IQA) or entry.needs.get(MODEL_CLIP_AESTHETIC)):
+                    try:
+                        assert loaded_clip_reference_model is not None
+                        clip_scores = dependencies.score_clip_reference_image(entry.path, loaded_clip_reference_model)
+                        requested_clip_fields: set[str] = set()
+                        for model_key in (MODEL_CLIP_IQA, MODEL_CLIP_AESTHETIC):
+                            if entry.needs.get(model_key):
+                                requested_clip_fields.update(dependencies.model_output_fields(model_key))
+                        clip_scores = {key: value for key, value in clip_scores.items() if key in requested_clip_fields}
+                        record = dependencies.apply_clip_reference_scores(record, clip_scores)
+                    except JobCancelled:
+                        raise
+                    except Exception as exc:
+                        failure = exc
+                    else:
+                        _checkpoint_record(record, checkpoint_writer)
+                        record_checkpointed = True
+                        if progress_callback is not None:
+                            progress_callback(index - 1, total, entry.path, "clip_done")
+
+                if failure is None and entry.needs.get(MODEL_LLM_REVIEW):
+                    try:
+                        llm_output = dependencies.score_llm_review_image(
+                            entry.path,
+                            file_id=entry.file_id,
+                            score_context=record,
+                        )
+                        generation = _llm_output_generation(llm_output)
+                        record = dependencies.apply_llm_review_scores(
+                            record,
+                            llm_output.scores,
+                            generation=generation,
+                        )
+                    except JobCancelled:
+                        raise
+                    except Exception as exc:
+                        failure = exc
+                    else:
+                        status = "reviewed"
+                        try:
+                            _checkpoint_record(record, checkpoint_writer)
+                            record_checkpointed = True
+                            if cache_path and llm_output.insights:
+                                dependencies.save_analysis_insights(llm_output.insights, cache_path)
+                        except Exception:
+                            _clear_llm_review_scores(record)
+                            _checkpoint_record(record, checkpoint_writer)
+                            raise
+                        if progress_callback is not None:
+                            progress_callback(index - 1, total, entry.path, "llm_done")
+
+                if failure is not None:
+                    record["error"] = repr(failure)
+                    status = "error"
+                    _checkpoint_record(record, checkpoint_writer)
+                    record_checkpointed = True
+                elif not record_checkpointed and (entry.cache_dirty or entry.cached_record is None):
+                    _checkpoint_record(record, checkpoint_writer)
+                    record_checkpointed = True
+
+            rows.append(record)
+
+            if progress_callback is not None:
+                progress_callback(index, total, entry.path, status)
 
     result_df = dependencies.normalize_score_dataframe(pd.DataFrame(rows))
-    if cache_path:
-        dependencies.save_cache_records(result_df, cache_path, existing_cache)
     if publish_result is not None:
         publish_result(result_df)
-    if cache_path:
-        if insights:
-            dependencies.save_analysis_insights(insights, cache_path)
 
     return result_df, device
+
+
+def _checkpoint_record(
+    record: Mapping[str, object],
+    checkpoint_writer: ScoreCheckpointWriter | None,
+) -> None:
+    if checkpoint_writer is not None:
+        checkpoint_writer.upsert(pd.DataFrame([dict(record)]))
+
+
+def _clear_llm_review_scores(record: dict[str, object]) -> None:
+    for field in LLM_REVIEW_FIELDS:
+        record[score_column(field)] = pd.NA
+    record[LLM_REVIEW_GENERATION_COLUMN] = pd.NA
+    record[RECOMMENDATION_COLUMN] = pd.NA
 
 
 def _build_entries(
@@ -250,6 +322,16 @@ def _resolve_cached_llm_reviews(
         score_columns=tuple(score_column(field) for field in LLM_REVIEW_FIELDS),
         derived_columns=(RECOMMENDATION_COLUMN,),
     )
+    llm_identity_columns = (
+        *(score_column(field) for field in LLM_REVIEW_FIELDS),
+        LLM_REVIEW_GENERATION_COLUMN,
+    )
+    stale_file_ids = {
+        entry.file_id
+        for entry in cached_entries
+        if entry.file_id not in resolution.current_file_ids
+        and any(_has_cached_value(entry.cached_record.get(column)) for column in llm_identity_columns)
+    }
     resolved_by_id = {
         str(row["file_id"]): row.to_dict()
         for _, row in resolution.dataframe.iterrows()
@@ -258,6 +340,7 @@ def _resolve_cached_llm_reviews(
     for entry in entries:
         if entry.cached_record is not None and entry.file_id in resolved_by_id:
             entry.cached_record = resolved_by_id[entry.file_id]
+            entry.cache_dirty = entry.file_id in stale_file_ids
     return resolution.current_file_ids
 
 
@@ -307,3 +390,12 @@ def _llm_output_generation(output: Any) -> float:
     if len(generations) != 1:
         raise ValueError("LLM review output must contain exactly one generation")
     return generations.pop()
+
+
+def _has_cached_value(value: object) -> bool:
+    if value is None:
+        return False
+    try:
+        return not bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return True

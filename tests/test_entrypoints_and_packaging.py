@@ -187,6 +187,21 @@ class EntrypointAndPackagingTests(unittest.TestCase):
             if original is not None:
                 sys.modules["culvia.scoring"] = original
 
+    def test_batch_cli_uses_the_default_cache_for_incremental_recovery(self) -> None:
+        from culvia import batch_cli
+
+        runtime = SimpleNamespace(
+            DEFAULT_OUTPUT_PATH="scores.csv",
+            DEFAULT_CACHE_PATH="default.sqlite",
+        )
+
+        args = batch_cli.parse_args(["photos"], runtime=runtime)
+
+        self.assertEqual(args.cache, "default.sqlite")
+
+        uncached = batch_cli.parse_args(["photos", "--no-cache"], runtime=runtime)
+        self.assertEqual(uncached.cache, "")
+
     def test_batch_cli_loads_cache_llm_identity_before_processing(self) -> None:
         import pandas as pd
 
@@ -195,6 +210,7 @@ class EntrypointAndPackagingTests(unittest.TestCase):
         calls: dict[str, object] = {}
         runtime = SimpleNamespace(
             DEFAULT_OUTPUT_PATH="scores.csv",
+            DEFAULT_CACHE_PATH="default.sqlite",
             DEFAULT_PHOTO_DIRS=[],
             HEIF_AVAILABLE=True,
             CSV_COLUMNS=["file_id"],
@@ -222,6 +238,7 @@ class EntrypointAndPackagingTests(unittest.TestCase):
 
         runtime = SimpleNamespace(
             DEFAULT_OUTPUT_PATH="scores.csv",
+            DEFAULT_CACHE_PATH="default.sqlite",
             DEFAULT_PHOTO_DIRS=[],
             HEIF_AVAILABLE=True,
             CSV_COLUMNS=["file_id"],

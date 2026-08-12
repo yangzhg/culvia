@@ -155,7 +155,7 @@ class ScoringRunnerTests(unittest.TestCase):
         self.assertEqual(calls["source_configs"][0][1], cache_path)
         self.assertEqual(service.active_thread_job_id(), "")
 
-    def test_successful_upload_source_scores_without_cache_and_reports_progress(self) -> None:
+    def test_successful_upload_source_reuses_matching_cache_and_reports_progress(self) -> None:
         calls: dict[str, Any] = {}
         with tempfile.TemporaryDirectory() as tmp:
             image_path = Path(tmp) / "portrait.jpg"
@@ -218,12 +218,63 @@ class ScoringRunnerTests(unittest.TestCase):
             self.assertEqual(store.data["job"]["currentFile"], "")
         self.assertEqual(calls["paths"], [image_path])
         self.assertTrue(calls["published_before_return"])
-        self.assertFalse(calls["use_cache"])
+        self.assertTrue(calls["use_cache"])
         self.assertEqual(calls["cache_path"], cache_path)
         self.assertEqual(calls["source_configs"][0][0]["mode"], "uploads")
         self.assertEqual(calls["model_loads"][0][0:2], ("cpu", "system"))
         self.assertEqual(calls["clip_loads"][0][0:2], ("cpu", "system"))
         self.assertEqual(service.control["jobId"], "")
+
+    def test_upload_retry_keeps_cache_reuse_enabled_after_cancellation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            image_paths = [root / "one.jpg", root / "two.jpg"]
+            for path in image_paths:
+                path.write_bytes(path.name.encode("utf-8"))
+            cache_path = str(root / "scores.sqlite")
+            store = make_store(cache_path)
+            service = ScoringJobService(store)
+            seen_use_cache: list[bool] = []
+
+            def first_run(_paths: list[Path], **kwargs: Any) -> tuple[pd.DataFrame, str]:
+                seen_use_cache.append(kwargs["use_cache"])
+                service.request_cancel()
+                kwargs["progress_callback"](1, 2, image_paths[1], "started")
+                raise AssertionError("cancel should interrupt the first run")
+
+            first_job_id = service.reserve()
+            self.assertTrue(first_job_id)
+            payload = {
+                "mode": "uploads",
+                "uploadedPaths": [str(path) for path in image_paths],
+                "cachePath": cache_path,
+            }
+            run_scoring_job(
+                first_job_id,
+                payload,
+                store,
+                service,
+                make_dependencies(score_image_paths=first_run),
+            )
+
+            with store.lock:
+                self.assertEqual(store.data["job"]["phase"], "cancelled")
+
+            def retry(_paths: list[Path], **kwargs: Any) -> tuple[pd.DataFrame, str]:
+                seen_use_cache.append(kwargs["use_cache"])
+                return pd.DataFrame(columns=["file_id"]), "cpu"
+
+            second_job_id = service.reserve()
+            self.assertTrue(second_job_id)
+            run_scoring_job(
+                second_job_id,
+                payload,
+                store,
+                service,
+                make_dependencies(score_image_paths=retry),
+            )
+
+        self.assertEqual(seen_use_cache, [True, True])
 
     def test_scoring_exception_is_reported_and_control_is_reset(self) -> None:
         cache_path = "/tmp/error.sqlite"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -52,13 +53,18 @@ def make_dependencies(
             "error": error,
         }
 
-    def save_cache_records(df: pd.DataFrame, cache_path: str | Path, existing_df: pd.DataFrame | None) -> None:
-        call_log.setdefault("save_order", []).append("cache")
-        call_log["saved_cache"] = {
-            "df": df.copy(),
-            "cache_path": str(cache_path),
-            "existing_rows": 0 if existing_df is None else len(existing_df),
-        }
+    @contextmanager
+    def open_checkpoint_writer(cache_path: str | Path):
+        class Writer:
+            def upsert(self, df: pd.DataFrame) -> None:
+                call_log.setdefault("save_order", []).append("cache")
+                call_log.setdefault("checkpointed", []).append(df.copy())
+                call_log["saved_cache"] = {
+                    "df": df.copy(),
+                    "cache_path": str(cache_path),
+                }
+
+        yield Writer()
 
     def score_llm_review_image(path: Path, *, file_id: str, score_context: dict[str, object]) -> SimpleNamespace:
         call_log.setdefault("llm_paths", []).append((path, file_id, dict(score_context)))
@@ -92,7 +98,7 @@ def make_dependencies(
         model_recompute_plan=lambda _record, _models: dict(active_recompute_plan),
         model_output_fields=lambda model_key: (model_key,),
         load_cache_records=lambda _cache_path: cache_df.copy() if cache_df is not None else pd.DataFrame(),
-        save_cache_records=save_cache_records,
+        open_checkpoint_writer=open_checkpoint_writer,
         normalize_score_dataframe=lambda df: df,
         make_empty_record=make_empty_record,
         score_aesthetic_image=lambda _path, _model: {},
@@ -152,9 +158,9 @@ class ScoringCoreTests(unittest.TestCase):
         self.assertEqual(device, "cpu")
         self.assertEqual(float(df.loc[0, "llm_review_overall_0_10"]), 8.8)
         self.assertEqual(len(calls["llm_paths"]), 1)
-        self.assertEqual(calls["saved_cache"]["existing_rows"], 1)
+        self.assertEqual(len(calls["checkpointed"]), 1)
         self.assertEqual(len(calls["saved_insights"][0]), 1)
-        self.assertEqual(calls["save_order"], ["cache", "publish", "insight"])
+        self.assertEqual(calls["save_order"], ["cache", "insight", "publish"])
         self.assertEqual([item[3] for item in progress], ["started", "llm_done", "reviewed"])
 
     def test_cached_llm_scores_with_matching_insight_stay_cached(self) -> None:
@@ -271,6 +277,44 @@ class ScoringCoreTests(unittest.TestCase):
         self.assertTrue(pd.isna(saved.loc[0, LLM_REVIEW_GENERATION_COLUMN]))
         self.assertTrue(pd.isna(saved.loc[0, "llm_review_overall_0_10"]))
         self.assertTrue(pd.isna(saved.loc[0, "recommendation_0_10"]))
+
+    def test_llm_insight_save_failure_invalidates_the_checkpointed_generation(self) -> None:
+        calls: dict[str, object] = {}
+        dependencies = make_dependencies(
+            cache_df=pd.DataFrame(),
+            current_insight_generations={},
+            recompute_plan=base_plan(llm_review=True),
+            calls=calls,
+        )
+        dependencies = ScoreImagePathDependencies(
+            **{
+                **dependencies.__dict__,
+                "save_analysis_insights": lambda _insights, _cache_path: (_ for _ in ()).throw(
+                    RuntimeError("insight write failed")
+                ),
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "scores.sqlite"
+            with self.assertRaisesRegex(RuntimeError, "insight write failed"):
+                score_image_paths(
+                    [Path("/photos/a.jpg")],
+                    dependencies=dependencies,
+                    cache_path=cache_path,
+                    use_cache=True,
+                    model_loader=lambda _device: self.fail("core model should not load"),
+                    clip_reference_loader=lambda _device: self.fail("clip model should not load"),
+                    selected_models=[MODEL_LLM_REVIEW],
+                )
+
+        checkpoints = calls["checkpointed"]
+        self.assertEqual(len(checkpoints), 2)
+        published = checkpoints[0].iloc[0]
+        invalidated = checkpoints[1].iloc[0]
+        self.assertEqual(float(published[LLM_REVIEW_GENERATION_COLUMN]), 2.0)
+        self.assertTrue(pd.isna(invalidated[LLM_REVIEW_GENERATION_COLUMN]))
+        self.assertTrue(pd.isna(invalidated["llm_review_overall_0_10"]))
 
 
 if __name__ == "__main__":

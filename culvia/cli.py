@@ -8,7 +8,9 @@ from culvia import runtime_manager
 
 
 def help_parser() -> argparse.ArgumentParser:
-    return batch_cli.help_parser(default_output="")
+    from culvia.settings import default_cache_path
+
+    return batch_cli.help_parser(default_output="", default_cache=default_cache_path())
 
 
 def main(argv: list[str] | None = None) -> int:

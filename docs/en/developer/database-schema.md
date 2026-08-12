@@ -29,6 +29,7 @@ Core columns:
 
 Score columns include local aesthetic, technical, CLIP reference, CLIP-IQA, and LLM review dimensions defined in `culvia.schema`.
 Existing score tables are extended in place when new cache columns are introduced.
+Scoring checkpoints use full-record UPSERTs for only the supplied `file_id`; rows outside the checkpoint are never rewritten from an older in-memory snapshot. Explicit `NULL` values remain meaningful and clear stale model output.
 
 ## `photo_analysis_insights`
 

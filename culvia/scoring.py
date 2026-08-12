@@ -493,6 +493,10 @@ def save_cache_records(
     SCORE_CACHE_STORE.save(current_df, cache_path, existing_df)
 
 
+def open_score_checkpoint_writer(cache_path: str | Path):
+    return SCORE_CACHE_STORE.checkpoint_writer(cache_path)
+
+
 def cached_resized_image_path(path: str | Path, max_size: int = MODEL_INPUT_MAX_SIZE) -> Path:
     return ensure_resized_image_cache(
         path,
@@ -697,7 +701,7 @@ def _score_image_path_dependencies() -> ScoreImagePathDependencies:
         model_recompute_plan=model_recompute_plan,
         model_output_fields=model_output_fields,
         load_cache_records=load_cache_records,
-        save_cache_records=save_cache_records,
+        open_checkpoint_writer=open_score_checkpoint_writer,
         normalize_score_dataframe=normalize_score_dataframe,
         make_empty_record=_make_empty_record,
         score_aesthetic_image=score_image,

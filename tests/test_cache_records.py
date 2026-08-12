@@ -90,6 +90,70 @@ class CacheRecordStoreTests(unittest.TestCase):
         self.assertAlmostEqual(float(first["overall_0_10"]), 9.0)
         self.assertAlmostEqual(float(second["quality_0_10"]), 7.5)
 
+    def test_upsert_updates_only_the_supplied_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = make_store()
+            cache_path = Path(tmp) / "scores.sqlite"
+            store.save(
+                pd.DataFrame(
+                    [
+                        {"file_id": "image-1", "path": "/one.jpg", "overall_0_10": 4.0},
+                        {"file_id": "image-2", "path": "/two.jpg", "overall_0_10": 7.0},
+                    ]
+                ),
+                cache_path,
+            )
+            with sqlite3.connect(cache_path) as conn:
+                conn.execute("UPDATE culvia_scores SET updated_at = 10 WHERE file_id = 'image-1'")
+                conn.execute("UPDATE culvia_scores SET updated_at = 20 WHERE file_id = 'image-2'")
+                conn.commit()
+
+            store.upsert(
+                pd.DataFrame([{"file_id": "image-1", "path": "/one-new.jpg", "overall_0_10": 9.0}]),
+                cache_path,
+            )
+
+            with sqlite3.connect(cache_path) as conn:
+                rows = {
+                    row[0]: row[1:]
+                    for row in conn.execute(
+                        "SELECT file_id, path, overall_0_10, updated_at FROM culvia_scores ORDER BY file_id"
+                    )
+                }
+
+        self.assertEqual(rows["image-1"][0], "/one-new.jpg")
+        self.assertAlmostEqual(float(rows["image-1"][1]), 9.0)
+        self.assertNotEqual(rows["image-1"][2], 10)
+        self.assertEqual(rows["image-2"], ("/two.jpg", 7.0, 20.0))
+
+    def test_upsert_can_clear_scores_without_accepting_blank_file_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = make_store()
+            cache_path = Path(tmp) / "scores.sqlite"
+            store.save(
+                pd.DataFrame([{"file_id": "image-1", "path": "/one.jpg", "overall_0_10": 8.0}]),
+                cache_path,
+            )
+
+            store.upsert(
+                pd.DataFrame([{"file_id": "image-1", "path": "/one.jpg", "overall_0_10": pd.NA}]),
+                cache_path,
+            )
+            with self.assertRaisesRegex(ValueError, "non-empty file_id"):
+                store.upsert(
+                    pd.DataFrame(
+                        [
+                            {"file_id": "image-1", "path": "/should-not-write.jpg"},
+                            {"file_id": " ", "path": "/blank.jpg"},
+                        ]
+                    ),
+                    cache_path,
+                )
+            loaded = store.load(cache_path).set_index("file_id")
+
+        self.assertTrue(pd.isna(loaded.loc["image-1", "overall_0_10"]))
+        self.assertEqual(loaded.loc["image-1", "path"], "/one.jpg")
+
     def test_cache_store_rejects_csv_cache_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = make_store()
