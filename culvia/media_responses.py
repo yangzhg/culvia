@@ -6,6 +6,7 @@ from starlette.responses import FileResponse, Response
 
 from culvia.api_errors import api_error_response
 from culvia.media_service import ensure_thumbnail_file, resized_jpeg_bytes
+from culvia.thumbnail_service import ThumbnailQueueFullError
 
 MEDIA_ERROR_VARY_HEADERS = {"Vary": "Accept"}
 
@@ -77,13 +78,32 @@ def thumbnail_media_response(
     try:
         thumb_path = ensure_thumbnail_file(path, cache_dir, max_size, lock=lock)
     except Exception as exc:
+        return thumbnail_generation_error_response(exc, wants_json=wants_json)
+    return FileResponse(thumb_path, media_type="image/jpeg")
+
+
+def thumbnail_generation_error_response(exc: Exception, *, wants_json: bool = False) -> Response:
+    if isinstance(exc, ThumbnailQueueFullError):
         if wants_json:
             return api_error_response(
-                "thumbnailGenerationFailed",
-                "thumbnail failed",
-                status_code=500,
-                params={"kind": "thumbnail", "reason": exc.__class__.__name__},
-                headers=MEDIA_ERROR_VARY_HEADERS,
+                "thumbnailBusy",
+                "thumbnail generation is busy",
+                status_code=503,
+                retryable=True,
+                params={"kind": "thumbnail"},
+                headers={**MEDIA_ERROR_VARY_HEADERS, "Retry-After": "1"},
             )
-        return Response(f"thumbnail failed: {exc!r}", status_code=500, headers=MEDIA_ERROR_VARY_HEADERS)
-    return FileResponse(thumb_path, media_type="image/jpeg")
+        return Response(
+            "thumbnail generation is busy",
+            status_code=503,
+            headers={**MEDIA_ERROR_VARY_HEADERS, "Retry-After": "1"},
+        )
+    if wants_json:
+        return api_error_response(
+            "thumbnailGenerationFailed",
+            "thumbnail failed",
+            status_code=500,
+            params={"kind": "thumbnail", "reason": exc.__class__.__name__},
+            headers=MEDIA_ERROR_VARY_HEADERS,
+        )
+    return Response(f"thumbnail failed: {exc!r}", status_code=500, headers=MEDIA_ERROR_VARY_HEADERS)

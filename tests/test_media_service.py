@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
+import threading
 import unittest
+from concurrent.futures import Future
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 from PIL import Image
@@ -16,8 +20,10 @@ from culvia.media_service import (
     sanitize_uploaded_paths,
     save_uploaded_bytes,
     thumbnail_cache_path,
+    thumbnail_cache_size,
     thumbnail_url,
 )
+from culvia.thumbnail_service import ThumbnailGenerationCoordinator, ThumbnailQueueFullError
 
 
 def make_image(path: Path) -> Path:
@@ -147,6 +153,13 @@ class MediaServiceTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first.suffix, ".jpg")
 
+    def test_thumbnail_sizes_use_a_small_stable_bucket_set(self) -> None:
+        self.assertEqual(thumbnail_cache_size(20), 80)
+        self.assertEqual(thumbnail_cache_size(96), 80)
+        self.assertEqual(thumbnail_cache_size(121), 120)
+        self.assertEqual(thumbnail_cache_size(420), 420)
+        self.assertEqual(thumbnail_cache_size(1200), 900)
+
     def test_media_urls_include_file_id_when_available(self) -> None:
         self.assertEqual(
             image_url("/photos/a.jpg", 1200, file_id="photo-1"),
@@ -156,6 +169,285 @@ class MediaServiceTests(unittest.TestCase):
             thumbnail_url("/photos/a.jpg", 420, file_id="photo-1"),
             "/api/thumbnail?path=%2Fphotos%2Fa.jpg&max=420&file_id=photo-1",
         )
+
+
+class ThumbnailCoordinatorTests(unittest.TestCase):
+    def test_different_thumbnails_run_in_parallel_with_a_hard_capacity(self) -> None:
+        async def scenario(root: Path) -> tuple[int, list[Path]]:
+            sources = [root / f"source-{index}.jpg" for index in range(4)]
+            for source in sources:
+                source.write_bytes(source.name.encode("utf-8"))
+            cache_dir = root / "thumbs"
+            coordinator = ThumbnailGenerationCoordinator(max_concurrency=2)
+            active = 0
+            max_active = 0
+            active_lock = threading.Lock()
+            two_started = threading.Event()
+            release = threading.Event()
+
+            def generate(
+                _path: Path,
+                _cache_dir: Path,
+                _max_size: int,
+                *,
+                cache_path: Path | None = None,
+            ) -> Path:
+                nonlocal active, max_active
+                assert cache_path is not None
+                with active_lock:
+                    active += 1
+                    max_active = max(max_active, active)
+                    if active == 2:
+                        two_started.set()
+                try:
+                    if not release.wait(timeout=1):
+                        raise AssertionError("thumbnail generation did not resume")
+                    return cache_path
+                finally:
+                    with active_lock:
+                        active -= 1
+
+            with patch("culvia.thumbnail_service.ensure_thumbnail_file", side_effect=generate):
+                tasks = [asyncio.create_task(coordinator.ensure(source, cache_dir, 420)) for source in sources]
+                self.assertTrue(await asyncio.to_thread(two_started.wait, 1))
+                await asyncio.sleep(0.05)
+                with active_lock:
+                    self.assertEqual(active, 2)
+                    self.assertEqual(max_active, 2)
+                release.set()
+                results = await asyncio.gather(*tasks)
+            coordinator.close()
+            return max_active, results
+
+        with tempfile.TemporaryDirectory() as tmp:
+            max_active, results = asyncio.run(scenario(Path(tmp)))
+
+        self.assertEqual(max_active, 2)
+        self.assertEqual(len(results), 4)
+
+    def test_same_thumbnail_is_generated_once_and_survives_one_waiter_cancelling(self) -> None:
+        async def scenario(root: Path) -> int:
+            source = root / "source.jpg"
+            source.write_bytes(b"source")
+            cache_dir = root / "thumbs"
+            coordinator = ThumbnailGenerationCoordinator(max_concurrency=2)
+            started = threading.Event()
+            release = threading.Event()
+            calls = 0
+
+            def generate(
+                _path: Path,
+                _cache_dir: Path,
+                _max_size: int,
+                *,
+                cache_path: Path | None = None,
+            ) -> Path:
+                nonlocal calls
+                assert cache_path is not None
+                calls += 1
+                started.set()
+                if not release.wait(timeout=1):
+                    raise AssertionError("thumbnail generation did not resume")
+                return cache_path
+
+            with patch("culvia.thumbnail_service.ensure_thumbnail_file", side_effect=generate):
+                first = asyncio.create_task(coordinator.ensure(source, cache_dir, 420))
+                second = asyncio.create_task(coordinator.ensure(source, cache_dir, 420))
+                self.assertTrue(await asyncio.to_thread(started.wait, 1))
+                first.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await first
+                release.set()
+                await second
+            coordinator.close()
+            return calls
+
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = asyncio.run(scenario(Path(tmp)))
+
+        self.assertEqual(calls, 1)
+
+    def test_failed_generation_is_removed_from_singleflight_and_can_retry(self) -> None:
+        async def scenario(root: Path) -> int:
+            source = root / "source.jpg"
+            source.write_bytes(b"source")
+            cache_dir = root / "thumbs"
+            coordinator = ThumbnailGenerationCoordinator(max_concurrency=2)
+            calls = 0
+
+            def generate(
+                _path: Path,
+                _cache_dir: Path,
+                _max_size: int,
+                *,
+                cache_path: Path | None = None,
+            ) -> Path:
+                nonlocal calls
+                assert cache_path is not None
+                calls += 1
+                if calls == 1:
+                    raise RuntimeError("encode failed")
+                return cache_path
+
+            with patch("culvia.thumbnail_service.ensure_thumbnail_file", side_effect=generate):
+                with self.assertRaisesRegex(RuntimeError, "encode failed"):
+                    await coordinator.ensure(source, cache_dir, 420)
+                await coordinator.ensure(source, cache_dir, 420)
+            coordinator.close()
+            return calls
+
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = asyncio.run(scenario(Path(tmp)))
+
+        self.assertEqual(calls, 2)
+
+    def test_immediately_completed_future_does_not_deadlock_singleflight_cleanup(self) -> None:
+        async def scenario(root: Path) -> Path:
+            source = root / "source.jpg"
+            source.write_bytes(b"source")
+            cache_dir = root / "thumbs"
+            coordinator = ThumbnailGenerationCoordinator(max_concurrency=1)
+
+            def submit_immediately(_function, *_args, **kwargs) -> Future[Path]:
+                completed: Future[Path] = Future()
+                completed.set_result(kwargs["cache_path"])
+                return completed
+
+            with patch.object(coordinator._executor, "submit", side_effect=submit_immediately):
+                result = await asyncio.wait_for(coordinator.ensure(source, cache_dir, 420), timeout=1)
+            coordinator.close()
+            return result
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = asyncio.run(scenario(Path(tmp)))
+
+        self.assertEqual(result.suffix, ".jpg")
+
+    def test_singleflight_and_capacity_are_shared_across_event_loops(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.jpg"
+            source.write_bytes(b"source")
+            cache_dir = root / "thumbs"
+            coordinator = ThumbnailGenerationCoordinator(max_concurrency=1)
+            first_started = threading.Event()
+            both_targets_resolved = threading.Event()
+            second_joined = threading.Event()
+            release = threading.Event()
+            calls = 0
+            target_calls = 0
+            wrap_calls = 0
+            active = 0
+            max_active = 0
+            calls_lock = threading.Lock()
+
+            def generate(
+                _path: Path,
+                _cache_dir: Path,
+                _max_size: int,
+                *,
+                cache_path: Path | None = None,
+            ) -> Path:
+                nonlocal calls, active, max_active
+                assert cache_path is not None
+                with calls_lock:
+                    calls += 1
+                    active += 1
+                    max_active = max(max_active, active)
+                first_started.set()
+                try:
+                    if not release.wait(timeout=1):
+                        raise AssertionError("thumbnail generation did not resume")
+                    return cache_path
+                finally:
+                    with calls_lock:
+                        active -= 1
+
+            def wait_on_separate_loop() -> None:
+                asyncio.run(coordinator.ensure(source, cache_dir, 420))
+
+            original_wrap_future = asyncio.wrap_future
+
+            def observe_join(future, *, loop=None):
+                nonlocal wrap_calls
+                with calls_lock:
+                    wrap_calls += 1
+                    if wrap_calls == 2:
+                        second_joined.set()
+                return original_wrap_future(future, loop=loop)
+
+            def resolve_target(_path: Path, _cache_dir: Path, _max_size: int) -> tuple[Path, bool]:
+                nonlocal target_calls
+                with calls_lock:
+                    target_calls += 1
+                    if target_calls == 2:
+                        both_targets_resolved.set()
+                return cache_dir / "shared.jpg", False
+
+            with (
+                patch("culvia.thumbnail_service.ensure_thumbnail_file", side_effect=generate),
+                patch("culvia.thumbnail_service._thumbnail_cache_target", side_effect=resolve_target),
+                patch("culvia.thumbnail_service.asyncio.wrap_future", side_effect=observe_join),
+            ):
+                threads = [threading.Thread(target=wait_on_separate_loop) for _ in range(2)]
+                for thread in threads:
+                    thread.start()
+                self.assertTrue(first_started.wait(timeout=1))
+                self.assertTrue(both_targets_resolved.wait(timeout=1))
+                self.assertTrue(second_joined.wait(timeout=1))
+                release.set()
+                for thread in threads:
+                    thread.join(timeout=2)
+                    self.assertFalse(thread.is_alive())
+            coordinator.close()
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(max_active, 1)
+
+    def test_pending_capacity_rejects_new_keys_but_keeps_singleflight_and_recovers(self) -> None:
+        async def scenario(root: Path) -> tuple[int, Path]:
+            cache_dir = root / "thumbs"
+            sources = [root / f"source-{index}.jpg" for index in range(3)]
+            for source in sources:
+                source.write_bytes(source.name.encode("utf-8"))
+            coordinator = ThumbnailGenerationCoordinator(max_concurrency=1, max_pending=1)
+            started = threading.Event()
+            release = threading.Event()
+            calls = 0
+
+            def generate(
+                _path: Path,
+                _cache_dir: Path,
+                _max_size: int,
+                *,
+                cache_path: Path | None = None,
+            ) -> Path:
+                nonlocal calls
+                assert cache_path is not None
+                calls += 1
+                started.set()
+                if not release.wait(timeout=1):
+                    raise AssertionError("thumbnail generation did not resume")
+                return cache_path
+
+            with patch("culvia.thumbnail_service.ensure_thumbnail_file", side_effect=generate):
+                first = asyncio.create_task(coordinator.ensure(sources[0], cache_dir, 420))
+                same_key = asyncio.create_task(coordinator.ensure(sources[0], cache_dir, 420))
+                self.assertTrue(await asyncio.to_thread(started.wait, 1))
+                with self.assertRaises(ThumbnailQueueFullError):
+                    await coordinator.ensure(sources[1], cache_dir, 420)
+                release.set()
+                first_result, same_result = await asyncio.gather(first, same_key)
+                self.assertEqual(first_result, same_result)
+                recovered = await coordinator.ensure(sources[2], cache_dir, 420)
+            coordinator.close()
+            return calls, recovered
+
+        with tempfile.TemporaryDirectory() as tmp:
+            calls, recovered = asyncio.run(scenario(Path(tmp)))
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(recovered.suffix, ".jpg")
 
 
 if __name__ == "__main__":

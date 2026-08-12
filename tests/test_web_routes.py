@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from dataclasses import fields
 from pathlib import Path
@@ -15,7 +16,7 @@ import culvia_app
 from culvia.app_state import AppStateStore, create_initial_state
 from culvia.job_service import ScoringJobService
 from culvia.runtime_config import RuntimeConfig
-from culvia.web_app import create_web_app
+from culvia.web_app import app_lifespan, create_web_app
 from culvia.web_routes import (
     APP_ROUTE_SPECS,
     STATIC_CACHE_CONTROL,
@@ -122,6 +123,20 @@ class WebRouteTests(unittest.TestCase):
             [route.path for route in second.routes], [spec.path for spec in APP_ROUTE_SPECS] + [STATIC_ROUTE_PATH]
         )
         self.assertIsNot(first.routes[0], second.routes[0])
+        first.state.thumbnail_coordinator.close()
+        second.state.thumbnail_coordinator.close()
+
+    def test_app_lifespan_closes_thumbnail_coordinator(self) -> None:
+        app = culvia_app.create_app()
+        coordinator = app.state.thumbnail_coordinator
+
+        async def run_lifespan() -> None:
+            async with app_lifespan(app):
+                self.assertFalse(coordinator._closed)
+
+        asyncio.run(run_lifespan())
+
+        self.assertTrue(coordinator._closed)
 
     def test_package_web_app_factory_mounts_runtime_state_and_fresh_routes(self) -> None:
         config = RuntimeConfig(

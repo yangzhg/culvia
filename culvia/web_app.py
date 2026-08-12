@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from typing import Any
 
 from starlette.applications import Starlette
@@ -10,6 +12,21 @@ from culvia.app_state import AppStateStore, create_initial_state
 from culvia.job_service import ScoringJobService
 from culvia.runtime_config import RuntimeConfig
 from culvia.web_routes import WebRouteHandlers, build_routes
+
+
+def close_app_thumbnail_coordinator(app: Starlette) -> None:
+    coordinator = getattr(app.state, "thumbnail_coordinator", None)
+    close = getattr(coordinator, "close", None)
+    if callable(close):
+        close()
+
+
+@asynccontextmanager
+async def app_lifespan(app: Starlette):
+    try:
+        yield
+    finally:
+        await asyncio.to_thread(close_app_thumbnail_coordinator, app)
 
 
 def create_web_routes(handlers: WebRouteHandlers, config: RuntimeConfig) -> list[BaseRoute]:
@@ -48,7 +65,7 @@ def create_web_app(
     job_service: ScoringJobService | None = None,
     debug: bool = False,
 ) -> Starlette:
-    app = Starlette(debug=debug, routes=create_web_routes(handlers, config))
+    app = Starlette(debug=debug, routes=create_web_routes(handlers, config), lifespan=app_lifespan)
     app.state.app_state_store = state_store
     app.state.job_service = job_service or ScoringJobService(state_store)
     app.state.runtime_config = config

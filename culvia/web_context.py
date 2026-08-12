@@ -47,7 +47,14 @@ def media_path_from_request(
     with store.lock:
         state = store.data
         source = dict(state.get("source", {}))
-        scores_df = normalize_dataframe(state["scores_df"]).copy()
+        source_scores = state["scores_df"]
+        if isinstance(source_scores, pd.DataFrame):
+            columns = [column for column in ("file_id", "path") if column in source_scores.columns]
+            scores_df = source_scores.loc[:, columns].copy()
+        else:
+            normalized = normalize_dataframe(source_scores)
+            columns = [column for column in ("file_id", "path") if column in normalized.columns]
+            scores_df = normalized.loc[:, columns].copy()
 
     query_params = getattr(request, "query_params", {})
     runtime_config = request_runtime_config(request, fallback_runtime_config)

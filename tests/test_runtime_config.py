@@ -181,7 +181,9 @@ class RuntimeConfigTests(unittest.TestCase):
                 default_photo_dirs=(str(source_dir),),
                 thumbnail_max_size=96,
             )
-            client = TestClient(culvia_app.create_app(store, runtime_config=config))
+            web_app = culvia_app.create_app(store, runtime_config=config)
+            self.addCleanup(web_app.state.thumbnail_coordinator.close)
+            client = TestClient(web_app)
 
             home = client.get("/")
             upload = client.post("/api/upload", files=[("files", ("keep.jpg", b"fake image bytes", "image/jpeg"))])
@@ -195,7 +197,9 @@ class RuntimeConfigTests(unittest.TestCase):
             self.assertTrue(saved_path.exists())
             self.assertEqual(thumbnail.status_code, 200)
             self.assertTrue(thumb_dir.exists())
-            self.assertTrue(any(thumb_dir.glob("*.jpg")))
+            cached_thumbnail = next(thumb_dir.glob("*.jpg"))
+            with Image.open(cached_thumbnail) as image:
+                self.assertLessEqual(max(image.size), config.thumbnail_max_size)
 
 
 if __name__ == "__main__":

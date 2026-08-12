@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import os
 import tempfile
+import threading
 import unittest
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlencode
 
 import pandas as pd
 from PIL import Image
+from starlette.requests import Request
 from starlette.testclient import TestClient
 
 import culvia_app
@@ -25,6 +29,25 @@ def make_test_image(path: Path, size: tuple[int, int] = (32, 24)) -> Path:
     image = Image.new("RGB", size, (96, 128, 180))
     image.save(path)
     return path
+
+
+def make_direct_request(app: object, path: str, query: dict[str, str] | None = None) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode("ascii"),
+            "query_string": urlencode(query or {}).encode("utf-8"),
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+            "server": ("127.0.0.1", 8501),
+            "app": app,
+        }
+    )
 
 
 class ServerApiTests(unittest.TestCase):
@@ -1243,7 +1266,14 @@ class ServerApiTests(unittest.TestCase):
             with culvia_app.STATE_LOCK:
                 original_global_scores = culvia_app.STATE["scores_df"].copy()
                 original_global_source = deepcopy(culvia_app.STATE["source"])
-            client = TestClient(culvia_app.create_app(store))
+            web_app = culvia_app.create_app(
+                store,
+                runtime_config=culvia_app.current_runtime_config().with_paths(
+                    thumbnail_cache_dir=Path(tmp) / "thumbnails"
+                ),
+            )
+            self.addCleanup(web_app.state.thumbnail_coordinator.close)
+            client = TestClient(web_app)
 
             allowed_response = client.get("/api/image", params={"path": str(allowed), "max": "120"})
             scored_response = client.get("/api/image", params={"file_id": "scored-image", "max": "120"})
@@ -1281,6 +1311,11 @@ class ServerApiTests(unittest.TestCase):
                 params={"path": str(denied), "max": "120"},
                 headers={"Accept": "application/json"},
             )
+            thumbnail_generation_json_response = client.get(
+                "/api/thumbnail",
+                params={"path": str(broken), "max": "120"},
+                headers={"Accept": "application/json"},
+            )
             with (
                 patch("culvia.capabilities.sys.platform", "darwin"),
                 patch(
@@ -1314,6 +1349,8 @@ class ServerApiTests(unittest.TestCase):
             self.assertEqual(missing_json_response.json()["errorCode"], "mediaNotFound")
             self.assertEqual(thumbnail_denied_json_response.status_code, 403)
             self.assertEqual(thumbnail_denied_json_response.json()["errorCode"], "thumbnailAccessDenied")
+            self.assertEqual(thumbnail_generation_json_response.status_code, 500)
+            self.assertEqual(thumbnail_generation_json_response.json()["errorCode"], "thumbnailGenerationFailed")
             self.assertEqual(reveal_response.status_code, 200)
             self.assertEqual(open_file_response.status_code, 200)
             self.assertEqual(run.call_count, 2)
@@ -2203,6 +2240,154 @@ class ServerApiTests(unittest.TestCase):
                     culvia_app.STATE["filters"].clear()
                     culvia_app.STATE["filters"].update(original_filters)
                     culvia_app.STATE["scores_df"] = original_scores
+
+
+class ThumbnailConcurrencyApiTests(unittest.TestCase):
+    @staticmethod
+    def make_app(root: Path):
+        cache_path = str(root / "scores.sqlite")
+        store = AppStateStore(
+            create_initial_state(
+                scores_df=pd.DataFrame(columns=scoring.CSV_COLUMNS),
+                default_photo_dirs=[],
+                default_cache_path=cache_path,
+                filter_defaults=culvia_app.FILTER_DEFAULTS,
+                default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+            )
+        )
+        config = culvia_app.current_runtime_config().with_paths(
+            thumbnail_cache_dir=root / "thumbs",
+            default_cache_path=cache_path,
+            default_photo_dirs=[],
+        )
+        return culvia_app.create_app(store, runtime_config=config)
+
+    def test_different_thumbnail_requests_generate_in_parallel(self) -> None:
+        async def scenario(root: Path) -> list[int]:
+            app = self.make_app(root)
+            paths = [root / "one.jpg", root / "two.jpg"]
+            for path in paths:
+                path.write_bytes(path.name.encode("utf-8"))
+            requests = [make_direct_request(app, "/api/thumbnail", {"path": str(path), "max": "120"}) for path in paths]
+            barrier = threading.Barrier(2)
+
+            def open_image(_path: Path, **_kwargs: object) -> Image.Image:
+                barrier.wait(timeout=1)
+                return Image.new("RGB", (32, 24), (96, 128, 180))
+
+            def resolve(request: Request, _store: AppStateStore) -> tuple[Path, int]:
+                return Path(request.query_params["path"]), 200
+
+            with (
+                patch("culvia_app.media_path_from_request", side_effect=resolve),
+                patch("culvia.image_io.open_image_rgb", side_effect=open_image),
+            ):
+                responses = await asyncio.gather(*(culvia_app.api_thumbnail(request) for request in requests))
+            app.state.thumbnail_coordinator.close()
+            return [response.status_code for response in responses]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            statuses = asyncio.run(scenario(Path(tmp)))
+
+        self.assertEqual(statuses, [200, 200])
+
+    def test_same_thumbnail_request_enters_concurrently_but_generates_once(self) -> None:
+        async def scenario(root: Path) -> tuple[int, list[bool]]:
+            app = self.make_app(root)
+            source = root / "source.jpg"
+            source.write_bytes(b"source")
+            requests = [
+                make_direct_request(app, "/api/thumbnail", {"path": str(source), "max": "120"}) for _ in range(2)
+            ]
+            second_request_entered = threading.Event()
+            route_calls = 0
+            open_calls = 0
+            observed_second_request: list[bool] = []
+            calls_lock = threading.Lock()
+
+            def resolve(_request: Request, _store: AppStateStore) -> tuple[Path, int]:
+                nonlocal route_calls
+                with calls_lock:
+                    route_calls += 1
+                    if route_calls == 2:
+                        second_request_entered.set()
+                return source, 200
+
+            def open_image(_path: Path, **_kwargs: object) -> Image.Image:
+                nonlocal open_calls
+                with calls_lock:
+                    open_calls += 1
+                observed_second_request.append(second_request_entered.wait(timeout=1))
+                return Image.new("RGB", (32, 24), (96, 128, 180))
+
+            with (
+                patch("culvia_app.media_path_from_request", side_effect=resolve),
+                patch("culvia.image_io.open_image_rgb", side_effect=open_image),
+            ):
+                responses = await asyncio.gather(*(culvia_app.api_thumbnail(request) for request in requests))
+            self.assertEqual([response.status_code for response in responses], [200, 200])
+            app.state.thumbnail_coordinator.close()
+            return open_calls, observed_second_request
+
+        with tempfile.TemporaryDirectory() as tmp:
+            open_calls, observed = asyncio.run(scenario(Path(tmp)))
+
+        self.assertEqual(open_calls, 1)
+        self.assertEqual(observed, [True])
+
+    def test_state_route_responds_while_thumbnail_generation_is_waiting(self) -> None:
+        async def scenario(root: Path) -> tuple[int, int, list[bool]]:
+            app = self.make_app(root)
+            source = root / "source.jpg"
+            source.write_bytes(b"source")
+            thumbnail_request = make_direct_request(
+                app,
+                "/api/thumbnail",
+                {"path": str(source), "max": "120"},
+            )
+            state_request = make_direct_request(app, "/api/state")
+            generation_started = threading.Event()
+            state_completed = threading.Event()
+            observed_state: list[bool] = []
+            resolve_started = threading.Event()
+            resolve_observed_state: list[bool] = []
+
+            def resolve(_request: Request, _store: AppStateStore) -> tuple[Path, int]:
+                resolve_started.set()
+                resolve_observed_state.append(state_completed.wait(timeout=1))
+                return source, 200
+
+            def open_image(_path: Path, **_kwargs: object) -> Image.Image:
+                generation_started.set()
+                observed_state.append(state_completed.wait(timeout=1))
+                return Image.new("RGB", (32, 24), (96, 128, 180))
+
+            with (
+                patch("culvia_app.media_path_from_request", side_effect=resolve),
+                patch("culvia.image_io.open_image_rgb", side_effect=open_image),
+                patch("culvia_app.state_payload", return_value={"ok": True}),
+            ):
+                thumbnail_task = asyncio.create_task(culvia_app.api_thumbnail(thumbnail_request))
+                self.assertTrue(await asyncio.to_thread(resolve_started.wait, 1))
+                state_response = await culvia_app.api_state(state_request)
+                state_completed.set()
+                self.assertTrue(await asyncio.to_thread(generation_started.wait, 1))
+                thumbnail_response = await thumbnail_task
+            app.state.thumbnail_coordinator.close()
+            return (
+                state_response.status_code,
+                thumbnail_response.status_code,
+                resolve_observed_state,
+                observed_state,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_status, thumbnail_status, resolve_observed, generation_observed = asyncio.run(scenario(Path(tmp)))
+
+        self.assertEqual(state_status, 200)
+        self.assertEqual(thumbnail_status, 200)
+        self.assertEqual(resolve_observed, [True])
+        self.assertEqual(generation_observed, [True])
 
 
 if __name__ == "__main__":

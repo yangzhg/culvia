@@ -85,7 +85,12 @@ from culvia.media_service import (
     thumbnail_cache_path as _thumbnail_cache_path,
     thumbnail_url as _thumbnail_url,
 )
-from culvia.media_responses import accepts_json, image_media_response, thumbnail_media_response
+from culvia.media_responses import (
+    accepts_json,
+    image_media_response,
+    thumbnail_generation_error_response,
+    unavailable_media_response,
+)
 from culvia.model_files import APP_MODEL_CACHE_DIR, MODEL_ID
 from culvia.model_runtime import ModelRuntimeCache, system_proxy_configured
 from culvia.payloads import (
@@ -248,6 +253,7 @@ from culvia.secret_store import (
     load_llm_api_key,
     save_llm_api_key,
 )
+from culvia.thumbnail_service import ThumbnailGenerationCoordinator
 
 
 ROOT = Path(__file__).resolve().parent
@@ -257,7 +263,6 @@ WEB_DIR = RUNTIME_CONFIG.web_dir
 UPLOAD_CACHE_DIR = RUNTIME_CONFIG.upload_cache_dir
 THUMBNAIL_CACHE_DIR = RUNTIME_CONFIG.thumbnail_cache_dir
 THUMBNAIL_MAX_SIZE = RUNTIME_CONFIG.thumbnail_max_size
-THUMBNAIL_LOCK = threading.Lock()
 KEYCHAIN_REFRESH_TIMEOUT_SECONDS = 1.5
 _LLM_KEY_REFRESH_LOCK = threading.Lock()
 _LLM_KEY_REFRESH_ATTEMPTED = False
@@ -1536,23 +1541,35 @@ def thumbnail_cache_path(path: Path, max_size: int) -> Path:
 
 
 def ensure_thumbnail_file(path: Path, max_size: int) -> Path:
-    return _ensure_thumbnail_file(path, THUMBNAIL_CACHE_DIR, max_size, lock=THUMBNAIL_LOCK)
+    return _ensure_thumbnail_file(path, THUMBNAIL_CACHE_DIR, max_size)
+
+
+def request_thumbnail_coordinator(request: Request) -> ThumbnailGenerationCoordinator:
+    coordinator = getattr(request.app.state, "thumbnail_coordinator", None)
+    if not isinstance(coordinator, ThumbnailGenerationCoordinator):
+        raise RuntimeError("Thumbnail coordinator is unavailable")
+    return coordinator
 
 
 async def api_thumbnail(request: Request) -> Response:
     runtime_config = request_runtime_config(request)
-    path, status_code = media_path_from_request(request, request_state_store(request))
+    state_store = request_state_store(request)
+    path, status_code = await run_in_threadpool(media_path_from_request, request, state_store)
     max_size = int(
         request.query_params.get("max", str(runtime_config.thumbnail_max_size)) or runtime_config.thumbnail_max_size
     )
-    return thumbnail_media_response(
-        path,
-        status_code,
-        max_size,
-        cache_dir=runtime_config.thumbnail_cache_dir,
-        lock=THUMBNAIL_LOCK,
-        wants_json=accepts_json(request.headers.get("accept", "")),
-    )
+    wants_json = accepts_json(request.headers.get("accept", ""))
+    if path is None:
+        return unavailable_media_response("thumbnail", status_code, wants_json=wants_json)
+    try:
+        thumb_path = await request_thumbnail_coordinator(request).ensure(
+            path,
+            runtime_config.thumbnail_cache_dir,
+            max_size,
+        )
+    except Exception as exc:
+        return thumbnail_generation_error_response(exc, wants_json=wants_json)
+    return FileResponse(thumb_path, media_type="image/jpeg")
 
 
 async def api_export(request: Request) -> Response:
@@ -1831,13 +1848,15 @@ routes = create_routes(RUNTIME_CONFIG)
 def create_app(state_store: AppStateStore | None = None, runtime_config: RuntimeConfig | None = None) -> Starlette:
     config = runtime_config or current_runtime_config()
     app_state_store = state_store or APP_STATE
-    return create_web_app(
+    web_app = create_web_app(
         route_handlers(),
         config=config,
         state_store=app_state_store,
         job_service=APP_JOB_SERVICE if app_state_store is APP_STATE else None,
         debug=False,
     )
+    web_app.state.thumbnail_coordinator = ThumbnailGenerationCoordinator()
+    return web_app
 
 
 app = create_app()

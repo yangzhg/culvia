@@ -135,7 +135,9 @@ class WebContextTests(unittest.TestCase):
                 request,
                 fallback_state_store=fallback_store,
                 fallback_runtime_config=fallback_config,
-                normalize_dataframe=scoring.normalize_score_dataframe,
+                normalize_dataframe=lambda _df: self.fail(
+                    "DataFrame media snapshots must not normalize the full table"
+                ),
             )
 
             self.assertEqual(path, image_path.resolve())
@@ -145,7 +147,9 @@ class WebContextTests(unittest.TestCase):
                     request,
                     fallback_state_store=fallback_store,
                     fallback_runtime_config=fallback_config,
-                    normalize_dataframe=scoring.normalize_score_dataframe,
+                    normalize_dataframe=lambda _df: self.fail(
+                        "DataFrame media snapshots must not normalize the full table"
+                    ),
                 ),
                 image_path.resolve(),
             )

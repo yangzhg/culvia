@@ -10,9 +10,11 @@ from PIL import Image
 from culvia.media_responses import (
     accepts_json,
     image_media_response,
+    thumbnail_generation_error_response,
     thumbnail_media_response,
     unavailable_media_response,
 )
+from culvia.thumbnail_service import ThumbnailQueueFullError
 
 
 class MediaResponseTests(unittest.TestCase):
@@ -108,6 +110,16 @@ class MediaResponseTests(unittest.TestCase):
         body = json.loads(response.body)
         self.assertEqual(body["errorCode"], "thumbnailGenerationFailed")
         self.assertEqual(body["errorParams"]["kind"], "thumbnail")
+
+    def test_thumbnail_queue_pressure_returns_retryable_service_unavailable(self) -> None:
+        text_response = thumbnail_generation_error_response(ThumbnailQueueFullError("full"))
+        json_response = thumbnail_generation_error_response(ThumbnailQueueFullError("full"), wants_json=True)
+
+        self.assertEqual(text_response.status_code, 503)
+        self.assertEqual(text_response.headers["retry-after"], "1")
+        self.assertEqual(json_response.status_code, 503)
+        self.assertEqual(json.loads(json_response.body)["errorCode"], "thumbnailBusy")
+        self.assertTrue(json.loads(json_response.body)["retryable"])
 
 
 if __name__ == "__main__":

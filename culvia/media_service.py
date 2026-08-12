@@ -15,6 +15,9 @@ from culvia.image_io import (
     resized_image_cache_path,
 )
 
+THUMBNAIL_SIZE_BUCKETS = (80, 120, 180, 240, 320, 420, 640, 900)
+THUMBNAIL_MAX_DECODE_PIXELS = 80_000_000
+
 
 def safe_uploaded_relative_path(name: str) -> Path:
     normalized = name.replace("\\", "/")
@@ -96,11 +99,13 @@ def resolve_media_path(
 ) -> tuple[Path | None, int]:
     file_id = str(file_id or "").strip()
     path_text = str(path_text or "").strip()
+    matched_score = False
 
     if file_id and not scores_df.empty and "file_id" in scores_df.columns:
         matches = scores_df[scores_df["file_id"].fillna("").astype(str) == file_id]
         if not matches.empty:
             path_text = str(matches.iloc[0].get("path") or "").strip()
+            matched_score = True
 
     if not path_text:
         return None, 404
@@ -110,6 +115,8 @@ def resolve_media_path(
         return None, 404
     if not path.exists() or not path.is_file():
         return None, 404
+    if matched_score:
+        return path, 200
     if not is_allowed_media_path(path, source, scores_df, upload_cache_dir=upload_cache_dir):
         return None, 403
     return path, 200
@@ -168,6 +175,11 @@ def thumbnail_url(path: str, max_size: int, *, file_id: str = "") -> str:
     return f"/api/thumbnail?{urlencode(params)}"
 
 
+def thumbnail_cache_size(max_size: int | None) -> int:
+    bounded_size = bounded_image_cache_size(max_size, minimum=THUMBNAIL_SIZE_BUCKETS[0], maximum=900)
+    return next(size for size in reversed(THUMBNAIL_SIZE_BUCKETS) if size <= bounded_size)
+
+
 def resized_jpeg_bytes(path: Path, max_size: int) -> bytes:
     bounded_size = bounded_image_cache_size(max_size, minimum=120, maximum=2200)
     image = open_image_rgb(path)
@@ -178,8 +190,7 @@ def resized_jpeg_bytes(path: Path, max_size: int) -> bytes:
 
 
 def thumbnail_cache_path(path: Path, cache_dir: Path, max_size: int) -> Path:
-    bounded_size = bounded_image_cache_size(max_size, minimum=80, maximum=900)
-    return resized_image_cache_path(path, cache_dir, bounded_size)
+    return resized_image_cache_path(path, cache_dir, thumbnail_cache_size(max_size))
 
 
 def ensure_thumbnail_file(
@@ -188,13 +199,19 @@ def ensure_thumbnail_file(
     max_size: int,
     *,
     lock: object | None = None,
+    cache_path: Path | None = None,
 ) -> Path:
+    bounded_size = thumbnail_cache_size(max_size)
     return ensure_resized_image_cache(
         path,
         cache_dir,
-        max_size,
-        minimum_size=80,
-        maximum_size=900,
+        bounded_size,
+        minimum_size=bounded_size,
+        maximum_size=bounded_size,
         quality=82,
         lock=lock,
+        cache_path=cache_path,
+        max_decode_pixels=THUMBNAIL_MAX_DECODE_PIXELS,
+        use_draft=True,
+        resize_before_copy=True,
     )

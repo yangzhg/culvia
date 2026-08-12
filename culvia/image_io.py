@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
+import tempfile
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -16,12 +18,42 @@ except Exception:
     HEIF_AVAILABLE = False
 
 
-def open_image_rgb(path: str | Path) -> Image.Image:
+def open_image_rgb(
+    path: str | Path,
+    *,
+    max_size_hint: int | None = None,
+    max_decode_pixels: int | None = None,
+    resize_before_copy: bool = False,
+) -> Image.Image:
     try:
         with Image.open(path) as image:
+            source_width, source_height = image.size
+            if max_size_hint is not None:
+                image.draft("RGB", (max_size_hint, max_size_hint))
+            decode_width, decode_height = image.size
+            if max_decode_pixels is not None and decode_width * decode_height > max_decode_pixels:
+                raise RuntimeError(f"image_too_large: {source_width}x{source_height}")
             image.load()
-            return ImageOps.exif_transpose(image).convert("RGB")
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+            resized_image = image
+            if resize_before_copy and max_size_hint is not None:
+                try:
+                    resized_image.thumbnail((max_size_hint, max_size_hint))
+                except ValueError:
+                    if not image.mode.startswith("I;16"):
+                        raise
+                    resized_image = image.convert("RGB")
+                    resized_image.thumbnail((max_size_hint, max_size_hint))
+            transposed = ImageOps.exif_transpose(resized_image)
+            if resized_image is not image:
+                resized_image.close()
+            if transposed.mode == "RGB":
+                return transposed
+            converted = transposed.convert("RGB")
+            transposed.close()
+            return converted
+    except RuntimeError:
+        raise
+    except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError) as exc:
         raise RuntimeError(f"cannot_open_image: {exc!r}") from exc
 
 
@@ -45,9 +77,13 @@ def ensure_resized_image_cache(
     maximum_size: int = 1600,
     quality: int = 90,
     lock: object | None = None,
+    cache_path: Path | None = None,
+    max_decode_pixels: int | None = None,
+    use_draft: bool = False,
+    resize_before_copy: bool = False,
 ) -> Path:
     bounded_size = bounded_image_cache_size(max_size, minimum=minimum_size, maximum=maximum_size)
-    cache_path = resized_image_cache_path(path, cache_dir, bounded_size)
+    cache_path = cache_path or resized_image_cache_path(path, cache_dir, bounded_size)
     if cache_path.exists() and cache_path.stat().st_size > 0:
         return cache_path
 
@@ -56,12 +92,40 @@ def ensure_resized_image_cache(
         if cache_path.exists() and cache_path.stat().st_size > 0:
             return cache_path
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        image = open_image_rgb(path)
+        image = open_image_rgb(
+            path,
+            max_size_hint=bounded_size if use_draft else None,
+            max_decode_pixels=max_decode_pixels,
+            resize_before_copy=resize_before_copy,
+        )
         image.thumbnail((bounded_size, bounded_size))
-        temp_path = cache_path.with_suffix(".tmp")
-        image.save(temp_path, format="JPEG", quality=quality, optimize=True, progressive=True)
-        temp_path.replace(cache_path)
+        descriptor, temp_name = tempfile.mkstemp(
+            dir=cache_path.parent,
+            prefix=f".{cache_path.name}.",
+            suffix=".tmp",
+        )
+        os.close(descriptor)
+        temp_path = Path(temp_name)
+        try:
+            image.save(temp_path, format="JPEG", quality=quality, optimize=True, progressive=True)
+            try:
+                os.replace(temp_path, cache_path)
+            except OSError:
+                if not _is_nonempty_file(cache_path):
+                    raise
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
     return cache_path
+
+
+def _is_nonempty_file(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
 
 
 def image_file_data_url(path: str | Path, mime_type: str = "image/jpeg") -> str:

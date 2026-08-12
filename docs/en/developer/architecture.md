@@ -60,7 +60,7 @@ flowchart LR
 - `culvia.gallery_display` / `culvia.payloads`: convert DataFrames, manual labels, LLM insights, and file metadata into UI payloads.
 - `culvia.curation_*`: owns manual pick/review/reject decisions, star ratings, color labels, history, and undo.
 - `culvia.export_service`: exports CSV files, copies selected photos, and runs export preflight checks.
-- `culvia.media_service` / `culvia.media_responses`: authorize media paths and serve thumbnails, previews, and upload cache files.
+- `culvia.media_service` / `culvia.media_responses`: authorize media paths and serve thumbnails, previews, and upload cache files. `culvia.thumbnail_service` keeps cold thumbnail work off the ASGI loop, coalesces requests for the same cache key, and limits concurrent decodes; cache files are published through unique same-directory temporary files and atomic replacement.
 - `culvia.llm_config*` / `culvia.secret_store`: own OpenAI-compatible configuration, prompt presets, SQLite non-secret settings, and system keychain integration.
 - `culvia.desktop_files` / `culvia.capabilities`: own native file capabilities and graceful capability fallback.
 
