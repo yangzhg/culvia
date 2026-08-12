@@ -177,6 +177,7 @@
   "apiError.imageGenerationFailed": "Image loading failed.",
   "apiError.thumbnailGenerationFailed": "Thumbnail generation failed.",
   "apiError.thumbnailBusy": "Thumbnails are still being prepared. Try again in a moment.",
+  "apiError.thumbnailStorageFull": "Thumbnail storage is full. Free some disk space and try again.",
   "apiError.localDataCachePathInvalid": "Score record path is unavailable: {reason}",
   "apiError.localDataClearInvalid": "Local data cannot be reset: {reason}",
   "apiError.localDataClearFailed": "Local data reset failed: {reason}",

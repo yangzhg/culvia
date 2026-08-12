@@ -7,6 +7,8 @@ from pathlib import Path
 APP_SLUG = "culvia"
 APP_DISPLAY_NAME = "Culvia"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_THUMBNAIL_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024
+DEFAULT_THUMBNAIL_CACHE_MAX_FILES = 20_000
 
 
 def _truthy_existing(path: Path) -> Path | None:
@@ -16,6 +18,17 @@ def _truthy_existing(path: Path) -> Path | None:
 def _path_from_env(name: str) -> Path | None:
     value = os.environ.get(name)
     return Path(value).expanduser() if value else None
+
+
+def _nonnegative_int_from_env(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return parsed if parsed >= 0 else default
 
 
 def user_data_dir() -> Path:
@@ -94,6 +107,14 @@ def thumbnail_cache_dir() -> Path:
         return data_dir / "thumbnail_cache"
     project_dir = PROJECT_ROOT / "thumbnail_cache"
     return _truthy_existing(project_dir) or user_cache_dir() / "thumbnails"
+
+
+def thumbnail_cache_max_bytes() -> int:
+    return _nonnegative_int_from_env("CULVIA_THUMBNAIL_CACHE_MAX_BYTES", DEFAULT_THUMBNAIL_CACHE_MAX_BYTES)
+
+
+def thumbnail_cache_max_files() -> int:
+    return _nonnegative_int_from_env("CULVIA_THUMBNAIL_CACHE_MAX_FILES", DEFAULT_THUMBNAIL_CACHE_MAX_FILES)
 
 
 def upload_cache_dir() -> Path:

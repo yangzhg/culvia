@@ -253,7 +253,8 @@ from culvia.secret_store import (
     load_llm_api_key,
     save_llm_api_key,
 )
-from culvia.thumbnail_service import ThumbnailGenerationCoordinator
+from culvia.thumbnail_service import ThumbnailGenerationCoordinator, ThumbnailQueueFullError
+from culvia.thumbnail_cache import ThumbnailCachePolicy
 
 
 ROOT = Path(__file__).resolve().parent
@@ -417,6 +418,8 @@ def current_runtime_config() -> RuntimeConfig:
         default_cache_path=str(DEFAULT_CACHE_PATH),
         default_photo_dirs=tuple(DEFAULT_PHOTO_DIRS),
         thumbnail_max_size=int(THUMBNAIL_MAX_SIZE),
+        thumbnail_cache_max_bytes=RUNTIME_CONFIG.thumbnail_cache_max_bytes,
+        thumbnail_cache_max_files=RUNTIME_CONFIG.thumbnail_cache_max_files,
     )
 
 
@@ -1095,6 +1098,7 @@ async def api_clear_history(request: Request) -> JSONResponse:
 
 async def api_clear_local_data(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
+    runtime_config = request_runtime_config(request)
     if job_is_running(state_store):
         return api_error_response("jobRunningClearLocalData", "当前任务运行中，暂时不能重置本机数据。", status_code=409)
 
@@ -1104,7 +1108,7 @@ async def api_clear_local_data(request: Request) -> JSONResponse:
     cache_path, error = resolve_history_cache_path(
         payload.get("cachePath"),
         current_cache_path=current_cache_path,
-        default_cache_path=DEFAULT_CACHE_PATH,
+        default_cache_path=runtime_config.default_cache_path,
         allowed_suffixes=SQLITE_CACHE_EXTENSIONS,
     )
     if cache_path is None:
@@ -1115,48 +1119,61 @@ async def api_clear_local_data(request: Request) -> JSONResponse:
             params={"reason": error or ""},
         )
 
-    secret_warning = ""
     try:
-        delete_llm_api_key()
-    except SecretStoreUnavailable:
-        pass
-    except SecretStoreError as exc:
-        secret_warning = str(exc)
+        async with request_thumbnail_coordinator(request).clearing_cache(
+            runtime_config.thumbnail_cache_dir
+        ) as thumbnail_sweep:
+            secret_warning = ""
+            try:
+                delete_llm_api_key()
+            except SecretStoreUnavailable:
+                pass
+            except SecretStoreError as exc:
+                secret_warning = str(exc)
 
-    clear_session_llm_config()
-    clear_secure_llm_config()
-    set_persisted_llm_config({})
-    MODEL_RUNTIME.clear()
+            clear_session_llm_config()
+            clear_secure_llm_config()
+            set_persisted_llm_config({})
+            MODEL_RUNTIME.clear()
 
-    try:
-        result = clear_local_data(
-            cache_path=cache_path,
-            upload_cache_dir=UPLOAD_CACHE_DIR,
-            thumbnail_cache_dir=THUMBNAIL_CACHE_DIR,
-            analysis_image_cache_dir=ANALYSIS_IMAGE_CACHE_DIR,
-            app_model_cache_dir=APP_MODEL_CACHE_DIR,
-            model_repo_cache_dirs=MODEL_REPO_CACHE_DIRS,
-            huggingface_cache_root=get_huggingface_cache_root(),
+            thumbnail_deleted = bool(thumbnail_sweep.deleted_files or thumbnail_sweep.deleted_temp_files)
+            result = await run_in_threadpool(
+                clear_local_data,
+                cache_path=cache_path,
+                upload_cache_dir=runtime_config.upload_cache_dir,
+                thumbnail_cache_dir=runtime_config.thumbnail_cache_dir,
+                analysis_image_cache_dir=ANALYSIS_IMAGE_CACHE_DIR,
+                app_model_cache_dir=APP_MODEL_CACHE_DIR,
+                model_repo_cache_dirs=MODEL_REPO_CACHE_DIRS,
+                huggingface_cache_root=get_huggingface_cache_root(),
+                clear_thumbnail_cache=lambda _path: thumbnail_deleted,
+            )
+
+            next_state = create_initial_state(
+                scores_df=pd.DataFrame(columns=CSV_COLUMNS),
+                default_photo_dirs=[],
+                default_cache_path=str(cache_path),
+                filter_defaults=FILTER_DEFAULTS,
+                default_selected_models=DEFAULT_SELECTED_MODELS,
+            )
+            state_store.reset(next_state)
+    except ThumbnailQueueFullError as exc:
+        return api_error_response(
+            "localDataClearFailed",
+            f"清理失败：{exc}",
+            status_code=503,
+            retryable=True,
+            params={"reason": exception_reason(exc)},
         )
     except ValueError as exc:
         return api_error_response(
             "localDataClearInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
         )
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         return api_error_response(
             "localDataClearFailed", f"清理失败：{exc}", status_code=500, params={"reason": exception_reason(exc)}
         )
 
-    next_state = create_initial_state(
-        scores_df=pd.DataFrame(columns=CSV_COLUMNS),
-        default_photo_dirs=[],
-        default_cache_path=str(cache_path),
-        filter_defaults=FILTER_DEFAULTS,
-        default_selected_models=DEFAULT_SELECTED_MODELS,
-    )
-    with state_store.lock:
-        state_store.data.clear()
-        state_store.data.update(next_state)
     response_payload = state_payload(state_store)
     response_payload["maintenance"] = result.to_payload()
     if secret_warning:
@@ -1562,14 +1579,18 @@ async def api_thumbnail(request: Request) -> Response:
     if path is None:
         return unavailable_media_response("thumbnail", status_code, wants_json=wants_json)
     try:
-        thumb_path = await request_thumbnail_coordinator(request).ensure(
+        thumb_path, content = await request_thumbnail_coordinator(request).ensure_content(
             path,
             runtime_config.thumbnail_cache_dir,
             max_size,
         )
     except Exception as exc:
         return thumbnail_generation_error_response(exc, wants_json=wants_json)
-    return FileResponse(thumb_path, media_type="image/jpeg")
+    return Response(
+        content,
+        media_type="image/jpeg",
+        headers={"ETag": f'"{thumb_path.stem}"'},
+    )
 
 
 async def api_export(request: Request) -> Response:
@@ -1855,7 +1876,12 @@ def create_app(state_store: AppStateStore | None = None, runtime_config: Runtime
         job_service=APP_JOB_SERVICE if app_state_store is APP_STATE else None,
         debug=False,
     )
-    web_app.state.thumbnail_coordinator = ThumbnailGenerationCoordinator()
+    web_app.state.thumbnail_coordinator = ThumbnailGenerationCoordinator(
+        cache_policy=ThumbnailCachePolicy(
+            max_bytes=config.thumbnail_cache_max_bytes or None,
+            max_files=config.thumbnail_cache_max_files or None,
+        )
+    )
     return web_app
 
 

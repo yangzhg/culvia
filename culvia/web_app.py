@@ -21,8 +21,18 @@ def close_app_thumbnail_coordinator(app: Starlette) -> None:
         close()
 
 
+def start_app_thumbnail_coordinator(app: Starlette) -> None:
+    coordinator = getattr(app.state, "thumbnail_coordinator", None)
+    runtime_config = getattr(app.state, "runtime_config", None)
+    start = getattr(coordinator, "start", None)
+    cache_dir = getattr(runtime_config, "thumbnail_cache_dir", None)
+    if callable(start) and cache_dir is not None:
+        start(cache_dir)
+
+
 @asynccontextmanager
 async def app_lifespan(app: Starlette):
+    start_app_thumbnail_coordinator(app)
     try:
         yield
     finally:

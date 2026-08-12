@@ -6,7 +6,7 @@ from starlette.responses import FileResponse, Response
 
 from culvia.api_errors import api_error_response
 from culvia.media_service import ensure_thumbnail_file, resized_jpeg_bytes
-from culvia.thumbnail_service import ThumbnailQueueFullError
+from culvia.thumbnail_service import ThumbnailQueueFullError, ThumbnailStorageFullError
 
 MEDIA_ERROR_VARY_HEADERS = {"Vary": "Accept"}
 
@@ -83,6 +83,21 @@ def thumbnail_media_response(
 
 
 def thumbnail_generation_error_response(exc: Exception, *, wants_json: bool = False) -> Response:
+    if isinstance(exc, ThumbnailStorageFullError):
+        if wants_json:
+            return api_error_response(
+                "thumbnailStorageFull",
+                "thumbnail cache storage is full",
+                status_code=507,
+                retryable=False,
+                params={"kind": "thumbnail"},
+                headers=MEDIA_ERROR_VARY_HEADERS,
+            )
+        return Response(
+            "thumbnail cache storage is full",
+            status_code=507,
+            headers=MEDIA_ERROR_VARY_HEADERS,
+        )
     if isinstance(exc, ThumbnailQueueFullError):
         if wants_json:
             return api_error_response(

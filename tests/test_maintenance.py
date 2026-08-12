@@ -94,6 +94,34 @@ class MaintenanceTests(unittest.TestCase):
             for path in (cache_path, upload_dir, thumb_dir, analysis_dir, app_model_dir, repo_path, lock_path):
                 self.assertFalse(path.exists())
 
+    def test_clear_local_data_delegates_thumbnail_removal_to_cache_manager(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_path = root / "scores.sqlite"
+            thumbnail_dir = root / "thumbnails"
+            thumbnail_dir.mkdir()
+            cache_path.write_text("scores", encoding="utf-8")
+            calls: list[Path] = []
+
+            def clear_thumbnail(path: Path) -> bool:
+                calls.append(path)
+                return True
+
+            result = clear_local_data(
+                cache_path=cache_path,
+                upload_cache_dir=root / "uploads",
+                thumbnail_cache_dir=thumbnail_dir,
+                analysis_image_cache_dir=root / "analysis",
+                app_model_cache_dir=root / "models",
+                model_repo_cache_dirs=[],
+                huggingface_cache_root=root / "hf",
+                clear_thumbnail_cache=clear_thumbnail,
+            )
+
+            self.assertEqual(calls, [thumbnail_dir])
+            self.assertTrue(thumbnail_dir.exists())
+            self.assertIn(thumbnail_dir, result.paths)
+
     def test_clear_model_caches_rejects_path_escape_repo_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

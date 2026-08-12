@@ -177,6 +177,7 @@
   "apiError.imageGenerationFailed": "图片读取失败。",
   "apiError.thumbnailGenerationFailed": "缩略图生成失败。",
   "apiError.thumbnailBusy": "缩略图正在生成，请稍后重试。",
+  "apiError.thumbnailStorageFull": "缩略图存储空间已满，请释放磁盘空间后重试。",
   "apiError.localDataCachePathInvalid": "评分记录路径不可用：{reason}",
   "apiError.localDataClearInvalid": "本机数据无法重置：{reason}",
   "apiError.localDataClearFailed": "本机数据重置失败：{reason}",

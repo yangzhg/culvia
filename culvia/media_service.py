@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+from collections.abc import Callable
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from urllib.parse import urlencode
@@ -200,6 +201,7 @@ def ensure_thumbnail_file(
     *,
     lock: object | None = None,
     cache_path: Path | None = None,
+    publish_temp: Callable[[Path, Path], None] | None = None,
 ) -> Path:
     bounded_size = thumbnail_cache_size(max_size)
     return ensure_resized_image_cache(
@@ -214,4 +216,5 @@ def ensure_thumbnail_file(
         max_decode_pixels=THUMBNAIL_MAX_DECODE_PIXELS,
         use_draft=True,
         resize_before_copy=True,
+        publish_temp=publish_temp,
     )

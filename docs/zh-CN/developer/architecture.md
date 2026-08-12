@@ -119,6 +119,7 @@ flowchart LR
 - SQLite 存储评分结果、人工判断、LLM insight 和非密钥配置。
 - API key 只允许来自环境变量、当前会话或系统 keychain；不要写入 SQLite 明文字段、README、测试 fixture、日志或 Git。
 - 缩略图和上传缓存是运行时数据，不能提交。
+- 缩略图缓存采用软 LRU 上限，而不是严格的存储容量保证。默认上限为 2 GiB 和 20,000 个文件；`CULVIA_THUMBNAIL_CACHE_MAX_BYTES` 与 `CULVIA_THUMBNAIL_CACHE_MAX_FILES` 接受非负整数覆盖值，设为 `0` 可关闭对应维度的限制。
 - 大模型图片评审是显式启用功能；本地模型路径默认不上传图片。
 - `tools/clean_runtime_artifacts.py` 用于清理本地运行时产物；它不替代人工检查。
 - `bin/culvia-web` 是受版本管理的源码 Web 启动入口。桌面 App 启动属于桌面应用可执行文件和内置 backend，不属于仓库 `bin/` 脚本。

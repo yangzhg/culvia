@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from culvia.job_text import TranslatableValueError, text_ref
 
@@ -133,11 +133,19 @@ def clear_local_data(
     app_model_cache_dir: Path,
     model_repo_cache_dirs: Iterable[str],
     huggingface_cache_root: Path,
+    clear_thumbnail_cache: Callable[[Path], bool] | None = None,
 ) -> LocalDataClearResult:
     history_result = clear_history_cache(cache_path)
     model_result = clear_model_caches(app_model_cache_dir, model_repo_cache_dirs, huggingface_cache_root)
     deleted_paths: list[Path] = []
-    for path in (upload_cache_dir, thumbnail_cache_dir, analysis_image_cache_dir):
+    for path in (upload_cache_dir, analysis_image_cache_dir):
         if remove_path_safely(path):
             deleted_paths.append(path)
+    thumbnail_deleted = (
+        clear_thumbnail_cache(thumbnail_cache_dir)
+        if clear_thumbnail_cache is not None
+        else remove_path_safely(thumbnail_cache_dir)
+    )
+    if thumbnail_deleted:
+        deleted_paths.append(thumbnail_cache_dir)
     return LocalDataClearResult(history=history_result, models=model_result, paths=deleted_paths)

@@ -6,6 +6,8 @@ from pathlib import Path
 from culvia import settings
 
 DEFAULT_THUMBNAIL_MAX_SIZE = 420
+DEFAULT_THUMBNAIL_CACHE_MAX_BYTES = settings.DEFAULT_THUMBNAIL_CACHE_MAX_BYTES
+DEFAULT_THUMBNAIL_CACHE_MAX_FILES = settings.DEFAULT_THUMBNAIL_CACHE_MAX_FILES
 
 
 @dataclass(frozen=True)
@@ -16,6 +18,14 @@ class RuntimeConfig:
     default_cache_path: str
     default_photo_dirs: tuple[str, ...]
     thumbnail_max_size: int = DEFAULT_THUMBNAIL_MAX_SIZE
+    thumbnail_cache_max_bytes: int = DEFAULT_THUMBNAIL_CACHE_MAX_BYTES
+    thumbnail_cache_max_files: int = DEFAULT_THUMBNAIL_CACHE_MAX_FILES
+
+    def __post_init__(self) -> None:
+        if self.thumbnail_cache_max_bytes < 0:
+            raise ValueError("Thumbnail cache byte limit cannot be negative")
+        if self.thumbnail_cache_max_files < 0:
+            raise ValueError("Thumbnail cache file limit cannot be negative")
 
     @classmethod
     def from_settings(cls) -> "RuntimeConfig":
@@ -25,6 +35,8 @@ class RuntimeConfig:
             thumbnail_cache_dir=settings.thumbnail_cache_dir(),
             default_cache_path=settings.default_cache_path(),
             default_photo_dirs=tuple(settings.default_photo_dirs()),
+            thumbnail_cache_max_bytes=settings.thumbnail_cache_max_bytes(),
+            thumbnail_cache_max_files=settings.thumbnail_cache_max_files(),
         )
 
     def with_paths(
@@ -36,6 +48,8 @@ class RuntimeConfig:
         default_cache_path: str | Path | None = None,
         default_photo_dirs: tuple[str, ...] | list[str] | None = None,
         thumbnail_max_size: int | None = None,
+        thumbnail_cache_max_bytes: int | None = None,
+        thumbnail_cache_max_files: int | None = None,
     ) -> "RuntimeConfig":
         return RuntimeConfig(
             web_dir=Path(web_dir) if web_dir is not None else self.web_dir,
@@ -46,4 +60,10 @@ class RuntimeConfig:
             default_cache_path=str(default_cache_path) if default_cache_path is not None else self.default_cache_path,
             default_photo_dirs=tuple(default_photo_dirs) if default_photo_dirs is not None else self.default_photo_dirs,
             thumbnail_max_size=thumbnail_max_size if thumbnail_max_size is not None else self.thumbnail_max_size,
+            thumbnail_cache_max_bytes=thumbnail_cache_max_bytes
+            if thumbnail_cache_max_bytes is not None
+            else self.thumbnail_cache_max_bytes,
+            thumbnail_cache_max_files=thumbnail_cache_max_files
+            if thumbnail_cache_max_files is not None
+            else self.thumbnail_cache_max_files,
         )

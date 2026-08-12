@@ -15,7 +15,12 @@ from starlette.testclient import TestClient
 import culvia_app
 from culvia import scoring
 from culvia.app_state import AppStateStore, create_initial_state
-from culvia.runtime_config import DEFAULT_THUMBNAIL_MAX_SIZE, RuntimeConfig
+from culvia.runtime_config import (
+    DEFAULT_THUMBNAIL_CACHE_MAX_BYTES,
+    DEFAULT_THUMBNAIL_CACHE_MAX_FILES,
+    DEFAULT_THUMBNAIL_MAX_SIZE,
+    RuntimeConfig,
+)
 from culvia.web_app import create_runtime_state_store
 
 
@@ -42,6 +47,8 @@ class RuntimeConfigTests(unittest.TestCase):
                     "CULVIA_WEB_DIR": str(web_dir),
                     "CULVIA_UPLOAD_DIR": str(upload_dir),
                     "CULVIA_THUMBNAIL_CACHE_DIR": str(thumb_dir),
+                    "CULVIA_THUMBNAIL_CACHE_MAX_BYTES": "123456789",
+                    "CULVIA_THUMBNAIL_CACHE_MAX_FILES": "4321",
                     "CULVIA_CACHE_PATH": str(cache_path),
                     "CULVIA_PHOTO_DIRS": os.pathsep.join([str(photo_dir_a), str(photo_dir_b)]),
                 },
@@ -55,6 +62,55 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(config.default_cache_path, str(cache_path))
         self.assertEqual(config.default_photo_dirs, (str(photo_dir_a), str(photo_dir_b)))
         self.assertEqual(config.thumbnail_max_size, DEFAULT_THUMBNAIL_MAX_SIZE)
+        self.assertEqual(config.thumbnail_cache_max_bytes, 123456789)
+        self.assertEqual(config.thumbnail_cache_max_files, 4321)
+
+    def test_thumbnail_cache_limits_support_defaults_zero_and_invalid_environment(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            defaults = RuntimeConfig.from_settings()
+        with patch.dict(
+            os.environ,
+            {
+                "CULVIA_THUMBNAIL_CACHE_MAX_BYTES": "0",
+                "CULVIA_THUMBNAIL_CACHE_MAX_FILES": "0",
+            },
+            clear=True,
+        ):
+            disabled = RuntimeConfig.from_settings()
+        with patch.dict(
+            os.environ,
+            {
+                "CULVIA_THUMBNAIL_CACHE_MAX_BYTES": "not-a-number",
+                "CULVIA_THUMBNAIL_CACHE_MAX_FILES": "-1",
+            },
+            clear=True,
+        ):
+            invalid = RuntimeConfig.from_settings()
+
+        self.assertEqual(defaults.thumbnail_cache_max_bytes, DEFAULT_THUMBNAIL_CACHE_MAX_BYTES)
+        self.assertEqual(defaults.thumbnail_cache_max_files, DEFAULT_THUMBNAIL_CACHE_MAX_FILES)
+        self.assertEqual(disabled.thumbnail_cache_max_bytes, 0)
+        self.assertEqual(disabled.thumbnail_cache_max_files, 0)
+        self.assertEqual(invalid.thumbnail_cache_max_bytes, DEFAULT_THUMBNAIL_CACHE_MAX_BYTES)
+        self.assertEqual(invalid.thumbnail_cache_max_files, DEFAULT_THUMBNAIL_CACHE_MAX_FILES)
+
+    def test_with_paths_overrides_thumbnail_cache_limits_and_rejects_negative_values(self) -> None:
+        config = RuntimeConfig(
+            web_dir=Path("web"),
+            upload_cache_dir=Path("uploads"),
+            thumbnail_cache_dir=Path("thumbs"),
+            default_cache_path="scores.sqlite",
+            default_photo_dirs=(),
+        )
+
+        disabled = config.with_paths(thumbnail_cache_max_bytes=0, thumbnail_cache_max_files=0)
+
+        self.assertEqual(disabled.thumbnail_cache_max_bytes, 0)
+        self.assertEqual(disabled.thumbnail_cache_max_files, 0)
+        with self.assertRaisesRegex(ValueError, "byte limit"):
+            config.with_paths(thumbnail_cache_max_bytes=-1)
+        with self.assertRaisesRegex(ValueError, "file limit"):
+            config.with_paths(thumbnail_cache_max_files=-1)
 
     def test_package_web_app_import_does_not_import_scoring_runtime(self) -> None:
         result = subprocess.run(
@@ -196,10 +252,46 @@ class RuntimeConfigTests(unittest.TestCase):
             self.assertTrue(saved_path.is_relative_to(upload_dir))
             self.assertTrue(saved_path.exists())
             self.assertEqual(thumbnail.status_code, 200)
+            self.assertTrue(thumbnail.content.startswith(b"\xff\xd8"))
+            self.assertRegex(thumbnail.headers["etag"], r'^"[0-9a-f]{40}"$')
             self.assertTrue(thumb_dir.exists())
             cached_thumbnail = next(thumb_dir.glob("*.jpg"))
             with Image.open(cached_thumbnail) as image:
                 self.assertLessEqual(max(image.size), config.thumbnail_max_size)
+
+    def test_create_app_applies_configured_thumbnail_cache_limits_on_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            thumb_dir = root / "thumbs"
+            thumb_dir.mkdir()
+            old_timestamp = 1_000_000
+            for index in range(3):
+                cached = thumb_dir / f"{index:040x}.jpg"
+                cached.write_bytes(b"jpeg")
+                os.utime(cached, (old_timestamp + index, old_timestamp + index))
+            config = RuntimeConfig(
+                web_dir=Path("web"),
+                upload_cache_dir=root / "uploads",
+                thumbnail_cache_dir=thumb_dir,
+                default_cache_path=str(root / "scores.sqlite"),
+                default_photo_dirs=(),
+                thumbnail_cache_max_bytes=0,
+                thumbnail_cache_max_files=2,
+            )
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=pd.DataFrame(),
+                    default_photo_dirs=[],
+                    default_cache_path=config.default_cache_path,
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[],
+                )
+            )
+
+            with TestClient(culvia_app.create_app(store, runtime_config=config)) as client:
+                self.assertEqual(client.get("/health").status_code, 200)
+
+            self.assertEqual(len(list(thumb_dir.glob("*.jpg"))), 1)
 
 
 if __name__ == "__main__":

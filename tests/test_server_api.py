@@ -564,14 +564,22 @@ class ServerApiTests(unittest.TestCase):
             repo_dir = "models--unit--model"
             repo_path = repo_root / repo_dir
             lock_path = repo_root / ".locks" / repo_dir
-            for path in (upload_dir, thumb_dir, analysis_dir, app_model_dir, repo_path, lock_path):
+            for path in (upload_dir, analysis_dir, app_model_dir, repo_path, lock_path):
                 path.mkdir(parents=True)
                 (path / "file.bin").write_bytes(b"data")
+            thumb_dir.mkdir()
+            (thumb_dir / f"{1:040x}.jpg").write_bytes(b"jpeg")
 
-            client = TestClient(culvia_app.create_app(store))
+            web_app = culvia_app.create_app(
+                store,
+                runtime_config=culvia_app.current_runtime_config().with_paths(
+                    upload_cache_dir=upload_dir,
+                    thumbnail_cache_dir=thumb_dir,
+                ),
+            )
+            self.addCleanup(web_app.state.thumbnail_coordinator.close)
+            client = TestClient(web_app)
             with (
-                patch("culvia_app.UPLOAD_CACHE_DIR", upload_dir),
-                patch("culvia_app.THUMBNAIL_CACHE_DIR", thumb_dir),
                 patch("culvia_app.ANALYSIS_IMAGE_CACHE_DIR", analysis_dir),
                 patch("culvia_app.APP_MODEL_CACHE_DIR", app_model_dir),
                 patch("culvia_app.MODEL_REPO_CACHE_DIRS", [repo_dir]),
@@ -583,8 +591,11 @@ class ServerApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["maintenance"]["kind"], "localData")
             delete_key.assert_called_once_with()
-            for path in (Path(cache_path), upload_dir, thumb_dir, analysis_dir, app_model_dir, repo_path, lock_path):
+            for path in (Path(cache_path), upload_dir, analysis_dir, app_model_dir, repo_path, lock_path):
                 self.assertFalse(path.exists())
+            self.assertTrue(thumb_dir.exists())
+            self.assertEqual(list(thumb_dir.glob("*.jpg")), [])
+            self.assertEqual(list(thumb_dir.glob(".*.tmp")), [])
             with store.lock:
                 self.assertTrue(scoring.normalize_score_dataframe(store.data["scores_df"]).empty)
                 self.assertEqual(store.data["source"]["folders"], [])

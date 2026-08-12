@@ -4,6 +4,7 @@ import base64
 import hashlib
 import os
 import tempfile
+from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -81,6 +82,7 @@ def ensure_resized_image_cache(
     max_decode_pixels: int | None = None,
     use_draft: bool = False,
     resize_before_copy: bool = False,
+    publish_temp: Callable[[Path, Path], None] | None = None,
 ) -> Path:
     bounded_size = bounded_image_cache_size(max_size, minimum=minimum_size, maximum=maximum_size)
     cache_path = cache_path or resized_image_cache_path(path, cache_dir, bounded_size)
@@ -109,7 +111,7 @@ def ensure_resized_image_cache(
         try:
             image.save(temp_path, format="JPEG", quality=quality, optimize=True, progressive=True)
             try:
-                os.replace(temp_path, cache_path)
+                (publish_temp or os.replace)(temp_path, cache_path)
             except OSError:
                 if not _is_nonempty_file(cache_path):
                     raise

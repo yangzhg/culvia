@@ -4,6 +4,7 @@ import asyncio
 import unittest
 from dataclasses import fields
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 from starlette.applications import Starlette
@@ -131,8 +132,10 @@ class WebRouteTests(unittest.TestCase):
         coordinator = app.state.thumbnail_coordinator
 
         async def run_lifespan() -> None:
-            async with app_lifespan(app):
-                self.assertFalse(coordinator._closed)
+            with patch.object(coordinator, "start", wraps=coordinator.start) as start:
+                async with app_lifespan(app):
+                    self.assertFalse(coordinator._closed)
+                start.assert_called_once_with(app.state.runtime_config.thumbnail_cache_dir)
 
         asyncio.run(run_lifespan())
 

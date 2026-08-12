@@ -2,8 +2,8 @@
 // the import order below is the only place load order is declared.
 
 // Locale resources and i18n runtime.
-import "./locales/zh-CN.js?v=20260812-thumbnail-concurrency";
-import "./locales/en.js?v=20260812-thumbnail-concurrency";
+import "./locales/zh-CN.js?v=20260812-thumbnail-quota";
+import "./locales/en.js?v=20260812-thumbnail-quota";
 import "./i18n_messages.js";
 import "./i18n.js";
 

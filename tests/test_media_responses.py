@@ -14,7 +14,7 @@ from culvia.media_responses import (
     thumbnail_media_response,
     unavailable_media_response,
 )
-from culvia.thumbnail_service import ThumbnailQueueFullError
+from culvia.thumbnail_service import ThumbnailQueueFullError, ThumbnailStorageFullError
 
 
 class MediaResponseTests(unittest.TestCase):
@@ -120,6 +120,15 @@ class MediaResponseTests(unittest.TestCase):
         self.assertEqual(json_response.status_code, 503)
         self.assertEqual(json.loads(json_response.body)["errorCode"], "thumbnailBusy")
         self.assertTrue(json.loads(json_response.body)["retryable"])
+
+    def test_thumbnail_disk_full_returns_non_retryable_insufficient_storage(self) -> None:
+        text_response = thumbnail_generation_error_response(ThumbnailStorageFullError("full"))
+        json_response = thumbnail_generation_error_response(ThumbnailStorageFullError("full"), wants_json=True)
+
+        self.assertEqual(text_response.status_code, 507)
+        self.assertEqual(json_response.status_code, 507)
+        self.assertEqual(json.loads(json_response.body)["errorCode"], "thumbnailStorageFull")
+        self.assertFalse(json.loads(json_response.body)["retryable"])
 
 
 if __name__ == "__main__":
