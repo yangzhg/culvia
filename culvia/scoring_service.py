@@ -51,12 +51,16 @@ def start_scoring_job_action(
     if not job_id:
         raise ScoringStartError("scoringAlreadyRunning", "评分正在进行中", status_code=409)
 
-    thread = thread_factory(
-        target=run_scoring_job,
-        args=(job_id, payload, state_store, job_service),
-        daemon=True,
-    )
-    thread.start()
+    try:
+        thread = thread_factory(
+            target=run_scoring_job,
+            args=(job_id, payload, state_store, job_service),
+            daemon=True,
+        )
+        thread.start()
+    except BaseException:
+        job_service.finish(job_id)
+        raise
     return ScoringStartResult(job_id)
 
 
@@ -76,10 +80,14 @@ def start_llm_review_job_action(
     if not job_id:
         raise ScoringStartError("scoringAlreadyRunning", "评分正在进行中", status_code=409)
 
-    thread = thread_factory(
-        target=run_llm_review_job,
-        args=(job_id, payload, state_store, job_service),
-        daemon=True,
-    )
-    thread.start()
+    try:
+        thread = thread_factory(
+            target=run_llm_review_job,
+            args=(job_id, payload, state_store, job_service),
+            daemon=True,
+        )
+        thread.start()
+    except BaseException:
+        job_service.finish(job_id)
+        raise
     return ScoringStartResult(job_id)

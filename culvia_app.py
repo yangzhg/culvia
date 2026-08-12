@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 import time
+from copy import deepcopy
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Generator, Iterable
 
 import pandas as pd
 import requests
@@ -55,7 +58,7 @@ from culvia.gallery_display import (
 )
 from culvia.image_io import HEIF_AVAILABLE
 from culvia.job_service import ScoringJobService
-from culvia.job_text import exception_reason
+from culvia.job_text import exception_reason, text_ref
 from culvia.llm_model_catalog import (
     fetch_llm_model_catalog,
     llm_models_url as _llm_models_url,
@@ -73,6 +76,7 @@ from culvia.llm_config_service import (
     refresh_persisted_llm_config_action,
 )
 from culvia.maintenance import clear_history_cache, clear_local_data, clear_model_caches, resolve_history_cache_path
+from culvia.media_catalog import catalog_allows_path
 from culvia.media_service import (
     ensure_thumbnail_file as _ensure_thumbnail_file,
     image_url as _image_url,
@@ -791,6 +795,27 @@ def model_payload(network: dict[str, Any], selected_models: list[str]) -> dict[s
     )
 
 
+def maintenance_model_payload(network: dict[str, Any], selected_models: list[str]) -> dict[str, Any]:
+    """Build polling state without probing model files while maintenance mutates them."""
+    selected = normalize_selected_models(selected_models)
+    network_status = network_payload(network)
+    return {
+        "id": MODEL_ID,
+        "selected": selected,
+        "options": [],
+        "labelText": text_ref("model.state.preparing"),
+        "tone": "partial",
+        "hintText": text_ref("model.hint.preparing"),
+        "size": "",
+        "clipSize": "",
+        "downloaded": False,
+        "runtimeLoaded": False,
+        "runtimeDeviceText": {"key": "device.genericCpu"},
+        "proxyEnabled": network_status["mode"] == "system" and bool(network_status["systemProxyAvailable"]),
+        "proxyLabelText": dict(network_status["labelText"]),
+    }
+
+
 def request_state_store(request: Request) -> AppStateStore:
     return _request_state_store(request, APP_STATE)
 
@@ -838,6 +863,7 @@ STATE_PAYLOAD_DEPENDENCIES = StatePayloadDependencies(
     llm_config_payload=llm_config_payload,
     normalize_selected_models=normalize_selected_models,
     model_payload=model_payload,
+    maintenance_model_payload=maintenance_model_payload,
     summarize_scores=summarize_scores,
 )
 
@@ -944,37 +970,40 @@ async def api_filter(request: Request) -> JSONResponse:
 
 async def api_network(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return job_running_operation_response()
     payload = await request.json()
-    with state_store.lock:
-        state_store.data["network"]["mode"] = normalize_network_mode(payload.get("mode"))
+    try:
+        with mutation_job(request, phase="updating_network"):
+            with state_store.lock:
+                state_store.data["network"]["mode"] = normalize_network_mode(payload.get("mode"))
+    except MutationJobUnavailable:
+        return job_running_operation_response()
     return JSONResponse(state_payload(state_store))
 
 
 async def api_llm_config(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return api_error_response("jobRunningLlmConfig", "当前任务运行中，暂时不能修改大模型配置。", status_code=409)
     payload = await request.json()
     cache_path = str(payload.get("cachePath") or DEFAULT_CACHE_PATH)
     try:
-        apply_llm_config(payload, cache_path)
+        with mutation_job(request, phase="updating_llm_config"):
+            apply_llm_config(payload, cache_path)
+            if not bool(llm_review_status()["configured"]):
+                with state_store.lock:
+                    selected = normalize_selected_models(state_store.data["models"].get("selected"))
+                    state_store.data["models"]["selected"] = (
+                        available_selected_models(
+                            selected,
+                            llm_configured=False,
+                            llm_model_key=MODEL_LLM_REVIEW,
+                        )
+                        or DEFAULT_SELECTED_MODELS.copy()
+                    )
+    except MutationJobUnavailable:
+        return api_error_response("jobRunningLlmConfig", "当前任务运行中，暂时不能修改大模型配置。", status_code=409)
     except ValueError as exc:
         return api_error_response(
             "llmConfigInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
         )
-    if not bool(llm_review_status()["configured"]):
-        with state_store.lock:
-            selected = normalize_selected_models(state_store.data["models"].get("selected"))
-            state_store.data["models"]["selected"] = (
-                available_selected_models(
-                    selected,
-                    llm_configured=False,
-                    llm_model_key=MODEL_LLM_REVIEW,
-                )
-                or DEFAULT_SELECTED_MODELS.copy()
-            )
     return JSONResponse(state_payload(state_store))
 
 
@@ -997,39 +1026,48 @@ async def api_llm_models(request: Request) -> JSONResponse:
 
 async def api_models(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return job_running_operation_response()
     payload = await request.json()
-    selected = available_selected_models(
-        normalize_selected_models(payload.get("selected")),
-        llm_configured=bool(llm_review_status()["configured"]),
-        llm_model_key=MODEL_LLM_REVIEW,
-    )
-    with state_store.lock:
-        state_store.data["models"]["selected"] = selected or DEFAULT_SELECTED_MODELS.copy()
+    try:
+        with mutation_job(request, phase="updating_models"):
+            selected = available_selected_models(
+                normalize_selected_models(payload.get("selected")),
+                llm_configured=bool(llm_review_status()["configured"]),
+                llm_model_key=MODEL_LLM_REVIEW,
+            )
+            with state_store.lock:
+                state_store.data["models"]["selected"] = selected or DEFAULT_SELECTED_MODELS.copy()
+    except MutationJobUnavailable:
+        return job_running_operation_response()
     return JSONResponse(state_payload(state_store))
 
 
 async def api_cache(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return job_running_operation_response()
     payload = await request.json()
     try:
-        result = load_source_cache_action(payload, source_cache_dependencies())
+        with mutation_job(request, phase="loading_source") as (_job_service, job_id):
+            media_revision = state_store.current_media_revision()
+            result = load_source_cache_action(payload, source_cache_dependencies())
+            apply_source_cache_state(
+                state_store,
+                result,
+                expected_media_revision=media_revision,
+                expected_job_id=job_id,
+            )
+            save_source_config_to_sqlite(
+                {
+                    "mode": result.request.mode,
+                    "folders": result.request.folders,
+                    "cachePath": result.request.cache_path,
+                },
+                result.request.cache_path,
+            )
+    except MutationJobUnavailable:
+        return job_running_operation_response()
     except ValueError as exc:
         return api_error_response(
             "cachePathInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
         )
-    apply_source_cache_state(state_store, result)
-    save_source_config_to_sqlite(
-        {
-            "mode": result.request.mode,
-            "folders": result.request.folders,
-            "cachePath": result.request.cache_path,
-        },
-        result.request.cache_path,
-    )
     return JSONResponse(state_payload(state_store))
 
 
@@ -1067,30 +1105,126 @@ def job_running_operation_response() -> JSONResponse:
     return api_error_response("jobRunningOperation", "当前任务运行中，暂时不能执行这个操作。", status_code=409)
 
 
+class MutationJobUnavailable(RuntimeError):
+    pass
+
+
+@contextmanager
+def mutation_job(request: Request, *, phase: str) -> Generator[tuple[ScoringJobService, str], None, None]:
+    job_service = request_job_service(request)
+    with job_service.state_store.lock:
+        previous_job = deepcopy(job_service.state_store.data.get("job", empty_job()))
+        job_id = job_service.reserve(
+            kind="mutation",
+            phase=phase,
+            title_text={"key": "jobText.startingBackgroundTask"},
+            detail_text={"key": "jobText.startingBackgroundTask"},
+        )
+    if not job_id:
+        raise MutationJobUnavailable("A conflicting task is already running")
+    try:
+        yield job_service, job_id
+    finally:
+        job_service.finish(job_id, restore_job=previous_job)
+
+
+def reserve_maintenance_job(request: Request, *, phase: str) -> tuple[ScoringJobService, str | None]:
+    job_service = request_job_service(request)
+    job_id = job_service.reserve(
+        kind="maintenance",
+        phase=phase,
+        title_text={"key": "jobText.startingBackgroundTask"},
+        detail_text={"key": "jobText.startingBackgroundTask"},
+    )
+    return job_service, job_id
+
+
+def reserve_maintenance_job_with_cache(
+    request: Request,
+    *,
+    phase: str,
+    default_cache_path: str | Path,
+) -> tuple[ScoringJobService, str | None, str]:
+    """Atomically reserve maintenance and capture the source cache it will mutate."""
+    state_store = request_state_store(request)
+    job_service = request_job_service(request)
+    with state_store.lock:
+        job_id = job_service.reserve(
+            kind="maintenance",
+            phase=phase,
+            title_text={"key": "jobText.startingBackgroundTask"},
+            detail_text={"key": "jobText.startingBackgroundTask"},
+        )
+        cache_path = str(state_store.data["source"].get("cachePath") or default_cache_path)
+    return job_service, job_id, cache_path
+
+
+class DeferredMaintenanceCancellation:
+    """Delay request cancellation until an in-flight destructive worker has finished."""
+
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    async def __aenter__(self) -> DeferredMaintenanceCancellation:
+        return self
+
+    async def __aexit__(self, _exc_type: object, _exc: object, _traceback: object) -> bool:
+        if self.cancelled:
+            raise asyncio.CancelledError
+        return False
+
+    async def run_in_threadpool(self, function: Any, *args: Any, **kwargs: Any) -> Any:
+        task = asyncio.create_task(run_in_threadpool(function, *args, **kwargs))
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                self.cancelled = True
+        return task.result()
+
+
 async def api_clear_history(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return api_error_response("jobRunningClearHistory", "当前任务运行中，暂时不能清空评分记录。", status_code=409)
-
     payload = await request.json()
-    with state_store.lock:
-        current_cache_path = str(state_store.data["source"].get("cachePath") or DEFAULT_CACHE_PATH)
-    cache_path, error = resolve_history_cache_path(
-        payload.get("cachePath"),
-        current_cache_path=current_cache_path,
+    job_service, job_id, current_cache_path = reserve_maintenance_job_with_cache(
+        request,
+        phase="clearing_history",
         default_cache_path=DEFAULT_CACHE_PATH,
-        allowed_suffixes=SQLITE_CACHE_EXTENSIONS,
     )
-    if cache_path is None:
-        return api_error_response(
-            "historyCachePathInvalid", "评分记录路径不可用。", status_code=400, params={"reason": error or ""}
+    if not job_id:
+        return api_error_response("jobRunningClearHistory", "当前任务运行中，暂时不能清空评分记录。", status_code=409)
+    try:
+        cache_path, error = resolve_history_cache_path(
+            payload.get("cachePath"),
+            current_cache_path=current_cache_path,
+            default_cache_path=DEFAULT_CACHE_PATH,
+            allowed_suffixes=SQLITE_CACHE_EXTENSIONS,
         )
-
-    result = clear_history_cache(cache_path)
-    with state_store.lock:
-        state_store.data["scores_df"] = pd.DataFrame(columns=CSV_COLUMNS)
-        state_store.data["source"]["cachePath"] = str(cache_path)
-        state_store.data["job"] = empty_job()
+        if cache_path is None:
+            return api_error_response(
+                "historyCachePathInvalid",
+                "评分记录路径不可用。",
+                status_code=400,
+                params={"reason": error or ""},
+            )
+        media_revision = state_store.current_media_revision()
+        async with DeferredMaintenanceCancellation() as cancellation:
+            result = await cancellation.run_in_threadpool(clear_history_cache, cache_path)
+            state_store.publish_media_state(
+                scores_df=pd.DataFrame(columns=CSV_COLUMNS),
+                source_patch={"cachePath": str(cache_path)},
+                expected_media_revision=media_revision,
+                expected_job_id=job_id,
+            )
+    except (OSError, RuntimeError) as exc:
+        return api_error_response(
+            "historyClearFailed",
+            f"清理失败：{exc}",
+            status_code=500,
+            params={"reason": exception_reason(exc)},
+        )
+    finally:
+        job_service.finish(job_id)
     payload = state_payload(state_store)
     payload["maintenance"] = result.to_payload()
     return JSONResponse(payload)
@@ -1099,81 +1233,93 @@ async def api_clear_history(request: Request) -> JSONResponse:
 async def api_clear_local_data(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
     runtime_config = request_runtime_config(request)
-    if job_is_running(state_store):
-        return api_error_response("jobRunningClearLocalData", "当前任务运行中，暂时不能重置本机数据。", status_code=409)
-
     payload = await request.json()
-    with state_store.lock:
-        current_cache_path = str(state_store.data["source"].get("cachePath") or DEFAULT_CACHE_PATH)
-    cache_path, error = resolve_history_cache_path(
-        payload.get("cachePath"),
-        current_cache_path=current_cache_path,
+    job_service, job_id, current_cache_path = reserve_maintenance_job_with_cache(
+        request,
+        phase="clearing_local_data",
         default_cache_path=runtime_config.default_cache_path,
-        allowed_suffixes=SQLITE_CACHE_EXTENSIONS,
     )
-    if cache_path is None:
-        return api_error_response(
-            "localDataCachePathInvalid",
-            "评分记录路径不可用。",
-            status_code=400,
-            params={"reason": error or ""},
-        )
-
+    if not job_id:
+        return api_error_response("jobRunningClearLocalData", "当前任务运行中，暂时不能重置本机数据。", status_code=409)
     try:
-        async with request_thumbnail_coordinator(request).clearing_cache(
-            runtime_config.thumbnail_cache_dir
-        ) as thumbnail_sweep:
-            secret_warning = ""
-            try:
-                delete_llm_api_key()
-            except SecretStoreUnavailable:
-                pass
-            except SecretStoreError as exc:
-                secret_warning = str(exc)
+        cache_path, error = resolve_history_cache_path(
+            payload.get("cachePath"),
+            current_cache_path=current_cache_path,
+            default_cache_path=runtime_config.default_cache_path,
+            allowed_suffixes=SQLITE_CACHE_EXTENSIONS,
+        )
+        if cache_path is None:
+            return api_error_response(
+                "localDataCachePathInvalid",
+                "评分记录路径不可用。",
+                status_code=400,
+                params={"reason": error or ""},
+            )
+        try:
+            async with request_thumbnail_coordinator(request).clearing_cache(
+                runtime_config.thumbnail_cache_dir
+            ) as thumbnail_sweep:
+                secret_warning = ""
+                try:
+                    delete_llm_api_key()
+                except SecretStoreUnavailable:
+                    pass
+                except SecretStoreError as exc:
+                    secret_warning = str(exc)
 
-            clear_session_llm_config()
-            clear_secure_llm_config()
-            set_persisted_llm_config({})
-            MODEL_RUNTIME.clear()
+                clear_session_llm_config()
+                clear_secure_llm_config()
+                set_persisted_llm_config({})
+                MODEL_RUNTIME.clear()
 
-            thumbnail_deleted = bool(thumbnail_sweep.deleted_files or thumbnail_sweep.deleted_temp_files)
-            result = await run_in_threadpool(
-                clear_local_data,
-                cache_path=cache_path,
-                upload_cache_dir=runtime_config.upload_cache_dir,
-                thumbnail_cache_dir=runtime_config.thumbnail_cache_dir,
-                analysis_image_cache_dir=ANALYSIS_IMAGE_CACHE_DIR,
-                app_model_cache_dir=APP_MODEL_CACHE_DIR,
-                model_repo_cache_dirs=MODEL_REPO_CACHE_DIRS,
-                huggingface_cache_root=get_huggingface_cache_root(),
-                clear_thumbnail_cache=lambda _path: thumbnail_deleted,
+                thumbnail_deleted = bool(thumbnail_sweep.deleted_files or thumbnail_sweep.deleted_temp_files)
+                async with DeferredMaintenanceCancellation() as cancellation:
+                    result = await cancellation.run_in_threadpool(
+                        clear_local_data,
+                        cache_path=cache_path,
+                        upload_cache_dir=runtime_config.upload_cache_dir,
+                        thumbnail_cache_dir=runtime_config.thumbnail_cache_dir,
+                        analysis_image_cache_dir=ANALYSIS_IMAGE_CACHE_DIR,
+                        app_model_cache_dir=APP_MODEL_CACHE_DIR,
+                        model_repo_cache_dirs=MODEL_REPO_CACHE_DIRS,
+                        huggingface_cache_root=get_huggingface_cache_root(),
+                        clear_thumbnail_cache=lambda _path: thumbnail_deleted,
+                    )
+
+                    next_state = create_initial_state(
+                        scores_df=pd.DataFrame(columns=CSV_COLUMNS),
+                        default_photo_dirs=[],
+                        default_cache_path=str(cache_path),
+                        filter_defaults=FILTER_DEFAULTS,
+                        default_selected_models=DEFAULT_SELECTED_MODELS,
+                    )
+                    state_store.reset(
+                        next_state,
+                        expected_job_id=job_id,
+                        preserve_job=True,
+                    )
+        except ThumbnailQueueFullError as exc:
+            return api_error_response(
+                "localDataClearFailed",
+                f"清理失败：{exc}",
+                status_code=503,
+                retryable=True,
+                params={"reason": exception_reason(exc)},
+            )
+        except ValueError as exc:
+            return api_error_response(
+                "localDataClearInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
+            )
+        except (OSError, RuntimeError) as exc:
+            return api_error_response(
+                "localDataClearFailed",
+                f"清理失败：{exc}",
+                status_code=500,
+                params={"reason": exception_reason(exc)},
             )
 
-            next_state = create_initial_state(
-                scores_df=pd.DataFrame(columns=CSV_COLUMNS),
-                default_photo_dirs=[],
-                default_cache_path=str(cache_path),
-                filter_defaults=FILTER_DEFAULTS,
-                default_selected_models=DEFAULT_SELECTED_MODELS,
-            )
-            state_store.reset(next_state)
-    except ThumbnailQueueFullError as exc:
-        return api_error_response(
-            "localDataClearFailed",
-            f"清理失败：{exc}",
-            status_code=503,
-            retryable=True,
-            params={"reason": exception_reason(exc)},
-        )
-    except ValueError as exc:
-        return api_error_response(
-            "localDataClearInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
-        )
-    except (OSError, RuntimeError) as exc:
-        return api_error_response(
-            "localDataClearFailed", f"清理失败：{exc}", status_code=500, params={"reason": exception_reason(exc)}
-        )
-
+    finally:
+        job_service.finish(job_id)
     response_payload = state_payload(state_store)
     response_payload["maintenance"] = result.to_payload()
     if secret_warning:
@@ -1183,23 +1329,32 @@ async def api_clear_local_data(request: Request) -> JSONResponse:
 
 async def api_clear_model(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
+    job_service, job_id = reserve_maintenance_job(request, phase="clearing_models")
+    if not job_id:
         return api_error_response("jobRunningClearModel", "当前任务运行中，暂时不能删除模型文件。", status_code=409)
 
+    result = None
     try:
-        result = clear_model_caches(APP_MODEL_CACHE_DIR, MODEL_REPO_CACHE_DIRS, get_huggingface_cache_root())
-    except ValueError as exc:
-        return api_error_response(
-            "modelClearInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
-        )
-    except OSError as exc:
-        return api_error_response(
-            "modelClearFailed", f"删除失败：{exc}", status_code=500, params={"reason": exception_reason(exc)}
-        )
+        async with DeferredMaintenanceCancellation() as cancellation:
+            try:
+                result = await cancellation.run_in_threadpool(
+                    clear_model_caches,
+                    APP_MODEL_CACHE_DIR,
+                    MODEL_REPO_CACHE_DIRS,
+                    get_huggingface_cache_root(),
+                )
+            except ValueError as exc:
+                return api_error_response(
+                    "modelClearInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
+                )
+            except OSError as exc:
+                return api_error_response(
+                    "modelClearFailed", f"删除失败：{exc}", status_code=500, params={"reason": exception_reason(exc)}
+                )
 
-    MODEL_RUNTIME.clear()
-    with state_store.lock:
-        state_store.data["job"] = empty_job()
+            MODEL_RUNTIME.clear()
+    finally:
+        job_service.finish(job_id)
     payload = state_payload(state_store)
     payload["maintenance"] = result.to_payload()
     return JSONResponse(payload)
@@ -1207,36 +1362,42 @@ async def api_clear_model(request: Request) -> JSONResponse:
 
 async def api_upload(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return job_running_operation_response()
     runtime_config = request_runtime_config(request)
-    form = await request.form()
-    files = form.getlist("files")
-    saved_paths: list[str] = []
-    ignored = 0
+    try:
+        with mutation_job(request, phase="uploading_photos") as (_job_service, job_id):
+            media_revision = state_store.current_media_revision()
+            form = await request.form()
+            files = form.getlist("files")
+            saved_paths: list[str] = []
+            ignored = 0
 
-    for upload in files:
-        try:
-            filename = getattr(upload, "filename", "") or "uploaded_image"
-            data = await upload.read()
-            target = save_uploaded_bytes(
-                filename=filename,
-                data=data,
-                upload_cache_dir=runtime_config.upload_cache_dir,
-                supported_extensions=SUPPORTED_EXTENSIONS,
+            for upload in files:
+                try:
+                    filename = getattr(upload, "filename", "") or "uploaded_image"
+                    data = await upload.read()
+                    target = save_uploaded_bytes(
+                        filename=filename,
+                        data=data,
+                        upload_cache_dir=runtime_config.upload_cache_dir,
+                        supported_extensions=SUPPORTED_EXTENSIONS,
+                    )
+                    if target is None:
+                        ignored += 1
+                        continue
+                    saved_paths.append(str(target))
+                finally:
+                    close_upload = getattr(upload, "close", None)
+                    if callable(close_upload):
+                        await close_upload()
+
+            unique_paths = sorted(set(saved_paths), key=str.casefold)
+            state_store.publish_media_state(
+                source_patch={"mode": "uploads", "uploadedPaths": unique_paths},
+                expected_media_revision=media_revision,
+                expected_job_id=job_id,
             )
-            if target is None:
-                ignored += 1
-                continue
-            saved_paths.append(str(target))
-        finally:
-            close_upload = getattr(upload, "close", None)
-            if callable(close_upload):
-                await close_upload()
-
-    unique_paths = sorted(set(saved_paths), key=str.casefold)
-    with state_store.lock:
-        state_store.data["source"].update({"mode": "uploads", "uploadedPaths": unique_paths})
+    except MutationJobUnavailable:
+        return job_running_operation_response()
 
     return JSONResponse({"saved": unique_paths, "count": len(unique_paths), "ignored": ignored})
 
@@ -1405,15 +1566,16 @@ async def api_job_cancel(request: Request) -> JSONResponse:
 
 async def api_mark_photo(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return job_running_operation_response()
     payload = await request.json()
-    with state_store.lock:
-        state = state_store.data
-        source_df = normalize_score_dataframe(state["scores_df"]).copy()
-        cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
     try:
-        action = mark_photo_action(cache_path, source_df, payload)
+        with mutation_job(request, phase="updating_curation"):
+            with state_store.lock:
+                state = state_store.data
+                source_df = normalize_score_dataframe(state["scores_df"]).copy()
+                cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+            action = mark_photo_action(cache_path, source_df, payload)
+    except MutationJobUnavailable:
+        return job_running_operation_response()
     except CurationServiceError as error:
         return curation_service_error_response(error)
     response = state_payload(state_store)
@@ -1442,17 +1604,18 @@ def scoring_start_error_response(error: ScoringStartError) -> JSONResponse:
 
 async def api_mark_color(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return job_running_operation_response()
     payload = await request.json()
-    with state_store.lock:
-        state = state_store.data
-        source_df = normalize_score_dataframe(state["scores_df"]).copy()
-        filters = dict(state["filters"])
-        cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
-    source_df = current_llm_score_dataframe(source_df, cache_path)
     try:
-        action = color_targets_action(cache_path, source_df, filters, payload, dataframe_for_display)
+        with mutation_job(request, phase="updating_curation"):
+            with state_store.lock:
+                state = state_store.data
+                source_df = normalize_score_dataframe(state["scores_df"]).copy()
+                filters = dict(state["filters"])
+                cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+            source_df = current_llm_score_dataframe(source_df, cache_path)
+            action = color_targets_action(cache_path, source_df, filters, payload, dataframe_for_display)
+    except MutationJobUnavailable:
+        return job_running_operation_response()
     except CurationServiceError as error:
         return curation_service_error_response(error)
     response = state_payload(state_store)
@@ -1462,17 +1625,18 @@ async def api_mark_color(request: Request) -> JSONResponse:
 
 async def api_mark_status(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return job_running_operation_response()
     payload = await request.json()
-    with state_store.lock:
-        state = state_store.data
-        source_df = normalize_score_dataframe(state["scores_df"]).copy()
-        filters = dict(state["filters"])
-        cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
-    source_df = current_llm_score_dataframe(source_df, cache_path)
     try:
-        action = status_targets_action(cache_path, source_df, filters, payload, dataframe_for_display)
+        with mutation_job(request, phase="updating_curation"):
+            with state_store.lock:
+                state = state_store.data
+                source_df = normalize_score_dataframe(state["scores_df"]).copy()
+                filters = dict(state["filters"])
+                cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+            source_df = current_llm_score_dataframe(source_df, cache_path)
+            action = status_targets_action(cache_path, source_df, filters, payload, dataframe_for_display)
+    except MutationJobUnavailable:
+        return job_running_operation_response()
     except CurationServiceError as error:
         return curation_service_error_response(error)
     response = state_payload(state_store)
@@ -1482,15 +1646,16 @@ async def api_mark_status(request: Request) -> JSONResponse:
 
 async def api_restore_marks(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return job_running_operation_response()
     payload = await request.json()
-    with state_store.lock:
-        state = state_store.data
-        source_df = normalize_score_dataframe(state["scores_df"]).copy()
-        cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
     try:
-        action = restore_marks_action(cache_path, source_df, payload)
+        with mutation_job(request, phase="updating_curation"):
+            with state_store.lock:
+                state = state_store.data
+                source_df = normalize_score_dataframe(state["scores_df"]).copy()
+                cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+            action = restore_marks_action(cache_path, source_df, payload)
+    except MutationJobUnavailable:
+        return job_running_operation_response()
     except CurationServiceError as error:
         return curation_service_error_response(error)
     response = state_payload(state_store)
@@ -1500,17 +1665,18 @@ async def api_restore_marks(request: Request) -> JSONResponse:
 
 async def api_accept_marks(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return job_running_operation_response()
     payload = await request.json()
-    with state_store.lock:
-        state = state_store.data
-        source_df = normalize_score_dataframe(state["scores_df"]).copy()
-        filters = dict(state["filters"])
-        cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
-    source_df = current_llm_score_dataframe(source_df, cache_path)
     try:
-        action = accept_targets_action(cache_path, source_df, filters, payload, dataframe_for_display)
+        with mutation_job(request, phase="updating_curation"):
+            with state_store.lock:
+                state = state_store.data
+                source_df = normalize_score_dataframe(state["scores_df"]).copy()
+                filters = dict(state["filters"])
+                cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+            source_df = current_llm_score_dataframe(source_df, cache_path)
+            action = accept_targets_action(cache_path, source_df, filters, payload, dataframe_for_display)
+    except MutationJobUnavailable:
+        return job_running_operation_response()
     except CurationServiceError as error:
         return curation_service_error_response(error)
     response = state_payload(state_store)
@@ -1522,6 +1688,10 @@ async def api_curation_history(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
     with state_store.lock:
         cache_path = str(state_store.data["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+        job = state_store.data.get("job") or {}
+        maintenance_running = bool(job.get("running")) and str(job.get("kind") or "") == "maintenance"
+    if maintenance_running:
+        return JSONResponse({"actions": []})
     try:
         limit = int(request.query_params.get("limit", "50") or "50")
     except ValueError:
@@ -1531,15 +1701,16 @@ async def api_curation_history(request: Request) -> JSONResponse:
 
 async def api_curation_undo(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return job_running_operation_response()
     payload = await request.json()
-    with state_store.lock:
-        state = state_store.data
-        source_df = normalize_score_dataframe(state["scores_df"]).copy()
-        cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
     try:
-        action = undo_curation_action(cache_path, source_df, payload)
+        with mutation_job(request, phase="updating_curation"):
+            with state_store.lock:
+                state = state_store.data
+                source_df = normalize_score_dataframe(state["scores_df"]).copy()
+                cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+            action = undo_curation_action(cache_path, source_df, payload)
+    except MutationJobUnavailable:
+        return job_running_operation_response()
     except CurationServiceError as error:
         return curation_service_error_response(error)
     response = state_payload(state_store)
@@ -1631,16 +1802,17 @@ async def api_export_selected_csv(request: Request) -> Response:
 
 async def api_export_preflight(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return job_running_operation_response()
     payload = await request.json()
     destination_text = str(payload.get("destination") or "").strip()
-    with state_store.lock:
-        state = state_store.data
-        source_df = normalize_score_dataframe(state["scores_df"]).copy()
-        cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
     try:
-        result = export_preflight_action(source_df, cache_path, destination_text)
+        with mutation_job(request, phase="checking_export"):
+            with state_store.lock:
+                state = state_store.data
+                source_df = normalize_score_dataframe(state["scores_df"]).copy()
+                cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+            result = export_preflight_action(source_df, cache_path, destination_text)
+    except MutationJobUnavailable:
+        return job_running_operation_response()
     except ExportServiceError as error:
         return export_service_error_response(error)
     return JSONResponse(result.to_payload())
@@ -1648,16 +1820,17 @@ async def api_export_preflight(request: Request) -> JSONResponse:
 
 async def api_export_selected(request: Request) -> JSONResponse:
     state_store = request_state_store(request)
-    if job_is_running(state_store):
-        return job_running_operation_response()
     payload = await request.json()
     destination_text = str(payload.get("destination") or "").strip()
-    with state_store.lock:
-        state = state_store.data
-        source_df = normalize_score_dataframe(state["scores_df"]).copy()
-        cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
     try:
-        result = export_selected_files_action(source_df, cache_path, destination_text)
+        with mutation_job(request, phase="exporting_photos"):
+            with state_store.lock:
+                state = state_store.data
+                source_df = normalize_score_dataframe(state["scores_df"]).copy()
+                cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+            result = export_selected_files_action(source_df, cache_path, destination_text)
+    except MutationJobUnavailable:
+        return job_running_operation_response()
     except ExportServiceError as error:
         return export_service_error_response(error)
     return JSONResponse(result.to_payload())
@@ -1734,12 +1907,9 @@ def authorized_media_path_from_payload(
         return None, api_error_response("pathInvalid", "路径不可用", status_code=400)
     if not path.exists():
         return None, api_error_response("fileMissing", "文件不存在", status_code=404, params={"path": str(path)})
-    state_store = request_state_store(request)
-    with state_store.lock:
-        state = state_store.data
-        source = dict(state.get("source", {}))
-        scores_df = normalize_score_dataframe(state["scores_df"]).copy()
-    if not is_allowed_media_path(path, source, scores_df):
+    runtime_config = request_runtime_config(request)
+    catalog = request_state_store(request).media_catalog_snapshot()
+    if not catalog_allows_path(catalog, path, upload_cache_dir=runtime_config.upload_cache_dir):
         return None, api_error_response(denied_code, denied_message, status_code=403, params={"path": str(path)})
     return path, None
 
@@ -1768,12 +1938,9 @@ async def api_reveal(request: Request) -> JSONResponse:
                 "desktopActionFailed", str(exc), status_code=500, params={"reason": exception_reason(exc)}
             )
         return JSONResponse({"ok": True})
-    state_store = request_state_store(request)
-    with state_store.lock:
-        state = state_store.data
-        source = dict(state.get("source", {}))
-        scores_df = normalize_score_dataframe(state["scores_df"]).copy()
-    if not is_allowed_media_path(path, source, scores_df):
+    runtime_config = request_runtime_config(request)
+    catalog = request_state_store(request).media_catalog_snapshot()
+    if not catalog_allows_path(catalog, path, upload_cache_dir=runtime_config.upload_cache_dir):
         return api_error_response(
             "revealOutsideSource", "只能定位当前照片来源中的文件。", status_code=403, params={"path": str(path)}
         )

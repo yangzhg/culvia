@@ -920,6 +920,41 @@ class ThumbnailCoordinatorTests(unittest.TestCase):
         self.assertTrue(still_cleaning)
         self.assertFalse(clearing)
 
+    def test_cancelling_clear_during_fence_release_propagates_after_cleanup(self) -> None:
+        async def scenario(root: Path) -> tuple[bool, bool]:
+            cache_dir = root / "thumbs"
+            cache_dir.mkdir()
+            coordinator = ThumbnailGenerationCoordinator()
+            release_started = threading.Event()
+            release_fence = threading.Event()
+            real_end = thumbnail_service.end_thumbnail_cache_clear
+
+            def blocked_end(path: Path, lease: object) -> None:
+                release_started.set()
+                if not release_fence.wait(timeout=2):
+                    raise AssertionError("cache fence release did not resume")
+                real_end(path, lease)
+
+            with patch("culvia.thumbnail_service.end_thumbnail_cache_clear", side_effect=blocked_end):
+                clear_task = asyncio.create_task(coordinator.clear_cache(cache_dir))
+                self.assertTrue(await asyncio.to_thread(release_started.wait, 1))
+                clear_task.cancel()
+                await asyncio.sleep(0)
+                still_cleaning = not clear_task.done()
+                release_fence.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await clear_task
+
+            generation = thumbnail_service.thumbnail_cache_generation(cache_dir)
+            coordinator.close()
+            return still_cleaning, generation.clearing
+
+        with tempfile.TemporaryDirectory() as tmp:
+            still_cleaning, clearing = asyncio.run(scenario(Path(tmp)))
+
+        self.assertTrue(still_cleaning)
+        self.assertFalse(clearing)
+
     def test_two_coordinators_cannot_enter_clear_context_together(self) -> None:
         async def scenario(root: Path) -> tuple[bool, bool]:
             cache_dir = root / "thumbs"

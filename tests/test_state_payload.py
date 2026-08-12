@@ -185,6 +185,10 @@ class StatePayloadBuilderTests(unittest.TestCase):
             llm_config_payload=lambda: {"configured": True},
             normalize_selected_models=lambda selected: ["normalized", *(selected or [])],
             model_payload=lambda network, selected: {"network": network["mode"], "selected": list(selected)},
+            maintenance_model_payload=lambda network, selected: {
+                "network": network["mode"],
+                "selected": list(selected),
+            },
             summarize_scores=lambda source, filtered, errors, filters: {
                 "sourceRows": len(source),
                 "showing": len(filtered),

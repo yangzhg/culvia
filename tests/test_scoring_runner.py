@@ -170,6 +170,7 @@ class ScoringRunnerTests(unittest.TestCase):
                 calls["paths"] = paths
                 calls["use_cache"] = kwargs["use_cache"]
                 calls["cache_path"] = kwargs["cache_path"]
+                calls["source_before_publish"] = store.snapshot()["source"]["mode"]
                 kwargs["progress_callback"](0, 1, image_path, "started")
                 kwargs["model_loader"]("cpu")
                 kwargs["clip_reference_loader"]("cpu")
@@ -217,13 +218,45 @@ class ScoringRunnerTests(unittest.TestCase):
             )
             self.assertEqual(store.data["job"]["currentFile"], "")
         self.assertEqual(calls["paths"], [image_path])
+        self.assertEqual(calls["source_before_publish"], "folders")
         self.assertTrue(calls["published_before_return"])
+        self.assertEqual(store.current_media_revision(), 1)
         self.assertTrue(calls["use_cache"])
         self.assertEqual(calls["cache_path"], cache_path)
         self.assertEqual(calls["source_configs"][0][0]["mode"], "uploads")
         self.assertEqual(calls["model_loads"][0][0:2], ("cpu", "system"))
         self.assertEqual(calls["clip_loads"][0][0:2], ("cpu", "system"))
         self.assertEqual(service.control["jobId"], "")
+
+    def test_runner_publishes_returned_scores_when_facade_does_not_call_callback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = Path(tmp) / "portrait.jpg"
+            image_path.write_bytes(b"image")
+            cache_path = str(Path(tmp) / "scores.sqlite")
+            store = make_store(cache_path)
+            service = ScoringJobService(store)
+            job_id = service.reserve()
+            self.assertTrue(job_id)
+
+            result = pd.DataFrame([{"file_id": "photo-1", "path": str(image_path), "error": ""}])
+
+            def score_image_paths(_paths: list[Path], **_kwargs: Any) -> tuple[pd.DataFrame, str]:
+                return result, "cpu"
+
+            run_scoring_job(
+                job_id,
+                {
+                    "mode": "uploads",
+                    "uploadedPaths": [str(image_path)],
+                    "cachePath": cache_path,
+                },
+                store,
+                service,
+                make_dependencies(score_image_paths=score_image_paths),
+            )
+
+        self.assertTrue(store.data["scores_df"].equals(result))
+        self.assertEqual(store.current_media_revision(), 1)
 
     def test_upload_retry_keeps_cache_reuse_enabled_after_cancellation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -277,6 +310,7 @@ class ScoringRunnerTests(unittest.TestCase):
         self.assertEqual(seen_use_cache, [True, True])
 
     def test_scoring_exception_is_reported_and_control_is_reset(self) -> None:
+        calls: dict[str, Any] = {}
         cache_path = "/tmp/error.sqlite"
         store = make_store(cache_path)
         service = ScoringJobService(store)
@@ -295,7 +329,11 @@ class ScoringRunnerTests(unittest.TestCase):
             {"mode": "folders", "folders": ["/photos"], "cachePath": cache_path},
             store,
             service,
-            make_dependencies(scan_image_paths=scan_image_paths, score_image_paths=score_image_paths),
+            make_dependencies(
+                scan_image_paths=scan_image_paths,
+                score_image_paths=score_image_paths,
+                calls=calls,
+            ),
         )
 
         with store.lock:
@@ -306,6 +344,7 @@ class ScoringRunnerTests(unittest.TestCase):
             self.assertIsNone(store.data["job"]["errorText"])
         self.assertEqual(service.control["jobId"], "")
         self.assertEqual(service.active_thread_job_id(), "")
+        self.assertNotIn("source_configs", calls)
 
     def test_cancelled_scoring_finishes_as_cancelled_not_error(self) -> None:
         cache_path = "/tmp/cancel.sqlite"

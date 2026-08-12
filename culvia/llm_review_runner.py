@@ -79,6 +79,7 @@ def run_llm_review_job(
 
         with state_store.lock:
             source_df = dependencies.normalize_score_dataframe(pd.DataFrame(state_store.data.get("scores_df"))).copy()
+            media_revision = state_store.media_revision
 
         warnings: list[dict[str, Any]] = []
         if source_df.empty:
@@ -87,6 +88,17 @@ def run_llm_review_job(
             else:
                 paths, warnings = dependencies.scan_image_paths(source_request.folders)
             source_df = _records_for_paths(paths, dependencies)
+            media_revision = state_store.publish_media_state(
+                scores_df=source_df,
+                source_patch={
+                    "mode": source_request.mode,
+                    "folders": source_request.folders,
+                    "cachePath": source_request.cache_path,
+                    "uploadedPaths": [str(path) for path in uploaded_paths],
+                },
+                expected_media_revision=media_revision,
+                expected_job_id=job_id,
+            )
 
         existing_cache = dependencies.load_cache_records(cache_path)
         file_ids = [str(value) for value in source_df.get("file_id", pd.Series(dtype=object)).tolist() if str(value)]
@@ -135,8 +147,11 @@ def run_llm_review_job(
         )
 
         if not total:
-            with state_store.lock:
-                state_store.data["scores_df"] = source_df
+            state_store.publish_score_values(
+                source_df,
+                expected_media_revision=media_revision,
+                expected_job_id=job_id,
+            )
             job_service.update(
                 running=False,
                 phase="done",
@@ -176,8 +191,11 @@ def run_llm_review_job(
             updated_df = _replace_record(scored_df, updated_record, dependencies.normalize_score_dataframe)
             dependencies.save_cache_records(updated_df, cache_path, existing_cache)
             scored_df = updated_df
-            with state_store.lock:
-                state_store.data["scores_df"] = scored_df
+            state_store.publish_score_values(
+                scored_df,
+                expected_media_revision=media_revision,
+                expected_job_id=job_id,
+            )
             if output.insights:
                 dependencies.save_analysis_insights(output.insights, cache_path)
             job_service.update(

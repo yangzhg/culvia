@@ -54,15 +54,22 @@ def load_source_cache_action(
     return SourceCacheResult(request=source_request, scores_df=loaded)
 
 
-def apply_source_cache_state(state_store: AppStateStore, result: SourceCacheResult) -> None:
+def apply_source_cache_state(
+    state_store: AppStateStore,
+    result: SourceCacheResult,
+    *,
+    expected_media_revision: int | None = None,
+    expected_job_id: str | None = None,
+) -> int:
     source_request = result.request
-    with state_store.lock:
-        state_store.data["scores_df"] = result.scores_df
-        state_store.data["source"].update(
-            {
-                "mode": source_request.mode,
-                "folders": source_request.folders,
-                "cachePath": source_request.cache_path,
-            }
-        )
-        state_store.data.pop("sourcePreview", None)
+    return state_store.publish_media_state(
+        scores_df=result.scores_df,
+        source_patch={
+            "mode": source_request.mode,
+            "folders": source_request.folders,
+            "cachePath": source_request.cache_path,
+        },
+        remove_source_preview=True,
+        expected_media_revision=expected_media_revision,
+        expected_job_id=expected_job_id,
+    )

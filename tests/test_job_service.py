@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import unittest
 
 from culvia.app_state import AppStateStore, create_initial_state, empty_job
@@ -163,6 +164,34 @@ class ScoringJobServiceTests(unittest.TestCase):
         service.reset_control(job_id)
         self.assertEqual(service.control["jobId"], "")
         self.assertFalse(service.control["pauseRequested"])
+
+    def test_finish_releases_only_the_matching_job(self) -> None:
+        service = make_service()
+        job_id = service.reserve(kind="maintenance", phase="clearing_history")
+        self.assertTrue(job_id)
+
+        service.finish("other-job")
+        self.assertTrue(service.is_running())
+        self.assertEqual(service.control["jobId"], job_id)
+
+        service.finish(str(job_id))
+        self.assertFalse(service.is_running())
+        self.assertEqual(service.state_store.data["job"]["phase"], "idle")
+        self.assertEqual(service.control["jobId"], "")
+
+    def test_finish_can_restore_the_previous_completed_job(self) -> None:
+        service = make_service()
+        previous = empty_job()
+        previous.update({"jobId": "completed", "phase": "done", "running": False})
+        with service.state_store.lock:
+            service.state_store.data["job"] = copy.deepcopy(previous)
+        job_id = service.reserve(kind="mutation", phase="updating_curation")
+        self.assertTrue(job_id)
+
+        service.finish(str(job_id), restore_job=previous)
+
+        self.assertEqual(service.state_store.data["job"]["jobId"], "completed")
+        self.assertEqual(service.state_store.data["job"]["phase"], "done")
 
 
 if __name__ == "__main__":

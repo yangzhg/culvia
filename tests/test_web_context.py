@@ -115,10 +115,9 @@ class WebContextTests(unittest.TestCase):
                 folders=[],
                 cache_path=str(root / "injected.sqlite"),
             )
-            with injected_store.lock:
-                injected_store.data["source"].update(
-                    {"mode": "uploads", "uploadedPaths": [str(image_path)], "folders": []}
-                )
+            injected_store.publish_media_state(
+                source_patch={"mode": "uploads", "uploadedPaths": [str(image_path)], "folders": []}
+            )
             fallback_config = make_runtime_config(root / "fallback", upload_cache_dir=root / "other-uploads")
             injected_config = make_runtime_config(root / "injected", upload_cache_dir=upload_root)
             request = SimpleNamespace(
@@ -200,6 +199,52 @@ class WebContextTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertIsNone(blocked_path)
             self.assertEqual(blocked_status, 403)
+
+    def test_consecutive_media_requests_do_not_touch_the_scores_dataframe(self) -> None:
+        armed = False
+
+        class TripwireFrame(pd.DataFrame):
+            def __getattribute__(self, name: str):
+                if armed and not name.startswith("_"):
+                    raise AssertionError(f"request touched DataFrame.{name}")
+                return super().__getattribute__(name)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_root = root / "source"
+            source_root.mkdir()
+            scored_outside = make_image(root / "outside.jpg")
+            store = make_store(
+                scores_df=TripwireFrame([{"file_id": "outside", "path": str(scored_outside)}]),
+                folders=[str(source_root)],
+                cache_path=str(root / "scores.sqlite"),
+            )
+            config = make_runtime_config(root)
+            by_id_request = SimpleNamespace(
+                app=SimpleNamespace(state=SimpleNamespace(app_state_store=store, runtime_config=config)),
+                query_params=QueryParams({"file_id": "outside"}),
+            )
+            by_path_request = SimpleNamespace(
+                app=by_id_request.app,
+                query_params=QueryParams({"path": str(scored_outside)}),
+            )
+
+            armed = True
+            first = media_path_from_request(
+                by_id_request,
+                fallback_state_store=store,
+                fallback_runtime_config=config,
+                normalize_dataframe=lambda _value: self.fail("request normalized DataFrame"),
+            )
+            second = media_path_from_request(
+                by_path_request,
+                fallback_state_store=store,
+                fallback_runtime_config=config,
+                normalize_dataframe=lambda _value: self.fail("request normalized DataFrame"),
+            )
+
+            self.assertEqual(first, (scored_outside.resolve(), 200))
+            self.assertEqual(second, (scored_outside.resolve(), 200))
 
 
 if __name__ == "__main__":

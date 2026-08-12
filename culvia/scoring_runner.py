@@ -58,8 +58,12 @@ def run_scoring_job(
                 model_key for model_key in selected_models if model_key != dependencies.llm_review_model_key
             ]
 
-        _write_source_state(state_store, mode, folders, cache_path, uploaded_paths, network_mode, selected_models)
-        dependencies.save_source_config(_source_payload(mode, folders, cache_path, uploaded_paths), cache_path)
+        media_revision = _write_source_state(
+            state_store,
+            job_id,
+            network_mode,
+            selected_models,
+        )
     except Exception as exc:
         job_service.update(
             running=False,
@@ -120,9 +124,13 @@ def run_scoring_job(
         )
 
         if not paths:
-            with state_store.lock:
-                state_store.data["scores_df"] = pd.DataFrame(columns=dependencies.empty_score_columns)
-                state_store.data["source"].update(_source_payload(mode, folders, cache_path, uploaded_paths))
+            state_store.publish_media_state(
+                scores_df=pd.DataFrame(columns=dependencies.empty_score_columns),
+                source_patch=_source_payload(mode, folders, cache_path, uploaded_paths),
+                expected_media_revision=media_revision,
+                expected_job_id=job_id,
+            )
+            dependencies.save_source_config(_source_payload(mode, folders, cache_path, uploaded_paths), cache_path)
             job_service.update(
                 running=False,
                 phase="empty",
@@ -156,10 +164,17 @@ def run_scoring_job(
             job_service.wait_if_paused(path)
             job_service.raise_if_cancelled()
 
+        result_published = False
+
         def publish_result(result_df: pd.DataFrame) -> None:
-            with state_store.lock:
-                state_store.data["scores_df"] = result_df
-                state_store.data["source"].update(_source_payload(mode, folders, cache_path, uploaded_paths))
+            nonlocal media_revision, result_published
+            media_revision = state_store.publish_media_state(
+                scores_df=result_df,
+                source_patch=_source_payload(mode, folders, cache_path, uploaded_paths),
+                expected_media_revision=media_revision,
+                expected_job_id=job_id,
+            )
+            result_published = True
 
         scored_df, device = dependencies.score_image_paths(
             paths,
@@ -179,7 +194,9 @@ def run_scoring_job(
             progress_callback=update_score_progress,
             publish_result=publish_result,
         )
-        publish_result(scored_df)
+        if not result_published:
+            publish_result(scored_df)
+        dependencies.save_source_config(_source_payload(mode, folders, cache_path, uploaded_paths), cache_path)
         job_service.update(
             running=False,
             phase="done",
@@ -238,18 +255,17 @@ def run_scoring_job(
 
 def _write_source_state(
     state_store: AppStateStore,
-    mode: str,
-    folders: list[str],
-    cache_path: str,
-    uploaded_paths: list[Path],
+    job_id: str,
     network_mode: str,
     selected_models: list[str],
-) -> None:
-    with state_store.lock:
-        state = state_store.data
-        state["network"]["mode"] = network_mode
-        state["models"]["selected"] = selected_models
-        state["source"].update(_source_payload(mode, folders, cache_path, uploaded_paths))
+) -> int:
+    return state_store.update_nonmedia_state(
+        {
+            "network": {"mode": network_mode},
+            "models": {"selected": selected_models},
+        },
+        expected_job_id=job_id,
+    )
 
 
 def _source_payload(

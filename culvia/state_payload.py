@@ -56,6 +56,7 @@ class StatePayloadDependencies:
     llm_config_payload: Callable[[], Mapping[str, Any]]
     normalize_selected_models: Callable[[Any], Sequence[str]]
     model_payload: Callable[[Mapping[str, Any], Sequence[str]], Mapping[str, Any]]
+    maintenance_model_payload: Callable[[Mapping[str, Any], Sequence[str]], Mapping[str, Any]]
     summarize_scores: Callable[[pd.DataFrame, pd.DataFrame, pd.DataFrame, Mapping[str, Any]], Mapping[str, Any]]
 
 
@@ -74,13 +75,19 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         models = _json_clone(state["models"])
         job = _json_clone(state["job"])
 
-    deps.refresh_persisted_llm_config(str(source.get("cachePath") or deps.default_cache_path))
+    maintenance_running = bool(job.get("running")) and str(job.get("kind") or "") == "maintenance"
+    if not maintenance_running:
+        deps.refresh_persisted_llm_config(str(source.get("cachePath") or deps.default_cache_path))
     cache_path = str(source.get("cachePath") or "")
     source_file_ids = deps.frame_file_ids(source_df)
     current_llm_provider = deps.llm_review_provider()
     current_llm_model = deps.llm_review_model_name()
     current_llm_prompt_version = deps.llm_review_prompt_version()
-    is_sqlite_cache = bool(cache_path and Path(cache_path).expanduser().suffix.lower() in SQLITE_CACHE_EXTENSIONS)
+    is_sqlite_cache = bool(
+        not maintenance_running
+        and cache_path
+        and Path(cache_path).expanduser().suffix.lower() in SQLITE_CACHE_EXTENSIONS
+    )
     current_llm_results: dict[str, AnalysisInsightMatch] = {}
     if is_sqlite_cache:
         current_llm_results = dict(
@@ -102,7 +109,9 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
     )
     current_llm_file_ids = resolution.current_file_ids
     display_source_df = resolution.dataframe
-    mark_by_file_id = deps.load_photo_marks(cache_path, source_file_ids) if cache_path else {}
+    mark_by_file_id: Mapping[str, Any] = (
+        deps.load_photo_marks(cache_path, source_file_ids) if cache_path and not maintenance_running else {}
+    )
     working, filtered, errors = deps.dataframe_for_display(display_source_df, filters, mark_by_file_id)
     filtered_file_ids = deps.frame_file_ids(filtered)
     selected_preview = deps.selected_preview_for_display(working, mark_by_file_id, limit=80)
@@ -161,7 +170,10 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         "network": deps.network_payload(network),
         "llm": deps.llm_config_payload(),
         "models": models,
-        "model": deps.model_payload(network, deps.normalize_selected_models(models.get("selected"))),
+        "model": (deps.maintenance_model_payload if maintenance_running else deps.model_payload)(
+            network,
+            deps.normalize_selected_models(models.get("selected")),
+        ),
         "job": job,
         "summary": deps.summarize_scores(display_source_df, filtered, errors, filters),
         "curation": {

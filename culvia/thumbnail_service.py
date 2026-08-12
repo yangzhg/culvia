@@ -159,15 +159,22 @@ class ThumbnailGenerationCoordinator:
             raise
         finally:
             cleanup_error: BaseException | None = None
+            cleanup_cancelled = [False]
             try:
                 if clear_lease is None and begin_task is not None:
                     try:
-                        clear_lease = await _await_task_uninterruptibly(begin_task)
+                        clear_lease = await _await_task_uninterruptibly(
+                            begin_task,
+                            cancellation_observed=cleanup_cancelled,
+                        )
                     except BaseException as exc:
                         cleanup_error = exc
                 if sweep_future is not None:
                     try:
-                        await _await_future_uninterruptibly(sweep_future)
+                        await _await_future_uninterruptibly(
+                            sweep_future,
+                            cancellation_observed=cleanup_cancelled,
+                        )
                     except BaseException as exc:
                         cleanup_error = cleanup_error or exc
                 if clear_lease is not None:
@@ -175,7 +182,10 @@ class ThumbnailGenerationCoordinator:
                         asyncio.to_thread(end_thumbnail_cache_clear, normalized_dir, clear_lease)
                     )
                     try:
-                        await _await_task_uninterruptibly(end_task)
+                        await _await_task_uninterruptibly(
+                            end_task,
+                            cancellation_observed=cleanup_cancelled,
+                        )
                     except BaseException as exc:
                         cleanup_error = cleanup_error or exc
             finally:
@@ -184,6 +194,8 @@ class ThumbnailGenerationCoordinator:
                     self._lock.notify_all()
             if cleanup_error is not None and operation_error is None:
                 raise cleanup_error
+            if cleanup_cancelled[0] and operation_error is None:
+                raise asyncio.CancelledError
 
     def start(self, cache_dir: Path) -> None:
         self._schedule_sweep(cache_dir, force=True)
@@ -465,20 +477,32 @@ def _consume_task_exception(task: asyncio.Task[None]) -> None:
         pass
 
 
-async def _await_task_uninterruptibly(task: asyncio.Task[T]) -> T:
+async def _await_task_uninterruptibly(
+    task: asyncio.Task[T],
+    *,
+    cancellation_observed: list[bool] | None = None,
+) -> T:
     while not task.done():
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
+            if cancellation_observed is not None:
+                cancellation_observed[0] = True
             continue
     return task.result()
 
 
-async def _await_future_uninterruptibly(future: Future[T]) -> T:
+async def _await_future_uninterruptibly(
+    future: Future[T],
+    *,
+    cancellation_observed: list[bool] | None = None,
+) -> T:
     wrapped = asyncio.wrap_future(future)
     while not future.done():
         try:
             await asyncio.shield(wrapped)
         except asyncio.CancelledError:
+            if cancellation_observed is not None:
+                cancellation_observed[0] = True
             continue
     return future.result()

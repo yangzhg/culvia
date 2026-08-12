@@ -3,15 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-import pandas as pd
-
 from culvia.app_state import AppStateStore
 from culvia.job_service import ScoringJobService
-from culvia.media_service import resolve_media_path
+from culvia.media_catalog import resolve_catalog_media_path
 from culvia.runtime_config import RuntimeConfig
 
 
-NormalizeDataFrame = Callable[[pd.DataFrame], pd.DataFrame]
+NormalizeDataFrame = Callable[[object], object]
 
 
 def request_runtime_config(request: object, fallback: RuntimeConfig) -> RuntimeConfig:
@@ -43,26 +41,14 @@ def media_path_from_request(
     normalize_dataframe: NormalizeDataFrame,
     state_store: AppStateStore | None = None,
 ) -> tuple[Path | None, int]:
+    del normalize_dataframe
     store = state_store or request_state_store(request, fallback_state_store)
-    with store.lock:
-        state = store.data
-        source = dict(state.get("source", {}))
-        source_scores = state["scores_df"]
-        if isinstance(source_scores, pd.DataFrame):
-            columns = [column for column in ("file_id", "path") if column in source_scores.columns]
-            scores_df = source_scores.loc[:, columns].copy()
-        else:
-            normalized = normalize_dataframe(source_scores)
-            columns = [column for column in ("file_id", "path") if column in normalized.columns]
-            scores_df = normalized.loc[:, columns].copy()
-
     query_params = getattr(request, "query_params", {})
     runtime_config = request_runtime_config(request, fallback_runtime_config)
-    return resolve_media_path(
+    return resolve_catalog_media_path(
+        store.media_catalog_snapshot(),
         file_id=str(query_params.get("file_id") or "").strip(),
         path_text=str(query_params.get("path") or "").strip(),
-        source=source,
-        scores_df=scores_df,
         upload_cache_dir=runtime_config.upload_cache_dir,
     )
 

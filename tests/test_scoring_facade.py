@@ -592,8 +592,10 @@ class ModelPlanningTests(unittest.TestCase):
 
             try:
                 with culvia_app.STATE_LOCK:
-                    culvia_app.STATE["source"].update({"mode": "folders", "folders": [str(root)], "uploadedPaths": []})
-                    culvia_app.STATE["scores_df"] = pd.DataFrame(columns=scoring.CSV_COLUMNS)
+                    culvia_app.APP_STATE.publish_media_state(
+                        scores_df=pd.DataFrame(columns=scoring.CSV_COLUMNS),
+                        source_patch={"mode": "folders", "folders": [str(root)], "uploadedPaths": []},
+                    )
 
                 allowed_path, allowed_status = culvia_app.media_path_from_request(
                     SimpleNamespace(query_params=QueryParams({"path": str(allowed)}))
@@ -609,17 +611,19 @@ class ModelPlanningTests(unittest.TestCase):
 
                 file_id = "cached-image"
                 with culvia_app.STATE_LOCK:
-                    culvia_app.STATE["source"].update({"mode": "folders", "folders": []})
-                    culvia_app.STATE["scores_df"] = pd.DataFrame(
-                        [
-                            {
-                                "file_id": file_id,
-                                "path": str(outside),
-                                "folder": str(outside.parent),
-                                "filename": outside.name,
-                                "error": "",
-                            }
-                        ]
+                    culvia_app.APP_STATE.publish_media_state(
+                        source_patch={"mode": "folders", "folders": []},
+                        scores_df=pd.DataFrame(
+                            [
+                                {
+                                    "file_id": file_id,
+                                    "path": str(outside),
+                                    "folder": str(outside.parent),
+                                    "filename": outside.name,
+                                    "error": "",
+                                }
+                            ]
+                        ),
                     )
 
                 cached_path, cached_status = culvia_app.media_path_from_request(
@@ -630,9 +634,10 @@ class ModelPlanningTests(unittest.TestCase):
                 self.assertEqual(cached_status, 200)
             finally:
                 with culvia_app.STATE_LOCK:
-                    culvia_app.STATE["source"].clear()
-                    culvia_app.STATE["source"].update(original_source)
-                    culvia_app.STATE["scores_df"] = original_scores
+                    culvia_app.APP_STATE.publish_media_state(
+                        scores_df=original_scores,
+                        source_patch=original_source,
+                    )
 
     def test_upload_paths_must_stay_inside_upload_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

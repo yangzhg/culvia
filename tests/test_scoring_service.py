@@ -124,6 +124,59 @@ class ScoringServiceTests(unittest.TestCase):
             self.assertEqual(store.data["job"]["phase"], "queued")
             self.assertEqual(store.data["job"]["titleText"], {"key": "jobText.llmQueued"})
 
+    def test_thread_failures_release_scoring_and_llm_job_slots(self) -> None:
+        def fail_construction(*_args: object, **_kwargs: object) -> FakeThread:
+            raise RuntimeError("thread construction failed")
+
+        class StartFailingThread:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def start(self) -> None:
+                raise RuntimeError("thread start failed")
+
+        def start_scoring(
+            store: AppStateStore,
+            service: ScoringJobService,
+            thread_factory: Any,
+        ) -> None:
+            start_scoring_job_action(
+                {"mode": "folders", "folders": ["/photos"]},
+                store,
+                service,
+                run_scoring_job=lambda *_args: None,
+                thread_factory=thread_factory,
+            )
+
+        def start_llm(
+            store: AppStateStore,
+            service: ScoringJobService,
+            thread_factory: Any,
+        ) -> None:
+            start_llm_review_job_action(
+                {"mode": "folders", "folders": ["/photos"]},
+                store,
+                service,
+                run_llm_review_job=lambda *_args: None,
+                thread_factory=thread_factory,
+            )
+
+        for job_kind, starter in (("scoring", start_scoring), ("llm_review", start_llm)):
+            for failure_stage, factory in (
+                ("construction", fail_construction),
+                ("start", StartFailingThread),
+            ):
+                with self.subTest(job_kind=job_kind, failure_stage=failure_stage):
+                    store = make_store()
+                    service = ScoringJobService(store)
+
+                    with self.assertRaisesRegex(RuntimeError, f"thread {failure_stage} failed"):
+                        starter(store, service, factory)
+
+                    self.assertFalse(service.is_running())
+                    self.assertEqual(service.control["jobId"], "")
+                    self.assertTrue(service.reserve())
+
 
 if __name__ == "__main__":
     unittest.main()

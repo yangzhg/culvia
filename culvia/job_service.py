@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import copy
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-from culvia.app_state import AppStateStore
+from culvia.app_state import AppStateStore, empty_job
 from culvia.job_text import text_ref
 
 
@@ -104,6 +105,14 @@ class ScoringJobService:
             self.control["cancelRequested"] = False
             self.control["jobId"] = ""
             self.condition.notify_all()
+
+    def finish(self, job_id: str, *, restore_job: dict[str, Any] | None = None) -> None:
+        """Release a reserved job slot without disturbing a newer job."""
+        with self.state_store.lock:
+            current_job_id = str(self.state_store.data.get("job", {}).get("jobId") or "")
+            if current_job_id == job_id:
+                self.state_store.data["job"] = copy.deepcopy(restore_job) if restore_job is not None else empty_job()
+        self.reset_control(job_id)
 
     def request_pause(self) -> bool:
         with self.state_store.lock:

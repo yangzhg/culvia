@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import tempfile
-import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -171,6 +171,39 @@ class SourcePreviewTests(unittest.TestCase):
         self.assertEqual(error.exception.status_code, 409)
         self.assertEqual(FakeThread.created, [])
 
+    def test_preview_thread_failures_release_the_job_slot(self) -> None:
+        def fail_construction(*_args: object, **_kwargs: object) -> FakeThread:
+            raise RuntimeError("thread construction failed")
+
+        class StartFailingThread:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def start(self) -> None:
+                raise RuntimeError("thread start failed")
+
+        for failure_stage, factory in (
+            ("construction", fail_construction),
+            ("start", StartFailingThread),
+        ):
+            with self.subTest(failure_stage=failure_stage):
+                store = self.store()
+                service = ScoringJobService(store)
+
+                with self.assertRaisesRegex(RuntimeError, f"thread {failure_stage} failed"):
+                    start_source_preview_job_action(
+                        {"mode": "folders", "folders": ["/photos"], "cachePath": "/tmp/scores.sqlite"},
+                        store,
+                        service,
+                        default_cache_path="/tmp/scores.sqlite",
+                        run_source_preview_job=lambda *_args: None,
+                        thread_factory=factory,
+                    )
+
+                self.assertFalse(service.is_running())
+                self.assertEqual(service.control["jobId"], "")
+                self.assertTrue(service.reserve())
+
     def test_run_preview_job_updates_state_and_finishes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -196,6 +229,75 @@ class SourcePreviewTests(unittest.TestCase):
             self.assertEqual(store.data["sourcePreview"]["total"], 1)
             self.assertEqual(len(store.data["scores_df"]), 1)
         self.assertEqual(service.control["jobId"], "")
+
+    def test_preview_keeps_the_active_source_until_the_scan_is_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "photo.jpg"
+            path.write_bytes(b"photo")
+            store = self.store(str(root / "scores.sqlite"))
+            service = ScoringJobService(store)
+            job_id = service.reserve(kind="source_preview", phase="source_scanning")
+            self.assertTrue(job_id)
+            observed: dict[str, object] = {}
+
+            def scan(_folders: list[str]) -> tuple[list[Path], list[dict[str, object]]]:
+                snapshot = store.snapshot()
+                observed["active_folders"] = snapshot["source"]["folders"]
+                observed["pending_folders"] = snapshot["sourcePreview"]["folders"]
+                return [path], []
+
+            run_source_preview_job(
+                job_id,
+                {"mode": "folders", "folders": [tmp], "cachePath": str(root / "scores.sqlite")},
+                store,
+                service,
+                replace(self.dependencies(), scan_image_paths=scan),
+            )
+
+        self.assertEqual(observed["active_folders"], [])
+        self.assertEqual(observed["pending_folders"], [str(root.absolute())])
+        self.assertEqual(store.data["source"]["folders"], [str(root.absolute())])
+
+    def test_reset_prevents_a_late_preview_from_restoring_the_old_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "photo.jpg"
+            path.write_bytes(b"photo")
+            late_file_id = build_file_id(path)
+            store = self.store(str(root / "scores.sqlite"))
+            service = ScoringJobService(store)
+            job_id = service.reserve(kind="source_preview", phase="source_scanning")
+            self.assertTrue(job_id)
+            saved_configs: list[object] = []
+
+            def scan(_folders: list[str]) -> tuple[list[Path], list[dict[str, object]]]:
+                store.reset(
+                    create_initial_state(
+                        scores_df=pd.DataFrame(columns=CSV_COLUMNS),
+                        default_photo_dirs=["/replacement"],
+                        default_cache_path="/replacement.sqlite",
+                        filter_defaults={},
+                        default_selected_models=[],
+                    )
+                )
+                return [path], []
+
+            run_source_preview_job(
+                job_id,
+                {"mode": "folders", "folders": [tmp], "cachePath": str(root / "scores.sqlite")},
+                store,
+                service,
+                replace(
+                    self.dependencies(),
+                    scan_image_paths=scan,
+                    save_source_config=lambda config, _path: saved_configs.append(config),
+                ),
+            )
+
+        self.assertEqual(store.data["source"]["folders"], ["/replacement"])
+        self.assertNotIn(late_file_id, store.media_catalog_snapshot().by_file_id)
+        self.assertEqual(saved_configs, [])
 
     def test_preview_skips_paths_that_cannot_build_file_id(self) -> None:
         root = Path("/photos")
@@ -229,14 +331,6 @@ class SourcePreviewTests(unittest.TestCase):
         self.assertIn("path", result.warnings[0]["params"])
 
     def test_apply_preview_state_updates_source_and_scores(self) -> None:
-        class Store:
-            def __init__(self) -> None:
-                self.lock = threading.Lock()
-                self.data = {
-                    "scores_df": pd.DataFrame(columns=CSV_COLUMNS),
-                    "source": {"mode": "folders", "folders": [], "cachePath": "old.sqlite", "uploadedPaths": []},
-                }
-
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "photo.jpg"
             path.write_bytes(b"photo")
@@ -245,7 +339,15 @@ class SourcePreviewTests(unittest.TestCase):
                 self.dependencies(),
             )
 
-        store = Store()
+        store = AppStateStore(
+            create_initial_state(
+                scores_df=pd.DataFrame(columns=CSV_COLUMNS),
+                default_photo_dirs=[],
+                default_cache_path="old.sqlite",
+                filter_defaults={},
+                default_selected_models=[],
+            )
+        )
         apply_source_preview_state(store, result)
 
         self.assertEqual(store.data["source"]["folders"], [str(Path(tmp).absolute())])

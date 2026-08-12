@@ -8,6 +8,7 @@ import tempfile
 import threading
 import unittest
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlencode
@@ -111,6 +112,50 @@ class ServerApiTests(unittest.TestCase):
             response = self._client.get("/api/state")
 
         self.assertEqual(response.status_code, 200)
+
+    def test_state_route_does_not_touch_persistent_cache_during_maintenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "scores.sqlite"
+            initial_state = create_initial_state(
+                scores_df=pd.DataFrame(columns=scoring.CSV_COLUMNS),
+                default_photo_dirs=[],
+                default_cache_path=str(cache_path),
+                filter_defaults=culvia_app.FILTER_DEFAULTS,
+                default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+            )
+            initial_state["job"] = {
+                "jobId": "maintenance-1",
+                "kind": "maintenance",
+                "running": True,
+                "phase": "clearing_history",
+            }
+            store = AppStateStore(initial_state)
+
+            def persistent_access(*_args, **_kwargs):
+                raise AssertionError("maintenance state must not access the persistent cache")
+
+            dependencies = replace(
+                culvia_app.STATE_PAYLOAD_DEPENDENCIES,
+                refresh_persisted_llm_config=persistent_access,
+                load_photo_marks=persistent_access,
+                load_latest_matching_analysis_insight_results=persistent_access,
+                load_analysis_insights=persistent_access,
+                model_payload=persistent_access,
+            )
+            with patch.object(culvia_app, "STATE_PAYLOAD_DEPENDENCIES", dependencies):
+                client = TestClient(culvia_app.create_app(store))
+                response = client.get("/api/state")
+                with patch(
+                    "culvia_app.curation_history_payload",
+                    side_effect=AssertionError("maintenance history must not access the persistent cache"),
+                ):
+                    history_response = client.get("/api/curation/history")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["job"]["kind"], "maintenance")
+            self.assertEqual(history_response.status_code, 200)
+            self.assertEqual(history_response.json(), {"actions": []})
+            self.assertFalse(cache_path.exists())
 
     def test_injected_state_store_serves_filter_and_mark_routes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -509,6 +554,150 @@ class ServerApiTests(unittest.TestCase):
             self.assertEqual(response.json()["errorParams"]["reason"], {"key": "error.historyCacheNotCurrent"})
             self.assertEqual(response.json()["errorCode"], "historyCachePathInvalid")
             self.assertTrue(other_cache.exists())
+            self.assertFalse(store.data["job"]["running"])
+
+    def test_clear_history_reserves_the_job_slot_for_the_destructive_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "scores.sqlite"
+            cache_path.write_bytes(b"cache")
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=pd.DataFrame(columns=scoring.CSV_COLUMNS),
+                    default_photo_dirs=[],
+                    default_cache_path=str(cache_path),
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+                )
+            )
+            web_app = culvia_app.create_app(store)
+            self.addCleanup(web_app.state.thumbnail_coordinator.close)
+            client = TestClient(web_app)
+            started = threading.Event()
+            release = threading.Event()
+            responses: list[object] = []
+            real_clear = culvia_app.clear_history_cache
+
+            def blocked_clear(path: Path):
+                started.set()
+                self.assertTrue(release.wait(timeout=2))
+                return real_clear(path)
+
+            def request_clear() -> None:
+                responses.append(client.post("/api/cache/clear", json={"cachePath": str(cache_path)}))
+
+            with patch("culvia_app.clear_history_cache", side_effect=blocked_clear):
+                thread = threading.Thread(target=request_clear)
+                thread.start()
+                self.assertTrue(started.wait(timeout=2))
+                self.assertIsNone(web_app.state.job_service.reserve())
+                self.assertEqual(store.data["job"]["kind"], "maintenance")
+                release.set()
+                thread.join(timeout=2)
+
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(responses[0].status_code, 200)
+            self.assertFalse(store.data["job"]["running"])
+            self.assertEqual(web_app.state.job_service.control["jobId"], "")
+
+    def test_mutation_route_reserves_the_job_slot_until_its_write_finishes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=pd.DataFrame(columns=scoring.CSV_COLUMNS),
+                    default_photo_dirs=[],
+                    default_cache_path=str(root / "scores.sqlite"),
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+                )
+            )
+            web_app = culvia_app.create_app(
+                store,
+                runtime_config=culvia_app.current_runtime_config().with_paths(upload_cache_dir=root / "uploads"),
+            )
+            self.addCleanup(web_app.state.thumbnail_coordinator.close)
+            client = TestClient(web_app)
+            started = threading.Event()
+            release = threading.Event()
+            responses: list[object] = []
+
+            def blocked_save(**_kwargs: object) -> Path:
+                started.set()
+                self.assertTrue(release.wait(timeout=2))
+                return root / "uploads" / "photo.jpg"
+
+            def request_update() -> None:
+                responses.append(
+                    client.post(
+                        "/api/upload",
+                        files=[("files", ("photo.jpg", b"image", "image/jpeg"))],
+                    )
+                )
+
+            with patch("culvia_app.save_uploaded_bytes", side_effect=blocked_save):
+                thread = threading.Thread(target=request_update)
+                thread.start()
+                self.assertTrue(started.wait(timeout=2))
+                self.assertEqual(store.data["job"]["kind"], "mutation")
+                self.assertIsNone(web_app.state.job_service.reserve(kind="maintenance"))
+                release.set()
+                thread.join(timeout=2)
+
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(responses[0].status_code, 200)
+            self.assertEqual(store.data["source"]["mode"], "uploads")
+            self.assertFalse(store.data["job"]["running"])
+
+    def test_cancelled_clear_history_waits_for_worker_and_publishes_empty_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "scores.sqlite"
+            scoring.save_cache_records(
+                pd.DataFrame([{"file_id": "photo", "path": "/photos/photo.jpg", "error": ""}]),
+                cache_path,
+            )
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=pd.DataFrame([{"file_id": "photo", "path": "/photos/photo.jpg"}]),
+                    default_photo_dirs=["/photos"],
+                    default_cache_path=str(cache_path),
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+                )
+            )
+            web_app = culvia_app.create_app(store)
+            self.addCleanup(web_app.state.thumbnail_coordinator.close)
+            started = threading.Event()
+            release = threading.Event()
+            real_clear = culvia_app.clear_history_cache
+
+            class DirectPostRequest:
+                app = web_app
+
+                async def json(self):
+                    return {"cachePath": str(cache_path)}
+
+            def blocked_clear(path: Path):
+                started.set()
+                self.assertTrue(release.wait(timeout=2))
+                return real_clear(path)
+
+            async def exercise() -> None:
+                with patch("culvia_app.clear_history_cache", side_effect=blocked_clear):
+                    clear_task = asyncio.create_task(culvia_app.api_clear_history(DirectPostRequest()))
+                    self.assertTrue(await asyncio.to_thread(started.wait, 2))
+                    clear_task.cancel()
+                    await asyncio.sleep(0.05)
+                    self.assertFalse(clear_task.done())
+                    self.assertEqual(store.data["job"]["kind"], "maintenance")
+                    self.assertIsNone(web_app.state.job_service.reserve())
+                    release.set()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await clear_task
+
+            asyncio.run(exercise())
+            self.assertFalse(cache_path.exists())
+            self.assertTrue(store.data["scores_df"].empty)
+            self.assertFalse(store.data["job"]["running"])
 
     def test_clear_local_data_removes_app_data_models_and_resets_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -590,6 +779,7 @@ class ServerApiTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["maintenance"]["kind"], "localData")
+            self.assertFalse(response.json()["job"]["running"])
             delete_key.assert_called_once_with()
             for path in (Path(cache_path), upload_dir, analysis_dir, app_model_dir, repo_path, lock_path):
                 self.assertFalse(path.exists())
@@ -603,6 +793,180 @@ class ServerApiTests(unittest.TestCase):
                 self.assertEqual(store.data["source"]["cachePath"], cache_path)
                 self.assertEqual(store.data["network"]["mode"], "direct")
                 self.assertEqual(store.data["job"]["phase"], "idle")
+
+    def test_local_data_reset_keeps_the_maintenance_slot_through_thumbnail_release(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_path = root / "scores.sqlite"
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=pd.DataFrame(columns=scoring.CSV_COLUMNS),
+                    default_photo_dirs=[],
+                    default_cache_path=str(cache_path),
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+                )
+            )
+            web_app = culvia_app.create_app(
+                store,
+                runtime_config=culvia_app.current_runtime_config().with_paths(
+                    upload_cache_dir=root / "uploads",
+                    thumbnail_cache_dir=root / "thumbnails",
+                ),
+            )
+            self.addCleanup(web_app.state.thumbnail_coordinator.close)
+            exit_started = asyncio.Event()
+            release_exit = asyncio.Event()
+            original_clearing_cache = web_app.state.thumbnail_coordinator.clearing_cache
+            original_context = original_clearing_cache(root / "thumbnails")
+
+            class BlockedClearContext:
+                async def __aenter__(self):
+                    return await original_context.__aenter__()
+
+                async def __aexit__(self, exc_type, exc, traceback):
+                    exit_started.set()
+                    await release_exit.wait()
+                    return await original_context.__aexit__(exc_type, exc, traceback)
+
+            class DirectPostRequest:
+                app = web_app
+
+                async def json(self):
+                    return {"cachePath": str(cache_path)}
+
+            class ClearResult:
+                def to_payload(self):
+                    return {"kind": "localData", "deleted": True}
+
+            async def exercise() -> None:
+                with (
+                    patch.object(
+                        web_app.state.thumbnail_coordinator,
+                        "clearing_cache",
+                        return_value=BlockedClearContext(),
+                    ),
+                    patch("culvia_app.delete_llm_api_key"),
+                    patch("culvia_app.clear_local_data", return_value=ClearResult()),
+                ):
+                    clear_task = asyncio.create_task(culvia_app.api_clear_local_data(DirectPostRequest()))
+                    await asyncio.wait_for(exit_started.wait(), timeout=2)
+                    self.assertEqual(store.data["source"]["folders"], [])
+                    self.assertEqual(store.data["job"]["kind"], "maintenance")
+                    self.assertIsNone(web_app.state.job_service.reserve())
+                    release_exit.set()
+                    response = await asyncio.wait_for(clear_task, timeout=2)
+                self.assertEqual(response.status_code, 200)
+
+            asyncio.run(exercise())
+            self.assertFalse(store.data["job"]["running"])
+
+    def test_cancelled_local_data_clear_waits_for_worker_and_resets_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_path = root / "scores.sqlite"
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=pd.DataFrame([{"file_id": "photo", "path": "/photos/photo.jpg"}]),
+                    default_photo_dirs=["/photos"],
+                    default_cache_path=str(cache_path),
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+                )
+            )
+            web_app = culvia_app.create_app(
+                store,
+                runtime_config=culvia_app.current_runtime_config().with_paths(
+                    upload_cache_dir=root / "uploads",
+                    thumbnail_cache_dir=root / "thumbnails",
+                ),
+            )
+            self.addCleanup(web_app.state.thumbnail_coordinator.close)
+            started = threading.Event()
+            release = threading.Event()
+
+            class DirectPostRequest:
+                app = web_app
+
+                async def json(self):
+                    return {"cachePath": str(cache_path)}
+
+            def blocked_clear(**_kwargs: object) -> object:
+                started.set()
+                self.assertTrue(release.wait(timeout=2))
+                return object()
+
+            async def exercise() -> None:
+                with (
+                    patch("culvia_app.clear_local_data", side_effect=blocked_clear),
+                    patch("culvia_app.delete_llm_api_key"),
+                ):
+                    clear_task = asyncio.create_task(culvia_app.api_clear_local_data(DirectPostRequest()))
+                    self.assertTrue(await asyncio.to_thread(started.wait, 2))
+                    clear_task.cancel()
+                    await asyncio.sleep(0.05)
+                    self.assertFalse(clear_task.done())
+                    self.assertEqual(store.data["job"]["kind"], "maintenance")
+                    self.assertIsNone(web_app.state.job_service.reserve())
+                    release.set()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await clear_task
+
+            asyncio.run(exercise())
+            self.assertTrue(store.data["scores_df"].empty)
+            self.assertEqual(store.data["source"]["folders"], [])
+            self.assertFalse(store.data["job"]["running"])
+
+    def test_cancelled_model_clear_waits_for_worker_and_clears_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = str(Path(tmp) / "scores.sqlite")
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=pd.DataFrame(columns=scoring.CSV_COLUMNS),
+                    default_photo_dirs=[],
+                    default_cache_path=cache_path,
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+                )
+            )
+            web_app = culvia_app.create_app(store)
+            self.addCleanup(web_app.state.thumbnail_coordinator.close)
+            started = threading.Event()
+            release = threading.Event()
+
+            class DirectPostRequest:
+                app = web_app
+
+            def blocked_clear(*_args: object) -> object:
+                started.set()
+                self.assertTrue(release.wait(timeout=2))
+                return object()
+
+            async def exercise() -> None:
+                with patch("culvia_app.clear_model_caches", side_effect=blocked_clear):
+                    clear_task = asyncio.create_task(culvia_app.api_clear_model(DirectPostRequest()))
+                    self.assertTrue(await asyncio.to_thread(started.wait, 2))
+                    clear_task.cancel()
+                    await asyncio.sleep(0.05)
+                    self.assertFalse(clear_task.done())
+                    self.assertEqual(store.data["job"]["kind"], "maintenance")
+                    self.assertIsNone(web_app.state.job_service.reserve())
+                    release.set()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await clear_task
+
+            with culvia_app.MODEL_RUNTIME.lock:
+                original_cache = dict(culvia_app.MODEL_RUNTIME.cache)
+                culvia_app.MODEL_RUNTIME.cache["test:cpu"] = object()
+            try:
+                asyncio.run(exercise())
+                with culvia_app.MODEL_RUNTIME.lock:
+                    self.assertEqual(culvia_app.MODEL_RUNTIME.cache, {})
+                self.assertFalse(store.data["job"]["running"])
+            finally:
+                with culvia_app.MODEL_RUNTIME.lock:
+                    culvia_app.MODEL_RUNTIME.cache.clear()
+                    culvia_app.MODEL_RUNTIME.cache.update(original_cache)
 
     def test_injected_state_store_serves_upload_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1494,8 +1858,10 @@ class ServerApiTests(unittest.TestCase):
             original_scores = culvia_app.STATE["scores_df"].copy()
             try:
                 with culvia_app.STATE_LOCK:
-                    culvia_app.STATE["source"].update({"mode": "folders", "folders": [], "uploadedPaths": []})
-                    culvia_app.STATE["scores_df"] = pd.DataFrame(columns=scoring.CSV_COLUMNS)
+                    culvia_app.APP_STATE.publish_media_state(
+                        scores_df=pd.DataFrame(columns=scoring.CSV_COLUMNS),
+                        source_patch={"mode": "folders", "folders": [], "uploadedPaths": []},
+                    )
                 with (
                     patch("culvia.capabilities.sys.platform", "darwin"),
                     patch("culvia.capabilities.shutil.which", return_value="/usr/bin/open"),
@@ -1503,9 +1869,10 @@ class ServerApiTests(unittest.TestCase):
                     response = self._client.post("/api/reveal", json={"path": str(path)})
             finally:
                 with culvia_app.STATE_LOCK:
-                    culvia_app.STATE["source"].clear()
-                    culvia_app.STATE["source"].update(original_source)
-                    culvia_app.STATE["scores_df"] = original_scores
+                    culvia_app.APP_STATE.publish_media_state(
+                        scores_df=original_scores,
+                        source_patch=original_source,
+                    )
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["errorCode"], "revealOutsideSource")
@@ -1518,8 +1885,10 @@ class ServerApiTests(unittest.TestCase):
             original_scores = culvia_app.STATE["scores_df"].copy()
             try:
                 with culvia_app.STATE_LOCK:
-                    culvia_app.STATE["source"].update({"mode": "folders", "folders": [], "uploadedPaths": []})
-                    culvia_app.STATE["scores_df"] = pd.DataFrame(columns=scoring.CSV_COLUMNS)
+                    culvia_app.APP_STATE.publish_media_state(
+                        scores_df=pd.DataFrame(columns=scoring.CSV_COLUMNS),
+                        source_patch={"mode": "folders", "folders": [], "uploadedPaths": []},
+                    )
                 with (
                     patch("culvia.capabilities.sys.platform", "darwin"),
                     patch("culvia.capabilities.shutil.which", return_value="/usr/bin/open"),
@@ -1528,9 +1897,10 @@ class ServerApiTests(unittest.TestCase):
                     response = self._client.post("/api/open-file", json={"path": str(path)})
             finally:
                 with culvia_app.STATE_LOCK:
-                    culvia_app.STATE["source"].clear()
-                    culvia_app.STATE["source"].update(original_source)
-                    culvia_app.STATE["scores_df"] = original_scores
+                    culvia_app.APP_STATE.publish_media_state(
+                        scores_df=original_scores,
+                        source_patch=original_source,
+                    )
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["errorCode"], "openFileOutsideSource")

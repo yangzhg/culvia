@@ -141,6 +141,7 @@
   "apiError.jobRunningOperation": "A task is running. This action is temporarily unavailable.",
   "apiError.jobRunningClearHistory": "A task is running. Score history cannot be cleared yet.",
   "apiError.historyCachePathInvalid": "Score history path is invalid: {reason}",
+  "apiError.historyClearFailed": "Score history could not be cleared: {reason}",
   "apiError.jobRunningClearLocalData": "A task is running. Local data cannot be reset yet.",
   "apiError.jobRunningClearModel": "A task is running. Model files cannot be deleted yet.",
   "apiError.modelClearInvalid": "Model cache cannot be cleared: {reason}",

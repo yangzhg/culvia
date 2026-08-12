@@ -141,6 +141,7 @@
   "apiError.jobRunningOperation": "当前任务运行中，暂时不能执行这个操作。",
   "apiError.jobRunningClearHistory": "当前任务运行中，暂时不能清空评分记录。",
   "apiError.historyCachePathInvalid": "评分记录路径不可用：{reason}",
+  "apiError.historyClearFailed": "评分记录清理失败：{reason}",
   "apiError.jobRunningClearLocalData": "当前任务运行中，暂时不能重置本机数据。",
   "apiError.jobRunningClearModel": "当前任务运行中，暂时不能删除模型文件。",
   "apiError.modelClearInvalid": "模型缓存不可清理：{reason}",

@@ -141,12 +141,16 @@ def start_source_preview_job_action(
     if not job_id:
         raise SourcePreviewStartError("jobAlreadyRunning", "当前已有任务正在运行。", status_code=409)
 
-    thread = thread_factory(
-        target=run_source_preview_job,
-        args=(job_id, payload, state_store, job_service),
-        daemon=True,
-    )
-    thread.start()
+    try:
+        thread = thread_factory(
+            target=run_source_preview_job,
+            args=(job_id, payload, state_store, job_service),
+            daemon=True,
+        )
+        thread.start()
+    except BaseException:
+        job_service.finish(job_id)
+        raise
     return SourcePreviewStartResult(job_id)
 
 
@@ -160,23 +164,19 @@ def run_source_preview_job(
     job_service.bind_thread_job(job_id)
     try:
         request = source_request_from_payload(payload, default_cache_path=dependencies.default_cache_path)
-        with state_store.lock:
-            state_store.data["source"].update(
-                {
+        media_revision = state_store.update_nonmedia_state(
+            {
+                "sourcePreview": {
                     "mode": request.mode,
                     "folders": request.folders,
                     "cachePath": request.cache_path,
-                    "uploadedPaths": [str(path) for path in request.uploaded_paths],
+                    "total": 0,
+                    "ready": False,
+                    "warnings": [],
                 }
-            )
-            state_store.data["sourcePreview"] = {
-                "mode": request.mode,
-                "folders": request.folders,
-                "cachePath": request.cache_path,
-                "total": 0,
-                "ready": False,
-                "warnings": [],
-            }
+            },
+            expected_job_id=job_id,
+        )
         job_service.update(
             phase="source_scanning",
             titleText=text_ref("jobText.scanningSource"),
@@ -196,7 +196,12 @@ def run_source_preview_job(
             paused=False,
         )
         result = source_preview_action(payload, dependencies)
-        apply_source_preview_state(state_store, result)
+        apply_source_preview_state(
+            state_store,
+            result,
+            expected_media_revision=media_revision,
+            expected_job_id=job_id,
+        )
         persist_source_preview_config(result, dependencies)
         total = len(result.paths)
         job_service.update(
@@ -239,13 +244,20 @@ def run_source_preview_job(
         job_service.clear_thread_job()
 
 
-def apply_source_preview_state(state_store: Any, result: SourcePreviewResult) -> None:
-    # Kept as a pure state mutation helper for tests and callers that do not persist config.
-    with state_store.lock:
-        state = state_store.data
-        state["scores_df"] = result.scores_df
-        state["source"].update(result.source_payload())
-        state["sourcePreview"] = result.to_payload()
+def apply_source_preview_state(
+    state_store: AppStateStore,
+    result: SourcePreviewResult,
+    *,
+    expected_media_revision: int | None = None,
+    expected_job_id: str | None = None,
+) -> int:
+    return state_store.publish_media_state(
+        scores_df=result.scores_df,
+        source_patch=result.source_payload(),
+        source_preview=result.to_payload(),
+        expected_media_revision=expected_media_revision,
+        expected_job_id=expected_job_id,
+    )
 
 
 def persist_source_preview_config(result: SourcePreviewResult, dependencies: SourcePreviewDependencies) -> None:
