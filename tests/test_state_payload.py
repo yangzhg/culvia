@@ -211,7 +211,10 @@ class StatePayloadBuilderTests(unittest.TestCase):
         self.assertEqual(payload["model"], {"network": "direct", "selected": ["normalized", "core"]})
         self.assertEqual(payload["sourcePreview"]["total"], 2)
         self.assertTrue(payload["sourcePreview"]["ready"])
-        self.assertEqual(payload["summary"], {"sourceRows": 2, "showing": 1, "errors": 1, "limit": 80})
+        self.assertEqual(
+            payload["summary"],
+            {"sourceRows": 2, "showing": 1, "errors": 1, "limit": 80, "matched": 1},
+        )
         self.assertEqual(
             payload["photos"],
             [{"fileId": "b", "insight": "current", "llmScore": 8.0, "marked": False}],
@@ -221,7 +224,9 @@ class StatePayloadBuilderTests(unittest.TestCase):
             [{"fileId": "a", "insight": None, "llmScore": None, "marked": True}],
         )
         self.assertEqual(payload["curation"]["all"]["fileIds"], ["a", "b"])
+        self.assertEqual(payload["curation"]["filtered"]["fileIds"], ["b"])
         self.assertEqual(payload["curation"]["visible"]["fileIds"], ["b"])
+        self.assertEqual(payload["curation"]["filteredLlmReviewedCount"], 1)
         self.assertEqual(payload["curation"]["selectedPreviewCount"], 1)
 
         payload["source"]["folders"].append("/mutated")

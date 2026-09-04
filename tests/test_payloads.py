@@ -159,6 +159,7 @@ class PayloadTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["scored"], 2)
+        self.assertEqual(payload["matched"], 1)
         self.assertEqual(payload["showing"], 1)
         self.assertEqual(payload["errors"], 1)
         self.assertEqual(payload["best"], "8.0")

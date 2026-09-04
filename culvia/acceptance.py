@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import pandas as pd
@@ -39,7 +40,7 @@ def manual_rating_from_score(value: float | None, policy: AcceptancePolicy = DEF
     if value is None:
         return 0
     scale = policy.star_scale if policy.star_scale > 0 else DEFAULT_ACCEPTANCE_POLICY.star_scale
-    return max(policy.min_rating, min(int(round(value / scale)), policy.max_rating))
+    return max(policy.min_rating, min(math.floor(value / scale + 0.5), policy.max_rating))
 
 
 def pick_status_from_score(value: float | None, policy: AcceptancePolicy = DEFAULT_ACCEPTANCE_POLICY) -> str:
@@ -49,7 +50,7 @@ def pick_status_from_score(value: float | None, policy: AcceptancePolicy = DEFAU
         return "pick"
     if value < policy.reject_threshold:
         return "reject"
-    return ""
+    return "hold"
 
 
 def acceptance_score(row: pd.Series, basis: str) -> float | None:

@@ -73,12 +73,12 @@ class FrontendCommandViewTests(unittest.TestCase):
             const summary = view.commandViewState({
               hasResults: true,
               sourceReady: true,
-              summary: { scored: 12, showing: 5 },
+              summary: { scored: 12, matched: 9, showing: 5 },
             });
             if (!summary.compact || summary.dotTone !== "ready" || summary.state !== "结果已就绪") {
               throw new Error("summary state is wrong");
             }
-            if (!summary.detail.includes("已评分 12 张，当前展示 5 张")) {
+            if (!summary.detail.includes("已评分 12 张，筛选匹配 9 张，当前展示 5 张")) {
               throw new Error("summary detail is wrong");
             }
             """

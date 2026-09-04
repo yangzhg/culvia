@@ -219,53 +219,106 @@ def save_photo_mark(
 
 
 def save_photo_marks(cache_path: str | Path, marks: Iterable[Mapping[str, object]]) -> int:
-    normalized_marks = [
-        PhotoMark(
-            file_id=str(mark.get("file_id") or ""),
-            rating=normalize_manual_rating(mark.get("rating")),
-            status=normalize_pick_status(mark.get("status")),
-            color_label=normalize_color_label(mark.get("color_label") or mark.get("colorLabel")),
-            note=str(mark.get("note") or "").strip(),
-            source=normalize_mark_source(mark.get("source")),
-            accepted_score=_normalize_score(mark.get("accepted_score")),
-            updated_at=time.time(),
-        )
-        for mark in marks
-        if str(mark.get("file_id") or "")
-    ]
-    if not normalized_marks:
+    """Apply partial mark updates in one transaction, preserving omitted fields."""
+    updates = [mark for mark in marks if str(mark.get("file_id") or "").strip()]
+    if not updates:
         return 0
     path = ensure_curation_schema(cache_path)
     with sqlite3.connect(path) as conn:
-        conn.executemany(
-            f"""
-            INSERT INTO {CURATION_TABLE}
-                (file_id, manual_rating, pick_status, color_label, note, source, accepted_score_0_10, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(file_id) DO UPDATE SET
-                manual_rating = excluded.manual_rating,
-                pick_status = excluded.pick_status,
-                color_label = excluded.color_label,
-                note = excluded.note,
-                source = excluded.source,
-                accepted_score_0_10 = excluded.accepted_score_0_10,
-                updated_at = excluded.updated_at
-            """,
-            [
-                (
-                    mark.file_id,
-                    mark.rating,
-                    mark.status,
-                    mark.color_label,
-                    mark.note,
-                    mark.source,
-                    mark.accepted_score,
-                    mark.updated_at,
-                )
-                for mark in normalized_marks
-            ],
-        )
+        conn.row_factory = sqlite3.Row
+        file_ids = [str(mark.get("file_id") or "").strip() for mark in updates]
+        existing_marks: dict[str, PhotoMark] = {}
+        for start in range(0, len(file_ids), 800):
+            chunk = file_ids[start : start + 800]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT * FROM {CURATION_TABLE} WHERE file_id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                existing = _photo_mark_from_row(row)
+                existing_marks[existing.file_id] = existing
+
+        updated_at = time.time()
+        normalized_marks = [
+            _updated_photo_mark(mark, existing_marks.get(str(mark.get("file_id") or "").strip()), updated_at)
+            for mark in updates
+        ]
+        empty_file_ids = [mark.file_id for mark in normalized_marks if _is_empty_photo_mark(mark)]
+        persisted_marks = [mark for mark in normalized_marks if not _is_empty_photo_mark(mark)]
+        if empty_file_ids:
+            conn.executemany(
+                f"DELETE FROM {CURATION_TABLE} WHERE file_id = ?", [(file_id,) for file_id in empty_file_ids]
+            )
+        if persisted_marks:
+            conn.executemany(
+                f"""
+                INSERT INTO {CURATION_TABLE}
+                    (file_id, manual_rating, pick_status, color_label, note, source, accepted_score_0_10, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_id) DO UPDATE SET
+                    manual_rating = excluded.manual_rating,
+                    pick_status = excluded.pick_status,
+                    color_label = excluded.color_label,
+                    note = excluded.note,
+                    source = excluded.source,
+                    accepted_score_0_10 = excluded.accepted_score_0_10,
+                    updated_at = excluded.updated_at
+                """,
+                [
+                    (
+                        mark.file_id,
+                        mark.rating,
+                        mark.status,
+                        mark.color_label,
+                        mark.note,
+                        mark.source,
+                        mark.accepted_score,
+                        mark.updated_at,
+                    )
+                    for mark in persisted_marks
+                ],
+            )
     return len(normalized_marks)
+
+
+def _updated_photo_mark(raw: Mapping[str, object], existing: PhotoMark | None, updated_at: float) -> PhotoMark:
+    file_id = str(raw.get("file_id") or "").strip()
+    raw_color = raw["color_label"] if "color_label" in raw else raw.get("colorLabel", _UNSET)
+    return PhotoMark(
+        file_id=file_id,
+        rating=(
+            existing.rating
+            if existing and ("rating" not in raw or raw.get("rating") is None)
+            else normalize_manual_rating(raw.get("rating"))
+        ),
+        status=(
+            existing.status
+            if existing and ("status" not in raw or raw.get("status") is None)
+            else normalize_pick_status(raw.get("status"))
+        ),
+        color_label=(
+            existing.color_label
+            if existing and (raw_color is _UNSET or raw_color is None)
+            else normalize_color_label(None if raw_color is _UNSET else raw_color)
+        ),
+        note=(
+            existing.note
+            if existing and ("note" not in raw or raw.get("note") is None)
+            else str(raw.get("note") or "").strip()
+        ),
+        source=(existing.source if existing and "source" not in raw else normalize_mark_source(raw.get("source"))),
+        accepted_score=(
+            existing.accepted_score
+            if existing and "accepted_score" not in raw and "acceptedScore" not in raw
+            else _normalize_score(raw["accepted_score"] if "accepted_score" in raw else raw.get("acceptedScore"))
+        ),
+        updated_at=updated_at,
+    )
+
+
+def _is_empty_photo_mark(mark: PhotoMark) -> bool:
+    return mark.rating <= 0 and not mark.status and not mark.color_label and not mark.note
 
 
 def curation_summary(marks: Mapping[str, PhotoMark], file_ids: Iterable[str]) -> dict[str, int]:

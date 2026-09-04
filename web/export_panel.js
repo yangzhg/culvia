@@ -19,6 +19,8 @@ window.CulviaExportPanel = (() => {
     postJson,
     errorMessage,
     showCommandNotice,
+    flushFilterUpdate,
+    downloadFile,
     revealPhoto,
     applyBatchColor,
     galleryBatchTarget,
@@ -41,19 +43,22 @@ window.CulviaExportPanel = (() => {
       node.style.width = `${percent}%`;
     }
 
-    function renderDeliveryOverview(all = {}, visible = {}) {
+    function renderDeliveryOverview(all = {}, filtered = {}) {
       const allTotal = Number(getAppState()?.summary?.scored || 0);
-      const visibleTotal = Number(getAppState()?.summary?.showing || (getAppState()?.photos || []).length || 0);
+      const filteredTotal = Number(getAppState()?.summary?.matched || (getAppState()?.photos || []).length || 0);
       const selected = Number(all.selected || 0);
       const rejected = Number(all.rejected || 0);
       const pending = Math.max(allTotal - selected - rejected, 0);
-      const visiblePending = Math.max(visibleTotal - Number(visible.selected || 0) - Number(visible.rejected || 0), 0);
+      const filteredPending = Math.max(
+        filteredTotal - Number(filtered.selected || 0) - Number(filtered.rejected || 0),
+        0,
+      );
       const decided = selected + rejected;
       setText("#deliveryReadyCount", t("common.photoCount", { count: selected }));
       setText("#deliveryPickCount", selected);
       setText("#deliveryPendingCount", pending);
       setText("#deliveryRejectCount", rejected);
-      setText("#deliveryVisiblePendingCount", visiblePending);
+      setText("#deliveryVisiblePendingCount", filteredPending);
       const guidance = !allTotal
         ? t("export.guidanceEmpty")
         : selected
@@ -109,7 +114,15 @@ window.CulviaExportPanel = (() => {
 
     function bindBatchColorChoices(container) {
       container.querySelectorAll("[data-batch-color]").forEach((button) => {
-        button.addEventListener("click", () => applyBatchColor(button.dataset.batchColor || "", galleryBatchTarget(getAppState()?.photos || [])));
+        button.addEventListener("click", () => {
+          const colorLabel = button.dataset.batchColor || "";
+          applyBatchColor(
+            colorLabel,
+            galleryBatchTarget(getAppState()?.photos || []),
+            () => Array.from(container.querySelectorAll("[data-batch-color]"))
+              .find((candidate) => (candidate.dataset.batchColor || "") === colorLabel),
+          );
+        });
       });
     }
 
@@ -193,7 +206,7 @@ window.CulviaExportPanel = (() => {
       const batchTarget = galleryBatchTarget(visiblePhotos);
       const list = $("#exportList");
       const all = getAppState()?.curation?.all || {};
-      const visible = getAppState()?.curation?.visible || {};
+      const filtered = getAppState()?.curation?.filtered || getAppState()?.curation?.visible || {};
       const preflightKey = currentExportPreflightKey();
       if (
         CulviaExportPreflightState.shouldRefresh({
@@ -207,13 +220,13 @@ window.CulviaExportPanel = (() => {
         applyExportPreflightState({ key: preflightKey });
         void refreshExportPreflight({ key: preflightKey });
       }
-      renderDeliveryOverview(all, visible);
+      renderDeliveryOverview(all, filtered);
       setText(
         "#curationSummaryText",
         t("export.curationSummary", {
           rated: all.rated || 0,
           selected: all.selected || 0,
-          visibleSelected: visible.selected || 0,
+          filteredSelected: filtered.selected || 0,
         }),
       );
       const destinationText = exportDestination ? `${pathName(exportDestination)} · ${parentPath(exportDestination)}` : t("export.destinationEmpty");
@@ -224,6 +237,7 @@ window.CulviaExportPanel = (() => {
       if (exportResultNode) exportResultNode.innerHTML = exportResultMarkup();
       renderBatchScopePill("#exportBatchScopeText", "#exportBatchScopeLabel", batchTarget);
       const batchActions = CulviaBatchActions.acceptControls(batchTarget, visiblePhotos, {
+        filteredLlmReviewCount: getAppState()?.curation?.filteredLlmReviewedCount,
         hasLlmReview: (photo) => numericValue(photo.llmReviewScores?.llm_review_overall) != null,
       });
       updateExportActionControls(all, batchActions);
@@ -293,6 +307,28 @@ window.CulviaExportPanel = (() => {
       }
     }
 
+    async function downloadFilteredCsv(event) {
+      event?.preventDefault();
+      if (getAppState()?.job?.running) return;
+      try {
+        await CulviaBatchActions.withCommittedFilter(
+          "filtered",
+          flushFilterUpdate,
+          () => downloadFile("/api/export", "culvia_scores_filtered.csv"),
+        );
+      } catch (error) {
+        showCommandNotice(
+          {
+            tone: "danger",
+            state: t("export.filteredCsvFailureState"),
+            title: t("export.filteredCsvFailureTitle"),
+            detail: errorMessage(error),
+          },
+          4200,
+        );
+      }
+    }
+
     async function revealExportDestination() {
       const destination = CulviaExportActions.destinationFromResult(exportResult, exportDestination);
       if (!destination) return;
@@ -339,6 +375,7 @@ window.CulviaExportPanel = (() => {
       pickExportFolder,
       refreshExportPreflight,
       exportSelectedPhotos,
+      downloadFilteredCsv,
       revealExportDestination,
       copyExportDestination,
       handleExportResultClick,

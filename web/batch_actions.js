@@ -15,15 +15,18 @@ window.CulviaBatchActions = (() => {
   }
 
   function emptyTarget() {
-    return { scope: "filtered", fileIds: [], count: 0, label: t("batch.scopeFiltered", {}, "当前筛选") };
+    return { scope: "filtered", fileIds: [], count: 0, showing: 0, label: t("batch.scopeFiltered", {}, "全部筛选结果") };
   }
 
-  function targetFromSelection(photos = [], selectedIds = []) {
+  function targetFromSelection(photos = [], selectedIds = [], matchedCount = null) {
     const selected = visibleSelectedIds(photos, selectedIds);
     if (selected.length) {
       return { scope: "selected", fileIds: selected, count: selected.length, label: t("batch.scopeSelected", {}, "已选照片") };
     }
-    return { scope: "filtered", fileIds: [], count: (photos || []).length, label: t("batch.scopeFiltered", {}, "当前筛选") };
+    const showing = (photos || []).length;
+    const parsedMatched = Number(matchedCount);
+    const count = Number.isFinite(parsedMatched) ? Math.max(showing, Math.trunc(parsedMatched), 0) : showing;
+    return { scope: "filtered", fileIds: [], count, showing, label: t("batch.scopeFiltered", {}, "全部筛选结果") };
   }
 
   function targetPhotos(photos = [], target = emptyTarget()) {
@@ -34,13 +37,39 @@ window.CulviaBatchActions = (() => {
   }
 
   function scopeSummary(target = emptyTarget()) {
-    return t("batch.scopeSummary", { scope: target.label || t("batch.scopeFiltered", {}, "当前筛选"), count: Number(target.count || 0) }, `${target.label || "当前筛选"} ${Number(target.count || 0)} 张`);
+    return t("batch.scopeSummary", { scope: target.label || t("batch.scopeFiltered", {}, "全部筛选结果"), count: Number(target.count || 0) }, `${target.label || "全部筛选结果"} ${Number(target.count || 0)} 张`);
   }
 
   function scopeTitle(target = emptyTarget()) {
     return target.scope === "selected"
       ? t("batch.scopeTitleSelected", {}, "批量操作只作用于已选照片")
       : t("batch.scopeTitleFiltered", {}, "批量操作作用于当前筛选结果");
+  }
+
+  function filterCountSummary(matchedCount, showingCount) {
+    const parsedShowing = Number(showingCount);
+    const showing = Number.isFinite(parsedShowing) ? Math.max(0, Math.trunc(parsedShowing)) : 0;
+    const parsedMatched = Number(matchedCount);
+    const matched = matchedCount == null || !Number.isFinite(parsedMatched)
+      ? showing
+      : Math.max(showing, Math.trunc(parsedMatched), 0);
+    return t(
+      "gallery.matchSummary",
+      { matched, showing },
+      `${matched} / ${showing}`,
+    );
+  }
+
+  async function withCommittedFilter(scope, flushUpdate, operation) {
+    if (scope === "filtered") await flushUpdate();
+    return operation();
+  }
+
+  async function withCommittedTarget(target, flushUpdate, rebuildFilteredTarget, operation) {
+    return withCommittedFilter(target?.scope, flushUpdate, () => {
+      const committedTarget = target?.scope === "filtered" ? rebuildFilteredTarget() : target;
+      return operation(committedTarget);
+    });
   }
 
   function statusMeta(status) {
@@ -53,6 +82,62 @@ window.CulviaBatchActions = (() => {
     return { label: t("manual.status.hold", {}, "待复核"), icon: "clock", tone: "pending", detail: t("batch.holdDetail", {}, "这些照片会进入待复核状态，可稍后重新判断。") };
   }
 
+  function filteredImpactDetail(detail, target = emptyTarget()) {
+    const count = Number(target.count || 0);
+    const showing = Number(target.showing ?? count);
+    return target.scope === "filtered" && count > showing
+      ? t(
+        "batch.filteredLimitDetail",
+        { count, detail, showing },
+        `${detail}将更新全部 ${count} 张匹配照片；当前仅展示 ${showing} 张。`,
+      )
+      : detail;
+  }
+
+  function actionConfirmationMeta(action = {}) {
+    if (action.kind === "color") {
+      const colorLabel = String(action.colorLabel || "");
+      const colorName = String(action.colorName || t("color.empty", {}, "无色标"));
+      const clearing = !colorLabel;
+      return {
+        label: colorName,
+        icon: "circle",
+        tone: "pending",
+        detail: t("batch.colorConfirmDetail", {}, "这会修改每张目标照片的色标。"),
+        title: clearing
+          ? t("batch.titleColorClear", {}, "清除这些照片的色标？")
+          : t("batch.titleColor", { color: colorName }, `将色标设为${colorName}？`),
+        buttonLabel: clearing
+          ? t("batch.confirmColorClear", {}, "清除色标")
+          : t("batch.confirmColor", { color: colorName }, `设为${colorName}`),
+      };
+    }
+    if (action.kind === "accept") {
+      const llm = action.basis === "llm";
+      return {
+        label: llm ? t("filters.llm", {}, "大模型") : t("manual.acceptModel", {}, "综合模型"),
+        icon: llm ? "brain" : "sparkle",
+        tone: "pending",
+        detail: llm
+          ? t("batch.acceptLlmConfirmDetail", {}, "有大模型评分的照片会更新人工星级和入选、待复核或淘汰判断。")
+          : t("batch.acceptModelConfirmDetail", {}, "有综合模型评分的照片会更新人工星级和入选、待复核或淘汰判断。"),
+        title: llm
+          ? t("batch.titleAcceptLlm", {}, "采纳这些照片的\u200b大模型结果？")
+          : t("batch.titleAcceptModel", {}, "采纳这些照片的\u200b综合模型结果？"),
+        buttonLabel: llm
+          ? t("batch.confirmAcceptLlm", {}, "采纳大模型")
+          : t("batch.confirmAcceptModel", {}, "采纳综合模型"),
+      };
+    }
+    const status = String(action.status || "");
+    const meta = statusMeta(status);
+    return {
+      ...meta,
+      title: t("batch.titleStatus", { status: meta.label }, `批量设为${meta.label}？`),
+      buttonLabel: t("batch.confirmStatus", { status: meta.label }, `确认${meta.label}`),
+    };
+  }
+
   function statusTriggerSelector(status) {
     if (status === "reject") return "#galleryBatchRejectBtn";
     if (status === "pick") return "#galleryBatchPickBtn";
@@ -60,15 +145,20 @@ window.CulviaBatchActions = (() => {
   }
 
   function confirmView(status, target = emptyTarget()) {
-    const meta = statusMeta(status);
+    return confirmActionView({ kind: "status", status }, target);
+  }
+
+  function confirmActionView(action, target = emptyTarget()) {
+    const meta = actionConfirmationMeta(action);
+    const count = Number(target.count || 0);
     return {
       actionLabel: meta.label,
-      buttonLabel: t("batch.confirmStatus", { status: meta.label }, `确认${meta.label}`),
-      countText: t("common.photoCount", { count: Number(target.count || 0) }, `${Number(target.count || 0)} 张`),
-      detail: meta.detail,
+      buttonLabel: meta.buttonLabel,
+      countText: t("common.photoCount", { count }, `${count} 张`),
+      detail: filteredImpactDetail(meta.detail, target),
       icon: meta.icon,
-      scopeText: target.label || t("batch.scopeFiltered", {}, "当前筛选"),
-      title: t("batch.titleStatus", { status: meta.label }, `批量设为${meta.label}？`),
+      scopeText: target.label || t("batch.scopeFiltered", {}, "全部筛选结果"),
+      title: meta.title,
       tone: meta.tone,
     };
   }
@@ -76,18 +166,23 @@ window.CulviaBatchActions = (() => {
   function acceptControls(target = emptyTarget(), photos = [], options = {}) {
     const scopedPhotos = targetPhotos(photos, target);
     const selectedScope = target.scope === "selected";
-    const hasLlmReview = scopedPhotos.some((photo) => {
+    const visibleHasLlmReview = scopedPhotos.some((photo) => {
       if (typeof options.hasLlmReview === "function") return Boolean(options.hasLlmReview(photo));
       return photo?.llmReviewScores?.llm_review_overall != null;
     });
+    const filteredLlmReviewCount = Number(options.filteredLlmReviewCount);
+    const hasLlmReview = !selectedScope && Number.isFinite(filteredLlmReviewCount)
+      ? filteredLlmReviewCount > 0
+      : visibleHasLlmReview;
+    const hasPhotos = selectedScope ? scopedPhotos.length > 0 : Number(target.count || 0) > 0;
     return {
       photos: scopedPhotos,
-      count: scopedPhotos.length,
-      hasPhotos: scopedPhotos.length > 0,
+      count: selectedScope ? scopedPhotos.length : Number(target.count || 0),
+      hasPhotos,
       model: {
         icon: "sparkle",
         label: selectedScope ? t("batch.acceptSelected", {}, "采纳已选") : t("batch.acceptFiltered", {}, "采纳当前筛选"),
-        disabled: !scopedPhotos.length,
+        disabled: !hasPhotos,
       },
       llm: {
         icon: "brain",
@@ -107,7 +202,7 @@ window.CulviaBatchActions = (() => {
     const scopeLabel = scope === "selected"
       ? t("batch.scopeSelected", {}, "已选照片")
       : scope === "filtered"
-        ? t("batch.scopeFiltered", {}, "当前筛选")
+        ? t("batch.scopeFiltered", {}, "全部筛选结果")
         : t("batch.scopeCurrent", {}, "当前照片");
     return {
       duration: accepted ? 6200 : 2400,
@@ -156,8 +251,10 @@ window.CulviaBatchActions = (() => {
     acceptNotice,
     colorChoiceViews,
     colorNotice,
+    confirmActionView,
     confirmView,
     emptyTarget,
+    filterCountSummary,
     scopeSummary,
     scopeTitle,
     statusMeta,
@@ -165,5 +262,7 @@ window.CulviaBatchActions = (() => {
     targetFromSelection,
     targetPhotos,
     visibleSelectedIds,
+    withCommittedFilter,
+    withCommittedTarget,
   };
 })();

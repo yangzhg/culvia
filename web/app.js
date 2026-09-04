@@ -37,11 +37,11 @@ let commandNoticeTimer = null;
 let llmReviewConfirmedForSession = false;
 let pendingScoringPayload = null;
 let llmConfirmOpen = false;
-let batchStatusConfirmOpen = false;
+let batchConfirmOpen = false;
 let dangerConfirmOpen = false;
-let pendingBatchStatus = "";
-let pendingBatchTarget = { scope: "filtered", fileIds: [], count: 0, label: "当前筛选" };
-let batchStatusReturnSelector = "#galleryBatchPickBtn";
+let pendingBatchAction = null;
+let pendingBatchTarget = { scope: "filtered", fileIds: [], count: 0, label: "全部筛选结果" };
+let batchConfirmReturnTarget = null;
 let pendingDangerConfirm = null;
 let dangerConfirmReturnElement = null;
 const VIEW_STORAGE_KEY = "culvia.activeView.v1";
@@ -252,7 +252,7 @@ function focusableDialogElements(dialog) {
 function activeModalDialog() {
   if (dangerConfirmOpen) return $("#dangerConfirmDialog");
   if (llmConfirmOpen) return $("#llmConfirmDialog");
-  if (batchStatusConfirmOpen) return $("#batchStatusConfirmDialog");
+  if (batchConfirmOpen) return $("#batchStatusConfirmDialog");
   if (shortcutHelpOpen) return $("#shortcutHelpDialog");
   if (settingsDrawerOpen) return $("#settingsDrawer");
   if (mobileToolsOpen) return $("#workbenchSidebar");
@@ -955,7 +955,13 @@ function renderProgress(job) {
 
 function renderStats(summary) {
   setText("#statScored", summary.scored ?? 0);
-  setText("#statShowing", summary.showing ?? 0);
+  setText(
+    "#statShowing",
+    t("stats.matchingShowingValue", {
+      matched: summary.matched ?? summary.showing ?? 0,
+      showing: summary.showing ?? 0,
+    }),
+  );
   setStatValue("#statBest", summary.best);
   setStatValue("#statAverage", summary.average);
 }
@@ -1078,6 +1084,10 @@ function galleryBatchTarget(photos = appState?.photos || []) {
   return galleryPanel.galleryBatchTarget(photos);
 }
 
+function filteredBatchTarget(photos = appState?.photos || []) {
+  return CulviaBatchActions.targetFromSelection(photos, [], appState?.summary?.matched);
+}
+
 function renderBatchScopePill(rootSelector, labelSelector, target) {
   return galleryPanel.renderBatchScopePill(rootSelector, labelSelector, target);
 }
@@ -1155,6 +1165,16 @@ function renderDistribution() {
   distributionPanel.render();
 }
 
+function downloadFile(url, filename) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.hidden = true;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 const exportPanel = window.CulviaExportPanel.create({
   $,
   t,
@@ -1175,8 +1195,10 @@ const exportPanel = window.CulviaExportPanel.create({
   postJson,
   errorMessage,
   showCommandNotice,
+  flushFilterUpdate: () => flushFilterUpdate(),
+  downloadFile: (url, filename) => downloadFile(url, filename),
   revealPhoto: (photo) => revealPhoto(photo),
-  applyBatchColor: (colorLabel, target) => applyBatchColor(colorLabel, target),
+  applyBatchColor: (colorLabel, target, returnTarget) => openBatchColorConfirm(colorLabel, target, returnTarget),
   galleryBatchTarget: (photos) => galleryBatchTarget(photos),
   renderBatchScopePill: (rootSelector, labelSelector, target) => renderBatchScopePill(rootSelector, labelSelector, target),
   getAppState: () => appState,
@@ -1205,6 +1227,10 @@ function refreshExportPreflight(options = {}) {
 
 function exportSelectedPhotos() {
   return exportPanel.exportSelectedPhotos();
+}
+
+function downloadFilteredCsv(event) {
+  return exportPanel.downloadFilteredCsv(event);
 }
 
 function handleExportResultClick(event) {
@@ -1873,20 +1899,32 @@ function updateManualMark(changes, options = {}) {
   return markUpdateQueue;
 }
 
-async function acceptPhotoResult(basis, scope = "current", target = {}) {
+async function acceptPhotoResult(basis, scope = "current", target = {}, options = {}) {
   if (appState?.job?.running) return;
   const photo = selectedPhoto();
   if (scope === "current" && !photo?.fileId) return;
   const previousFileId = photo?.fileId || "";
   const requestScope = target.scope || scope;
-  const fileIds = target.fileIds || [];
+  const requestedTarget = { ...target, scope: requestScope };
   try {
-    const nextState = await postJson("/api/mark/accept", {
-      basis,
-      scope: requestScope,
-      fileIds,
-      fileId: previousFileId,
-    });
+    const applyAcceptedResult = (committedTarget) => {
+      if (requestScope === "filtered" && !committedTarget.count) return null;
+      return postJson("/api/mark/accept", {
+        basis,
+        scope: requestScope,
+        fileIds: committedTarget.fileIds || [],
+        fileId: previousFileId,
+      });
+    };
+    const nextState = options.targetCommitted
+      ? await applyAcceptedResult(requestedTarget)
+      : await CulviaBatchActions.withCommittedTarget(
+        requestedTarget,
+        flushFilterUpdate,
+        filteredBatchTarget,
+        applyAcceptedResult,
+      );
+    if (!nextState) return;
     appState = nextState;
     preserveSelectedPhoto(previousFileId);
     const action = nextState.action || {};
@@ -1909,21 +1947,41 @@ async function acceptPhotoResult(basis, scope = "current", target = {}) {
   }
 }
 
-async function applyBatchColor(colorLabel, target = galleryBatchTarget(appState?.photos || [])) {
+async function applyBatchColor(colorLabel, target = galleryBatchTarget(appState?.photos || []), options = {}) {
   if (appState?.job?.running) return;
-  if (!target.count) return;
+  if (target.scope !== "filtered" && !target.count) return;
   const previousFileId = selectedPhoto()?.fileId || "";
+  let committedTarget = target;
   try {
-    appState = await postJson("/api/mark/color", {
-      scope: target.scope,
-      fileIds: target.fileIds,
-      colorLabel,
-    });
+    const applyColorLabel = (resolvedTarget) => {
+      committedTarget = resolvedTarget;
+      if (!committedTarget.count) return null;
+      return postJson("/api/mark/color", {
+        scope: committedTarget.scope,
+        fileIds: committedTarget.fileIds,
+        colorLabel,
+      });
+    };
+    const nextState = options.targetCommitted
+      ? await applyColorLabel(target)
+      : await CulviaBatchActions.withCommittedTarget(
+        target,
+        flushFilterUpdate,
+        filteredBatchTarget,
+        applyColorLabel,
+      );
+    if (!nextState) return;
+    appState = nextState;
     preserveSelectedPhoto(previousFileId);
     visibleGallerySelection(appState.photos || []);
     const label = colorLabelMeta(colorLabel).label;
     const count = appState.action?.colored || 0;
-    const noticeView = CulviaBatchActions.colorNotice({ colorLabel, colorName: label, count, target });
+    const noticeView = CulviaBatchActions.colorNotice({
+      colorLabel,
+      colorName: label,
+      count,
+      target: committedTarget,
+    });
     showCommandNotice({
       ...noticeView,
       action: restoreNoticeAction(appState.action || {}, { label: t("restore.context.color") }),
@@ -1943,29 +2001,46 @@ async function applyBatchColor(colorLabel, target = galleryBatchTarget(appState?
   }
 }
 
-function applyBatchStatusConfirmState() {
-  $("#batchStatusConfirmDialog")?.classList.toggle("is-hidden", !batchStatusConfirmOpen);
-  $("#batchStatusConfirmScrim")?.classList.toggle("is-hidden", !batchStatusConfirmOpen);
-  $("#batchStatusConfirmDialog")?.setAttribute("aria-hidden", batchStatusConfirmOpen ? "false" : "true");
-  $("#batchStatusConfirmScrim")?.setAttribute("aria-hidden", batchStatusConfirmOpen ? "false" : "true");
-  document.body.classList.toggle("is-batch-confirm-open", batchStatusConfirmOpen);
+function applyBatchConfirmState() {
+  $("#batchStatusConfirmDialog")?.classList.toggle("is-hidden", !batchConfirmOpen);
+  $("#batchStatusConfirmScrim")?.classList.toggle("is-hidden", !batchConfirmOpen);
+  $("#batchStatusConfirmDialog")?.setAttribute("aria-hidden", batchConfirmOpen ? "false" : "true");
+  $("#batchStatusConfirmScrim")?.setAttribute("aria-hidden", batchConfirmOpen ? "false" : "true");
+  document.body.classList.toggle("is-batch-confirm-open", batchConfirmOpen);
 }
 
-async function openBatchStatusConfirm(status) {
+async function openBatchActionConfirm(action, initialTarget, returnTarget = null) {
   if (appState?.job?.running) return;
+  let target = initialTarget;
   try {
-    await flushFilterUpdate();
-  } catch (_error) {
+    target = await CulviaBatchActions.withCommittedTarget(
+      initialTarget,
+      flushFilterUpdate,
+      filteredBatchTarget,
+      (committedTarget) => committedTarget,
+    );
+  } catch (error) {
+    showCommandNotice(
+      {
+        tone: "danger",
+        state: t("filters.updateFilterFailureState"),
+        title: t("filters.updateFilterFailureTitle"),
+        detail: errorMessage(error),
+      },
+      3600,
+    );
+    window.setTimeout(() => focusBatchConfirmReturnTarget(returnTarget), 0);
     return;
   }
-  const visiblePhotos = appState?.photos || [];
-  const target = galleryBatchTarget(visiblePhotos);
-  if (!target.count) return;
-  pendingBatchStatus = status || "";
+  if (!target.count) {
+    window.setTimeout(() => focusBatchConfirmReturnTarget(returnTarget), 0);
+    return;
+  }
+  pendingBatchAction = action;
   pendingBatchTarget = target;
-  batchStatusReturnSelector = CulviaBatchActions.statusTriggerSelector(pendingBatchStatus);
-  batchStatusConfirmOpen = true;
-  const view = CulviaBatchActions.confirmView(pendingBatchStatus, target);
+  batchConfirmReturnTarget = returnTarget;
+  batchConfirmOpen = true;
+  const view = CulviaBatchActions.confirmActionView(action, target);
   const mark = $("#batchStatusConfirmMark");
   if (mark) {
     mark.className = `batch-confirm-mark is-${view.tone}`;
@@ -1977,25 +2052,85 @@ async function openBatchStatusConfirm(status) {
   setTextWithHint("#batchStatusConfirmCount", view.countText);
   setTextWithHint("#batchStatusConfirmAction", view.actionLabel);
   setButtonLabel($("#confirmBatchStatusBtn"), view.icon, view.buttonLabel);
-  applyBatchStatusConfirmState();
+  applyBatchConfirmState();
   window.setTimeout(() => $("#confirmBatchStatusBtn")?.focus(), 0);
 }
 
-function closeBatchStatusConfirm({ restoreFocus = true } = {}) {
-  if (!batchStatusConfirmOpen) return;
-  batchStatusConfirmOpen = false;
-  pendingBatchStatus = "";
-  pendingBatchTarget = CulviaBatchActions.emptyTarget();
-  applyBatchStatusConfirmState();
-  if (restoreFocus) $(batchStatusReturnSelector)?.focus();
+function openBatchStatusConfirm(status) {
+  return openBatchActionConfirm(
+    { kind: "status", status: status || "" },
+    galleryBatchTarget(appState?.photos || []),
+    () => $(CulviaBatchActions.statusTriggerSelector(status)),
+  );
 }
 
-async function confirmBatchStatus() {
+function openBatchColorConfirm(colorLabel, target, returnTarget = null) {
+  return openBatchActionConfirm(
+    { kind: "color", colorLabel, colorName: colorLabelMeta(colorLabel).label },
+    target,
+    returnTarget,
+  );
+}
+
+function openBatchAcceptConfirm(basis, target, returnTarget = null) {
+  return openBatchActionConfirm({ kind: "accept", basis }, target, returnTarget);
+}
+
+function resolveBatchConfirmReturnElement(returnTarget) {
+  return typeof returnTarget === "function" ? returnTarget() : returnTarget;
+}
+
+function batchConfirmFallbackElement(returnTarget) {
+  const returnElement = resolveBatchConfirmReturnElement(returnTarget);
+  if (returnElement?.isConnected && !returnElement.disabled) return returnElement;
+  return $(`.view-tab[data-view="${activeView}"]`);
+}
+
+function focusBatchConfirmReturnTarget(returnTarget) {
+  const focusTarget = batchConfirmFallbackElement(returnTarget);
+  if (focusTarget?.isConnected && !focusTarget.disabled) focusTarget.focus();
+}
+
+function focusBatchActionResult(returnTarget) {
+  const noticeAction = $("#commandNoticeActionBtn");
+  const fallback = batchConfirmFallbackElement(returnTarget);
+  const focusTarget = commandNotice?.action
+    && noticeAction?.isConnected
+    && !noticeAction.disabled
+    && !noticeAction.classList.contains("is-hidden")
+    ? noticeAction
+    : fallback;
+  if (focusTarget?.isConnected && !focusTarget.disabled) focusTarget.focus();
+}
+
+function closeBatchActionConfirm({ restoreFocus = true } = {}) {
+  if (!batchConfirmOpen) return;
+  const returnTarget = batchConfirmReturnTarget;
+  batchConfirmOpen = false;
+  pendingBatchAction = null;
+  pendingBatchTarget = CulviaBatchActions.emptyTarget();
+  batchConfirmReturnTarget = null;
+  applyBatchConfirmState();
+  if (restoreFocus) focusBatchConfirmReturnTarget(returnTarget);
+}
+
+async function confirmBatchAction() {
   if (appState?.job?.running) return;
-  const status = pendingBatchStatus;
+  const action = pendingBatchAction;
   const target = pendingBatchTarget;
-  closeBatchStatusConfirm({ restoreFocus: false });
-  await applyBatchStatus(status, target);
+  const returnTarget = batchConfirmReturnTarget;
+  closeBatchActionConfirm({ restoreFocus: false });
+  try {
+    if (action?.kind === "status") {
+      await applyBatchStatus(action.status, target);
+    } else if (action?.kind === "color") {
+      await applyBatchColor(action.colorLabel, target, { targetCommitted: true });
+    } else if (action?.kind === "accept") {
+      await acceptPhotoResult(action.basis, target.scope, target, { targetCommitted: true });
+    }
+  } finally {
+    window.setTimeout(() => focusBatchActionResult(returnTarget), 0);
+  }
 }
 
 async function restoreBatchMarks(actionOrMarks) {
@@ -2268,8 +2403,18 @@ function bindEvents() {
     if (uiTooltipKeyboardMode) modelStatusPill.classList.add("is-tooltip-visible");
   });
   modelStatusPill.addEventListener("blur", () => modelStatusPill.classList.remove("is-tooltip-visible"));
-  $("#acceptFilteredModelBtn").addEventListener("click", () => acceptPhotoResult("model", "filtered", galleryBatchTarget(appState?.photos || [])));
-  $("#acceptFilteredLlmBtn").addEventListener("click", () => acceptPhotoResult("llm", "filtered", galleryBatchTarget(appState?.photos || [])));
+  const acceptFilteredModelBtn = $("#acceptFilteredModelBtn");
+  const acceptFilteredLlmBtn = $("#acceptFilteredLlmBtn");
+  acceptFilteredModelBtn.addEventListener("click", () => openBatchAcceptConfirm(
+    "model",
+    galleryBatchTarget(appState?.photos || []),
+    () => $("#acceptFilteredModelBtn"),
+  ));
+  acceptFilteredLlmBtn.addEventListener("click", () => openBatchAcceptConfirm(
+    "llm",
+    galleryBatchTarget(appState?.photos || []),
+    () => $("#acceptFilteredLlmBtn"),
+  ));
   $("#deliveryReviewBtn").addEventListener("click", () => openManualStatusView("pending"));
   $("#deliverySelectedBtn").addEventListener("click", () => openManualStatusView("pick"));
   $("#galleryBatchPickBtn").addEventListener("click", () => openBatchStatusConfirm("pick"));
@@ -2286,13 +2431,14 @@ function bindEvents() {
   $("#galleryGrid").addEventListener("focusout", clearGalleryTooltipPlacement);
   $(".workspace").addEventListener("pointerdown", beginGalleryMarquee);
   $(".workspace").addEventListener("dragstart", (event) => event.preventDefault());
-  $("#confirmBatchStatusBtn").addEventListener("click", confirmBatchStatus);
-  $("#cancelBatchStatusConfirmBtn").addEventListener("click", () => closeBatchStatusConfirm());
-  $("#batchStatusConfirmScrim").addEventListener("click", () => closeBatchStatusConfirm());
+  $("#confirmBatchStatusBtn").addEventListener("click", confirmBatchAction);
+  $("#cancelBatchStatusConfirmBtn").addEventListener("click", () => closeBatchActionConfirm());
+  $("#batchStatusConfirmScrim").addEventListener("click", () => closeBatchActionConfirm());
   $("#pickExportFolderBtn").addEventListener("click", pickExportFolder);
   $("#exportPreflight").addEventListener("click", handleExportPreflightClick);
   $("#exportResult").addEventListener("click", handleExportResultClick);
   $("#exportSelectedBtn").addEventListener("click", exportSelectedPhotos);
+  $("#exportFilteredCsvLink").addEventListener("click", downloadFilteredCsv);
   window.addEventListener("culvia:languagechange", () => render());
   window.addEventListener("resize", applySidebarMode);
 
@@ -2313,11 +2459,11 @@ function bindEvents() {
       return;
     }
     if (llmConfirmOpen) return;
-    if (event.key === "Escape" && batchStatusConfirmOpen) {
-      closeBatchStatusConfirm();
+    if (event.key === "Escape" && batchConfirmOpen) {
+      closeBatchActionConfirm();
       return;
     }
-    if (batchStatusConfirmOpen) return;
+    if (batchConfirmOpen) return;
     if (event.key === "Escape" && settingsDrawerOpen) {
       closeSettingsDrawer();
       return;
@@ -2351,6 +2497,6 @@ applySidebarMode();
 applySettingsDrawerState();
 applyShortcutHelpState();
 applyLlmConfirmState();
-applyBatchStatusConfirmState();
+applyBatchConfirmState();
 applyDangerConfirmState();
 loadState();

@@ -79,7 +79,11 @@ window.CulviaGalleryPanel = (() => {
     }
 
     function galleryBatchTarget(photos = getAppState()?.photos || []) {
-      return CulviaBatchActions.targetFromSelection(photos, visibleGallerySelection(photos));
+      return CulviaBatchActions.targetFromSelection(
+        photos,
+        visibleGallerySelection(photos),
+        getAppState()?.summary?.matched,
+      );
     }
 
     function renderBatchScopePill(rootSelector, labelSelector, target) {
@@ -145,7 +149,10 @@ window.CulviaGalleryPanel = (() => {
       const selectedCount = selectedIds.length;
       const allVisibleSelected = Boolean(photos.length) && selectedCount >= photos.length;
       const disabled = !target.count || Boolean(getAppState()?.job?.running);
-      setText("#galleryBulkCount", t("common.photoCount", { count: photos.length }));
+      setText(
+        "#galleryBulkCount",
+        CulviaBatchActions.filterCountSummary(getAppState()?.summary?.matched, photos.length),
+      );
       setText("#gallerySelectedCount", t("common.photoCount", { count: selectedCount }));
       renderBatchScopePill("#galleryBatchScopeText", "#galleryBatchScopeLabel", target);
       renderGallerySourceStatus();

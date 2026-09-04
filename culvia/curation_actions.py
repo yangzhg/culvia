@@ -4,7 +4,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping
 from pathlib import Path
 from typing import TypeVar
 
-from culvia.curation import PhotoMark, load_photo_marks, save_photo_mark
+from culvia.curation import PhotoMark, load_photo_marks, save_photo_marks
 from culvia.curation_payloads import mark_history_payload
 
 MutationResult = TypeVar("MutationResult")
@@ -55,14 +55,11 @@ def apply_color_label_to_marks(
     cache_path: str | Path,
     file_ids: Iterable[str],
     color_label: object,
-    *,
-    source: object = "manual",
 ) -> int:
-    saved = 0
-    for file_id in _normalized_file_ids(file_ids):
-        save_photo_mark(cache_path, file_id, color_label=color_label, source=source)
-        saved += 1
-    return saved
+    return save_photo_marks(
+        cache_path,
+        [{"file_id": file_id, "color_label": color_label} for file_id in _normalized_file_ids(file_ids)],
+    )
 
 
 def apply_status_to_marks(
@@ -72,11 +69,13 @@ def apply_status_to_marks(
     *,
     source: object = "manual",
 ) -> int:
-    saved = 0
-    for file_id in _normalized_file_ids(file_ids):
-        save_photo_mark(cache_path, file_id, status=status, source=source, accepted_score=None)
-        saved += 1
-    return saved
+    return save_photo_marks(
+        cache_path,
+        [
+            {"file_id": file_id, "status": status, "source": source, "accepted_score": None}
+            for file_id in _normalized_file_ids(file_ids)
+        ],
+    )
 
 
 def restore_photo_marks_from_payload(
@@ -85,7 +84,7 @@ def restore_photo_marks_from_payload(
     valid_file_ids: Collection[str],
 ) -> int:
     valid_ids = {str(file_id) for file_id in valid_file_ids}
-    restored = 0
+    normalized_marks: list[dict[str, object]] = []
     for item in raw_marks:
         if not isinstance(item, Mapping):
             continue
@@ -94,18 +93,18 @@ def restore_photo_marks_from_payload(
             continue
         color_label = item["colorLabel"] if "colorLabel" in item else item.get("color_label")
         accepted_score = item["acceptedScore"] if "acceptedScore" in item else item.get("accepted_score")
-        save_photo_mark(
-            cache_path,
-            file_id,
-            rating=item.get("rating"),
-            status=item.get("status"),
-            color_label=color_label,
-            note=item.get("note"),
-            source=item.get("source") or "manual",
-            accepted_score=accepted_score,
+        normalized_marks.append(
+            {
+                "file_id": file_id,
+                "rating": item.get("rating"),
+                "status": item.get("status"),
+                "color_label": color_label,
+                "note": item.get("note"),
+                "source": item.get("source") or "manual",
+                "accepted_score": accepted_score,
+            }
         )
-        restored += 1
-    return restored
+    return save_photo_marks(cache_path, normalized_marks)
 
 
 def _normalized_file_ids(file_ids: Iterable[str]) -> list[str]:

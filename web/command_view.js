@@ -137,7 +137,11 @@ window.CulviaCommandView = (() => {
       dotTone = "ready";
       state = t("command.resultsReady");
       title = t("command.continueOrCull");
-      detail = t("command.scoredSummary", { scored: summary.scored, showing: summary.showing });
+      detail = t("command.scoredSummary", {
+        matched: summary.matched ?? summary.showing,
+        scored: summary.scored,
+        showing: summary.showing,
+      });
     }
 
     if (!running && commandNotice) {

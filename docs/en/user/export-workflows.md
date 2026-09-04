@@ -4,6 +4,17 @@ Simplified Chinese: [../../zh-CN/user/export-workflows.md](../../zh-CN/user/expo
 
 Culvia does not try to replace Lightroom Classic, Capture One, or a full DAM. Its export goal is to turn local model-assisted triage, human review, and LLM notes into structured results that can continue through a professional delivery workflow.
 
+## Filter Scope And Display Limit
+
+The filter control **Show up to** (`filters.limit`) only limits how many matching photos the interface displays. It does not reduce the underlying filtered result.
+
+- When the batch scope says **All filtered matches**, status changes, color labels, and model or LLM acceptance apply to every photo that matches the active filters, including photos beyond the display limit.
+- Accepting model or LLM results maps scores of 7.0 or higher to **Pick**, scores below 5.5 to **Reject**, and the middle range to **Review**. Star ratings use conventional half-up rounding on the 0–10 score.
+- **Select shown** creates an explicit selection from only the photos currently displayed. Once photos are selected, batch actions apply only to that selection.
+- **Filtered results CSV** (`/api/export`) includes every matching photo, not only the displayed top results. **Picked results CSV** and selected-photo copying continue to use photos marked as picks.
+
+The interface shows both counts as **Matched / shown** so the impact of a batch action is visible before it runs. For example, `620 / 80` means 620 photos match the filters while 80 are currently displayed.
+
 ## CSV Fields
 
 The exported CSV keeps the original scoring details and adds manual culling fields:
@@ -11,7 +22,7 @@ The exported CSV keeps the original scoring details and adds manual culling fiel
 | Field | Meaning |
 |---|---|
 | `manual_rating` | Manual star rating, 0-5 |
-| `manual_status` | Internal status: `pick`, `reject`, or empty |
+| `manual_status` | Internal status: `pick`, `hold`, `reject`, or empty |
 | `manual_status_label` | Localized status label |
 | `manual_color_label` | Internal color label: `red`, `yellow`, `green`, `blue`, `purple`, or empty |
 | `manual_color_label_text` | Localized color label |
@@ -83,6 +94,7 @@ This keeps Web, local app shell, and automation scripts on the same export paylo
 
 ## Recommended Usage
 
-- Use "accept current filter" to turn model recommendations into manual ratings and pick status in batch.
+- Use "accept current filter" to turn model recommendations into manual ratings and pick status for all matching photos, including matches beyond the display limit.
+- Use "select shown" first when a batch action should affect only the photos currently displayed.
 - Use color-label shortcuts or export-page batch labels to split photos into downstream action queues.
-- Export selected CSV files for delivery manifests, and export current CSV files to preserve filter and scoring evidence.
+- Export picked-results CSV files for delivery manifests, and export filtered-results CSV files to preserve complete filter and scoring evidence.

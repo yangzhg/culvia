@@ -113,12 +113,15 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         deps.load_photo_marks(cache_path, source_file_ids) if cache_path and not maintenance_running else {}
     )
     working, filtered, errors = deps.dataframe_for_display(display_source_df, filters, mark_by_file_id)
+    display_limit = max(int(filters.get("limit", 80) or 80), 1)
+    displayed = filtered.head(display_limit)
     filtered_file_ids = deps.frame_file_ids(filtered)
+    displayed_file_ids = deps.frame_file_ids(displayed)
     selected_preview = deps.selected_preview_for_display(working, mark_by_file_id, limit=80)
     selected_preview_file_ids = deps.frame_file_ids(selected_preview)
     visible_file_ids = [
         file_id
-        for file_id in dict.fromkeys([*filtered_file_ids, *selected_preview_file_ids])
+        for file_id in dict.fromkeys([*displayed_file_ids, *selected_preview_file_ids])
         if file_id in current_llm_file_ids
     ]
     insight_by_file_id: dict[str, Any] = {}
@@ -138,12 +141,23 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
             previous = insight_by_file_id.get(insight.file_id)
             if previous is None or insight.created_at >= previous.created_at:
                 insight_by_file_id[insight.file_id] = insight
-    photos = [deps.serialize_photo(row, insight_by_file_id, mark_by_file_id) for _, row in filtered.iterrows()]
+    photos = [deps.serialize_photo(row, insight_by_file_id, mark_by_file_id) for _, row in displayed.iterrows()]
     selected_photos = [
         deps.serialize_photo(row, insight_by_file_id, mark_by_file_id) for _, row in selected_preview.iterrows()
     ]
     all_curation = deps.curation_summary(mark_by_file_id, source_file_ids)
-    visible_curation = deps.curation_summary(mark_by_file_id, filtered_file_ids)
+    filtered_curation = deps.curation_summary(mark_by_file_id, filtered_file_ids)
+    displayed_curation = deps.curation_summary(mark_by_file_id, displayed_file_ids)
+    filtered_llm_reviewed_count = 0
+    if deps.llm_review_score_columns:
+        overall_llm_column = deps.llm_review_score_columns[0]
+        if overall_llm_column in filtered:
+            filtered_llm_reviewed_count = int(
+                pd.to_numeric(filtered[overall_llm_column], errors="coerce").notna().sum()
+            )
+    summary = dict(deps.summarize_scores(display_source_df, filtered, errors, filters))
+    summary["matched"] = int(len(filtered))
+    summary["showing"] = int(len(displayed))
     app_payload = {
         "name": deps.app_name,
         "subtitle": deps.app_subtitle,
@@ -175,10 +189,12 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
             deps.normalize_selected_models(models.get("selected")),
         ),
         "job": job,
-        "summary": deps.summarize_scores(display_source_df, filtered, errors, filters),
+        "summary": summary,
         "curation": {
             "all": all_curation,
-            "visible": visible_curation,
+            "filtered": filtered_curation,
+            "visible": displayed_curation,
+            "filteredLlmReviewedCount": filtered_llm_reviewed_count,
             "selectedPreviewCount": int(len(selected_photos)),
         },
         "photos": photos,

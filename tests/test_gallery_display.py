@@ -169,6 +169,34 @@ class GalleryDisplayTests(unittest.TestCase):
 
         self.assertEqual(filtered["file_id"].tolist(), ["scored", "preview"])
 
+    def test_dataframe_for_display_keeps_all_matches_beyond_display_limit(self) -> None:
+        source = pd.DataFrame(
+            [
+                {
+                    "file_id": f"photo-{index:04d}",
+                    "error": "",
+                    "recommendation_0_10": 8.0,
+                    "overall_0_10": 8.0,
+                    "technical_overall_0_10": 8.0,
+                }
+                for index in range(620)
+            ]
+        )
+
+        _working, filtered, _errors = dataframe_for_display(
+            source,
+            {"sortField": "recommendation_0_10", "limit": 80},
+            {},
+            enrich_scores=enrich_scores,
+            apply_model_agreement=apply_model_agreement,
+            sort_fields={"recommendation_0_10", "overall_0_10"},
+            manual_status_filter_values=MANUAL_MODES,
+            color_label_filter_values=COLOR_MODES,
+        )
+
+        self.assertEqual(len(filtered), 620)
+        self.assertIn("photo-0619", set(filtered["file_id"]))
+
     def test_dataframe_for_display_includes_unscored_preview_rows_with_non_default_sort(self) -> None:
         source = pd.DataFrame(
             [

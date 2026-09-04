@@ -6,7 +6,7 @@
     <title>Culvia</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/styles/00-foundation.css?v=20260904-width-audit" />
-    <link rel="stylesheet" href="/static/styles/10-settings.css?v=20260904-width-audit" />
+    <link rel="stylesheet" href="/static/styles/10-settings.css?v=20260904-batch-confirm" />
     <link rel="stylesheet" href="/static/styles/20-workbench.css?v=20260812-responsive-nav" />
     <link rel="stylesheet" href="/static/styles/30-viewer.css?v=20260609-thumb-manual-badge" />
     <link rel="stylesheet" href="/static/styles/40-gallery.css?v=20260904-width-audit" />
@@ -446,7 +446,7 @@
                 <button id="acceptFilteredLlmBtn" class="button secondary" type="button"><span class="icon" data-icon="brain"></span><span data-i18n="manual.acceptLlm"></span></button>
               </div>
               <div class="export-utility-actions" data-i18n-aria-label="export.dataExportAria">
-                <a class="export-utility-link" href="/api/export"><span class="icon" data-icon="database"></span><span data-i18n="export.allCsv"></span></a>
+                <a id="exportFilteredCsvLink" class="export-utility-link" href="#exportView"><span class="icon" data-icon="database"></span><span data-i18n="export.allCsv"></span></a>
                 <a class="export-utility-link" href="/api/export/selected"><span class="icon" data-icon="database"></span><span data-i18n="export.selectedCsv"></span></a>
               </div>
             </div>
@@ -754,6 +754,6 @@
       </section>
     </div>
 
-    <script type="module" src="/static/main.js?v=20260904-width-audit"></script>
+    <script type="module" src="/static/main.js?v=20260904-batch-confirm"></script>
   </body>
 </html>

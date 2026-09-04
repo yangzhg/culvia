@@ -206,9 +206,15 @@ def summarize_scores(
     successful = enrich_scores_for_display(source_df, filters)
     successful = successful[successful["error"].fillna("").eq("")].copy()
     scores = pd.to_numeric(successful["recommendation_0_10"], errors="coerce").dropna()
+    matched = int(len(filtered_df))
+    try:
+        display_limit = max(int(filters.get("limit", 80) or 80), 1)
+    except (TypeError, ValueError):
+        display_limit = 80
     return {
         "scored": int(len(scores)),
-        "showing": int(len(filtered_df)),
+        "matched": matched,
+        "showing": min(matched, display_limit),
         "errors": int(len(errors)),
         "best": None if scores.empty else score_text(float(scores.max())),
         "average": None if scores.empty else score_text(float(scores.mean())),

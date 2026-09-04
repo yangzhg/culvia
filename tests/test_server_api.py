@@ -1243,6 +1243,75 @@ class ServerApiTests(unittest.TestCase):
                 self.assertTrue(culvia_app.STATE["scores_df"].equals(original_global_scores))
                 self.assertEqual(culvia_app.STATE["source"], original_global_source)
 
+    def test_filtered_scope_actions_and_csv_include_matches_beyond_display_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = str(Path(tmp) / "scores.sqlite")
+            source_df = pd.DataFrame(
+                [
+                    {
+                        "file_id": f"photo-{index:04d}",
+                        "path": f"/photos/photo-{index:04d}.jpg",
+                        "folder": "/photos",
+                        "filename": f"photo-{index:04d}.jpg",
+                        "error": "",
+                        "overall_0_10": 8.0,
+                    }
+                    for index in range(620)
+                ]
+            )
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=source_df,
+                    default_photo_dirs=["/photos"],
+                    default_cache_path=cache_path,
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+                )
+            )
+            with store.lock:
+                store.data["filters"].update({"minScore": 7.0, "limit": 80})
+            photo_curation.save_photo_mark(
+                cache_path,
+                "photo-0000",
+                rating=5,
+                status="reject",
+                color_label="green",
+                note="keeper",
+                accepted_score=8.8,
+            )
+            client = TestClient(culvia_app.create_app(store))
+
+            state_response = client.get("/api/state")
+            status_response = client.post("/api/mark/status", json={"scope": "filtered", "status": "hold"})
+            color_response = client.post("/api/mark/color", json={"scope": "filtered", "colorLabel": "blue"})
+            accept_response = client.post("/api/mark/accept", json={"scope": "filtered", "basis": "model"})
+            csv_response = client.get("/api/export")
+
+            self.assertEqual(state_response.status_code, 200)
+            state_payload = state_response.json()
+            self.assertEqual(state_payload["summary"]["matched"], 620)
+            self.assertEqual(state_payload["summary"]["showing"], 80)
+            self.assertEqual(len(state_payload["photos"]), 80)
+
+            self.assertEqual(status_response.status_code, 200)
+            self.assertEqual(status_response.json()["action"]["marked"], 620)
+            self.assertEqual(len(status_response.json()["action"]["beforeMarks"]), 620)
+            self.assertEqual(color_response.status_code, 200)
+            self.assertEqual(color_response.json()["action"]["colored"], 620)
+            self.assertEqual(accept_response.status_code, 200)
+            self.assertEqual(accept_response.json()["action"]["accepted"], 620)
+
+            marks = photo_curation.load_photo_marks(cache_path, [f"photo-{index:04d}" for index in range(620)])
+            self.assertEqual(len(marks), 620)
+            self.assertTrue(all(mark.status == "pick" for mark in marks.values()))
+            self.assertTrue(all(mark.color_label == "blue" for mark in marks.values()))
+            self.assertEqual(marks["photo-0000"].note, "keeper")
+
+            self.assertEqual(csv_response.status_code, 200)
+            csv_rows = list(csv.DictReader(io.StringIO(csv_response.content.decode("utf-8-sig"))))
+            self.assertEqual(len(csv_rows), 620)
+            self.assertIn("photo-0619", {row["file_id"] for row in csv_rows})
+
     def test_llm_acceptance_export_and_undo_workflow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "photos"

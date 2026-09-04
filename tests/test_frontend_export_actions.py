@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import re
 import textwrap
 import unittest
 from pathlib import Path
@@ -10,6 +11,66 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FrontendExportActionsTests(unittest.TestCase):
+    def test_filtered_csv_flushes_before_download_and_reports_failure(self) -> None:
+        script = textwrap.dedent(
+            """
+            const fs = require("fs");
+            const vm = require("vm");
+            const context = { console };
+            context.window = context;
+            vm.createContext(context);
+            vm.runInContext(fs.readFileSync("web/batch_actions.js", "utf8"), context);
+            vm.runInContext(fs.readFileSync("web/export_panel.js", "utf8"), context);
+
+            (async () => {
+              const events = [];
+              const notices = [];
+              let failFlush = false;
+              const panel = context.window.CulviaExportPanel.create({
+                t: (key) => key,
+                errorMessage: (error) => error.message,
+                getAppState: () => ({ job: { running: false } }),
+                flushFilterUpdate: async () => {
+                  events.push("flush");
+                  if (failFlush) throw new Error("filter failed");
+                },
+                downloadFile: (url, filename) => events.push(`download:${url}:${filename}`),
+                showCommandNotice: (notice, duration) => notices.push({ notice, duration }),
+              });
+
+              await panel.downloadFilteredCsv({ preventDefault: () => events.push("prevent") });
+              if (events.join(",") !== "prevent,flush,download:/api/export:culvia_scores_filtered.csv") {
+                throw new Error(`download order was ${events.join(",")}`);
+              }
+
+              events.length = 0;
+              failFlush = true;
+              await panel.downloadFilteredCsv({ preventDefault: () => events.push("prevent") });
+              if (events.join(",") !== "prevent,flush") {
+                throw new Error("download ran after a failed filter flush");
+              }
+              const failure = notices.at(-1);
+              if (failure?.notice?.state !== "export.filteredCsvFailureState"
+                  || failure?.notice?.title !== "export.filteredCsvFailureTitle"
+                  || failure?.notice?.detail !== "filter failed"
+                  || failure?.duration !== 4200) {
+                throw new Error("filtered CSV failure notice is incomplete");
+              }
+            })().catch((error) => {
+              console.error(error);
+              process.exitCode = 1;
+            });
+            """
+        )
+        result = subprocess.run(["node", "-e", script], cwd=ROOT, text=True, capture_output=True, check=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        html = (ROOT / "web/index.html").read_text(encoding="utf-8")
+        match = re.search(r'<a\s+[^>]*id="exportFilteredCsvLink"[^>]*>', html)
+        self.assertIsNotNone(match)
+        self.assertIn('href="#exportView"', match.group(0))
+        self.assertNotIn('href="/api/export"', match.group(0))
+
     def test_export_action_helpers_use_i18n_when_available(self) -> None:
         script = textwrap.dedent(
             """

@@ -52,7 +52,14 @@ class CurationActionTests(unittest.TestCase):
     def test_apply_color_label_preserves_existing_manual_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache_path = Path(tmp) / "scores.sqlite"
-            save_photo_mark(cache_path, "photo-1", rating=5, status="pick", accepted_score=8.8)
+            save_photo_mark(
+                cache_path,
+                "photo-1",
+                rating=5,
+                status="pick",
+                source="model_batch",
+                accepted_score=8.8,
+            )
 
             saved = apply_color_label_to_marks(cache_path, ["photo-1", "photo-2"], "Blue")
             marks = load_photo_marks(cache_path, ["photo-1", "photo-2"])
@@ -61,6 +68,7 @@ class CurationActionTests(unittest.TestCase):
         self.assertEqual(marks["photo-1"].rating, 5)
         self.assertEqual(marks["photo-1"].status, "pick")
         self.assertEqual(marks["photo-1"].color_label, "blue")
+        self.assertEqual(marks["photo-1"].source, "model_batch")
         self.assertAlmostEqual(float(marks["photo-1"].accepted_score or 0), 8.8)
         self.assertEqual(marks["photo-2"].color_label, "blue")
 

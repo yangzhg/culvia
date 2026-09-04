@@ -123,7 +123,7 @@ def color_targets_action(
     action, colored = apply_mark_mutation_history_payload(
         cache_path,
         target_ids,
-        lambda: apply_color_label_to_marks(cache_path, target_ids, color_label, source="manual"),
+        lambda: apply_color_label_to_marks(cache_path, target_ids, color_label),
         lambda colored: {
             "colored": colored,
             "scope": scope,

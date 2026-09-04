@@ -20,7 +20,10 @@ class AcceptanceTests(unittest.TestCase):
         row = pd.Series({"recommendation_0_10": 7.4, "llm_review_overall_0_10": 4.9})
 
         self.assertEqual(manual_rating_from_score(7.4), 4)
+        self.assertEqual(manual_rating_from_score(5.0), 3)
+        self.assertEqual(manual_rating_from_score(9.0), 5)
         self.assertEqual(pick_status_from_score(7.4), "pick")
+        self.assertEqual(pick_status_from_score(6.2), "hold")
         self.assertEqual(acceptance_score(row, "model"), 7.4)
         self.assertEqual(pick_status_from_score(acceptance_score(row, "llm")), "reject")
 
@@ -52,7 +55,7 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(llm_plan.source, "llm_batch")
         self.assertEqual(llm_plan.skipped, 0)
         self.assertEqual([mark["file_id"] for mark in llm_plan.marks], ["photo-1", "photo-2"])
-        self.assertEqual(llm_plan.marks[0]["status"], "")
+        self.assertEqual(llm_plan.marks[0]["status"], "hold")
         self.assertEqual(llm_plan.marks[1]["status"], "pick")
 
     def test_acceptance_policy_can_adjust_thresholds_and_rating_scale(self) -> None:
@@ -68,9 +71,9 @@ class AcceptanceTests(unittest.TestCase):
         plan = acceptance_mark_plan(rows, "model", "filtered", policy)
 
         self.assertEqual(manual_rating_from_score(7.4, policy), 3)
-        self.assertEqual(pick_status_from_score(7.4, policy), "")
+        self.assertEqual(pick_status_from_score(7.4, policy), "hold")
         self.assertEqual(pick_status_from_score(5.9, policy), "reject")
-        self.assertEqual([mark["status"] for mark in plan.marks], ["", "reject", "pick"])
+        self.assertEqual([mark["status"] for mark in plan.marks], ["hold", "reject", "pick"])
         self.assertEqual([mark["rating"] for mark in plan.marks], [3, 2, 4])
 
     def test_acceptance_policy_uses_safe_rating_scale(self) -> None:

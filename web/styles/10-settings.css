@@ -688,6 +688,9 @@ body.is-batch-confirm-open {
   margin: 3px 0 6px;
   font-size: 24px;
   letter-spacing: 0;
+  overflow-wrap: break-word;
+  text-wrap: balance;
+  word-break: keep-all;
 }
 
 .batch-confirm-copy p {

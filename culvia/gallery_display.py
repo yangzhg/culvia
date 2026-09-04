@@ -79,7 +79,6 @@ def dataframe_for_display(
     sort_field = str(filters.get("sortField") or "recommendation_0_10")
     if sort_field not in sort_fields:
         sort_field = "recommendation_0_10"
-    limit = int(filters.get("limit", 80) or 80)
     marks = mark_by_file_id or {}
 
     filtered = apply_threshold_filters(scored, filters, FILTER_THRESHOLD_COLUMNS)
@@ -115,7 +114,7 @@ def dataframe_for_display(
         )
         filtered = pd.concat([filtered, unscored], ignore_index=True)
     filtered = filtered.sort_values(sort_field, ascending=False, na_position="last")
-    filtered = filtered.head(max(limit, 1))
+    # `limit` is presentation-only; curation and export consumers need every matching row.
     return working, filtered, errors
 
 
