@@ -165,7 +165,7 @@ class ModelRuntimeCache:
                 titleText=text_ref("jobText.loadingScoringModel"),
                 detailText=text_ref("jobText.modelReadyLocal"),
             )
-            loaded = load_model(device)
+            loaded = load_model(device, files_prepared=True)
         self.set(RUNTIME_CORE_AESTHETIC, device, loaded)
         return loaded
 
@@ -198,6 +198,6 @@ class ModelRuntimeCache:
                 titleText=text_ref("jobText.loadingClipModel"),
                 detailText=text_ref("jobText.clipModelPurpose"),
             )
-            loaded = load_clip_reference_model(device)
+            loaded = load_clip_reference_model(device, files_prepared=True)
         self.set(RUNTIME_CLIP_REFERENCE, device, loaded)
         return loaded

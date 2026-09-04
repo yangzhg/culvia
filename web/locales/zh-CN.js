@@ -266,6 +266,8 @@
   "warning.photoReadFailed": "读取照片失败：{path} ({error})",
   "error.modelAssetsNotReady": "模型配置文件未准备好，请先完成模型准备。",
   "error.modelAssetsDirMissing": "模型配置目录不存在：{path}",
+  "error.modelIntegrityFailed": "模型文件 {filename} 完整性校验失败。请清理模型缓存后重试。",
+  "error.modelSafeLoadFailed": "模型无法安全加载。请检查运行环境或重新准备模型。",
   "error.llmNotConfigured": "大模型评审未配置：请设置 CULVIA_LLM_API_KEY 或在设置中配置密钥。",
   "error.llmResponseNotJson": "大模型接口返回内容不是 JSON 对象。",
   "error.scoreCacheNotSqlite": "评分缓存只支持 SQLite 文件（.sqlite、.sqlite3 或 .db）。CSV 仅用于导出。",

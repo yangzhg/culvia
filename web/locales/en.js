@@ -266,6 +266,8 @@
   "warning.photoReadFailed": "Failed to read photo: {path} ({error})",
   "error.modelAssetsNotReady": "Model files are not ready yet. Prepare the models first.",
   "error.modelAssetsDirMissing": "Model folder is missing: {path}",
+  "error.modelIntegrityFailed": "Model integrity check failed for {filename}. Clear the model cache and try again.",
+  "error.modelSafeLoadFailed": "The model could not be loaded safely. Check the runtime or prepare the model again.",
   "error.llmNotConfigured": "AI review is not configured. Set CULVIA_LLM_API_KEY or add the API key in Settings.",
   "error.llmResponseNotJson": "The LLM endpoint did not return a JSON object.",
   "error.scoreCacheNotSqlite": "The score library only supports SQLite files (.sqlite, .sqlite3, or .db). CSV is export-only.",

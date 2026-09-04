@@ -9,8 +9,10 @@ from culvia.llm_config import normalize_llm_prompt_preset as _normalize_llm_prom
 from culvia.model_files import (
     CLIP_REFERENCE_MODEL_ID,
     CLIP_REFERENCE_MODEL_REPO_DIR,
+    CLIP_REFERENCE_MODEL_REVISION,
     MODEL_CACHE_REPO_DIR,
     MODEL_ID,
+    MODEL_REVISION,
 )
 
 DEFAULT_LLM_MODEL = "gpt-4o-mini"
@@ -189,6 +191,7 @@ MODEL_CAPABILITIES = {
         runtime_key=RUNTIME_CORE_AESTHETIC,
         requires_download=True,
         repo_cache_dir=MODEL_CACHE_REPO_DIR,
+        model_version=MODEL_REVISION,
     ),
     MODEL_CLIP_IQA: ModelCapability(
         key=MODEL_CLIP_IQA,
@@ -198,6 +201,7 @@ MODEL_CAPABILITIES = {
         requires_download=True,
         repo_cache_dir=CLIP_REFERENCE_MODEL_REPO_DIR,
         provider="openai",
+        model_version=CLIP_REFERENCE_MODEL_REVISION,
     ),
     MODEL_CLIP_AESTHETIC: ModelCapability(
         key=MODEL_CLIP_AESTHETIC,
@@ -207,6 +211,7 @@ MODEL_CAPABILITIES = {
         requires_download=True,
         repo_cache_dir=CLIP_REFERENCE_MODEL_REPO_DIR,
         provider="openai",
+        model_version=CLIP_REFERENCE_MODEL_REVISION,
     ),
     MODEL_BASIC_TECHNICAL: ModelCapability(
         key=MODEL_BASIC_TECHNICAL,

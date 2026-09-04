@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from huggingface_hub import hf_hub_download
-
 from culvia.local_model_scoring import (
     CLIP_PROMPT_PAIRS,
     LoadedAestheticModel,
@@ -14,14 +12,16 @@ from culvia.local_model_scoring import (
     state_dict_from_loaded_object,
 )
 from culvia.model_files import (
-    CLIP_REFERENCE_MODEL_ID,
-    MODEL_ID,
+    CLIP_REFERENCE_MODEL_REVISION,
+    CLIP_REFERENCE_WEIGHT_FILENAME,
+    CLIP_REFERENCE_WEIGHT_SHA256,
     ensure_clip_reference_model_files,
     ensure_model_files,
-    get_app_model_path,
     get_clip_reference_cache_status,
     get_model_assets_dir,
+    get_model_cache_status,
     sanitize_proxy_env_for_httpx,
+    verify_file_sha256,
 )
 
 
@@ -40,23 +40,19 @@ def move_model_to_device(model: object, device: str) -> str:
         return "cpu"
 
 
-def load_model(device: str | None = None) -> LoadedAestheticModel:
+def load_model(device: str | None = None, *, files_prepared: bool = False) -> LoadedAestheticModel:
     import torch.nn as nn
     from transformers import CLIPImageProcessor, CLIPProcessor, CLIPTokenizerFast, CLIPVisionConfig, CLIPVisionModel
 
     sanitize_proxy_env_for_httpx()
-    ensure_model_files()
+    if not files_prepared:
+        ensure_model_files()
     selected_device = device or get_device()
     model_assets_dir = get_model_assets_dir()
     image_processor = CLIPImageProcessor.from_pretrained(str(model_assets_dir), local_files_only=True)
     tokenizer = CLIPTokenizerFast.from_pretrained(str(model_assets_dir), local_files_only=True)
     processor = CLIPProcessor(image_processor=image_processor, tokenizer=tokenizer)
-    app_model_path = get_app_model_path()
-    if app_model_path.exists():
-        model_path = str(app_model_path)
-    else:
-        model_path = hf_hub_download(repo_id=MODEL_ID, filename="model.pt", local_files_only=True)
-
+    model_path = str(get_model_cache_status().get("model_file") or "")
     loaded = load_torch_object(model_path)
     if isinstance(loaded, nn.Module):
         model = loaded
@@ -65,7 +61,8 @@ def load_model(device: str | None = None) -> LoadedAestheticModel:
         if state_dict is None:
             raise RuntimeError("无法识别 model.pt 的格式。")
 
-        backbone = CLIPVisionModel(CLIPVisionConfig())
+        vision_model = CLIPVisionModel(CLIPVisionConfig())
+        backbone = getattr(vision_model, "vision_model", vision_model)
         model = build_aesthetic_scorer(backbone)
         try:
             model.load_state_dict(state_dict, strict=True)
@@ -78,20 +75,27 @@ def load_model(device: str | None = None) -> LoadedAestheticModel:
     return LoadedAestheticModel(processor=processor, model=model, device=selected_device)
 
 
-def load_clip_reference_model(device: str | None = None) -> LoadedClipReferenceModel:
+def load_clip_reference_model(device: str | None = None, *, files_prepared: bool = False) -> LoadedClipReferenceModel:
     import torch
     from transformers import CLIPModel, CLIPProcessor
 
     sanitize_proxy_env_for_httpx()
-    ensure_clip_reference_model_files()
+    if not files_prepared:
+        ensure_clip_reference_model_files()
     selected_device = device or get_device()
     status = get_clip_reference_cache_status()
     snapshot_path = str(status.get("snapshot_path") or "")
     if not snapshot_path:
         raise RuntimeError("CLIP 参考模型配置文件未准备好，请先完成模型准备。")
     model_assets_dir = Path(snapshot_path)
+    verify_file_sha256(
+        model_assets_dir / CLIP_REFERENCE_WEIGHT_FILENAME,
+        CLIP_REFERENCE_WEIGHT_SHA256,
+        filename=CLIP_REFERENCE_WEIGHT_FILENAME,
+        revision=CLIP_REFERENCE_MODEL_REVISION,
+    )
     processor = CLIPProcessor.from_pretrained(str(model_assets_dir), local_files_only=True)
-    model = CLIPModel.from_pretrained(str(model_assets_dir), local_files_only=True, use_safetensors=False)
+    model = CLIPModel.from_pretrained(str(model_assets_dir), local_files_only=True, use_safetensors=True)
     selected_device = move_model_to_device(model, selected_device)
     model.eval()
 

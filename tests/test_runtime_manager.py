@@ -12,6 +12,12 @@ from culvia.runtime_contract import DESKTOP_LITE_CONTRACT
 
 
 class RuntimeManagerTests(unittest.TestCase):
+    def test_desktop_lite_requires_safe_model_runtime_modules(self) -> None:
+        required = runtime_manager.profile_by_name("desktop-lite").required_modules
+
+        self.assertIn("torch", required)
+        self.assertIn("safetensors", required)
+
     def test_default_runtime_paths_use_app_managed_venv(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env = {"CULVIA_RUNTIME_HOME": str(Path(tmp) / "runtime")}

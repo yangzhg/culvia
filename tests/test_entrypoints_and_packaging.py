@@ -11,6 +11,9 @@ from types import SimpleNamespace
 from urllib.parse import urlparse
 from unittest.mock import patch
 
+from packaging.markers import default_environment
+from packaging.requirements import Requirement
+
 from culvia.supervisor import ServerTarget, SupervisorConfig
 from tools import generate_app_icons
 
@@ -46,6 +49,53 @@ class EntrypointAndPackagingTests(unittest.TestCase):
         }
 
         self.assertEqual(requirements, pyproject_dependencies)
+        self.assertTrue(
+            {
+                "numpy<2; platform_system == 'darwin' and platform_machine == 'x86_64'",
+                "torch==2.2.2; platform_system == 'darwin' and platform_machine == 'x86_64'",
+                "torch>=2.10; platform_system != 'darwin' or platform_machine != 'x86_64'",
+                "torchvision==0.17.2; platform_system == 'darwin' and platform_machine == 'x86_64'",
+                "torchvision>=0.25; platform_system != 'darwin' or platform_machine != 'x86_64'",
+                "transformers==4.38.2; platform_system == 'darwin' and platform_machine == 'x86_64'",
+                "transformers>=4.38,<5; platform_system != 'darwin' or platform_machine != 'x86_64'",
+                "safetensors==0.4.3; platform_system == 'darwin' and platform_machine == 'x86_64'",
+                "safetensors>=0.4.3; platform_system != 'darwin' or platform_machine != 'x86_64'",
+            }.issubset(pyproject_dependencies)
+        )
+
+    def test_model_dependencies_select_supported_platform_stacks(self) -> None:
+        data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        requirements = [Requirement(item) for item in data["project"]["dependencies"]]
+
+        def selected_model_dependencies(system: str, machine: str) -> dict[str, str]:
+            environment = default_environment()
+            environment.update({"platform_system": system, "platform_machine": machine})
+            return {
+                requirement.name.lower(): str(requirement.specifier)
+                for requirement in requirements
+                if requirement.name.lower() in {"numpy", "torch", "torchvision", "transformers", "safetensors"}
+                and (requirement.marker is None or requirement.marker.evaluate(environment))
+            }
+
+        self.assertEqual(
+            selected_model_dependencies("Darwin", "x86_64"),
+            {
+                "numpy": "<2",
+                "torch": "==2.2.2",
+                "torchvision": "==0.17.2",
+                "transformers": "==4.38.2",
+                "safetensors": "==0.4.3",
+            },
+        )
+        self.assertEqual(
+            selected_model_dependencies("Darwin", "arm64"),
+            {
+                "torch": ">=2.10",
+                "torchvision": ">=0.25",
+                "transformers": "<5,>=4.38",
+                "safetensors": ">=0.4.3",
+            },
+        )
 
     def test_desktop_build_dependency_is_optional(self) -> None:
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))

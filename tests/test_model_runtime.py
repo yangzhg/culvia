@@ -108,7 +108,7 @@ class ModelRuntimeCacheTests(unittest.TestCase):
         self.assertIs(first, loaded_model)
         self.assertIs(second, loaded_model)
         ensure_files.assert_called_once()
-        load_model.assert_called_once_with("cpu")
+        load_model.assert_called_once_with("cpu", files_prepared=True)
         self.assertTrue(any(update.get("phase") == "loading_model" for update in job_service.updates))
 
 

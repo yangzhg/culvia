@@ -14,6 +14,20 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(schema.MODEL_CAPABILITIES[schema.MODEL_LLM_REVIEW].provider, "openai-compatible")
         self.assertTrue(schema.MODEL_CAPABILITIES[schema.MODEL_LLM_REVIEW].supports_text_insights)
 
+    def test_local_model_capabilities_expose_pinned_revisions(self) -> None:
+        self.assertEqual(
+            schema.MODEL_CAPABILITIES[schema.MODEL_CORE_AESTHETIC].model_version,
+            schema.MODEL_REVISION,
+        )
+        self.assertEqual(
+            schema.MODEL_CAPABILITIES[schema.MODEL_CLIP_IQA].model_version,
+            schema.CLIP_REFERENCE_MODEL_REVISION,
+        )
+        self.assertEqual(
+            schema.MODEL_CAPABILITIES[schema.MODEL_CLIP_AESTHETIC].model_version,
+            schema.CLIP_REFERENCE_MODEL_REVISION,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

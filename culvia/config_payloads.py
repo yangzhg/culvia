@@ -133,6 +133,7 @@ def model_option_payloads(
                 "requiresDownload": capability.requires_download,
                 "downloaded": bool(status.get("downloaded")),
                 "partial": bool(status.get("partial")),
+                "integrityState": str(status.get("integrity_state") or ""),
                 "size": status.get("model_size_label") or "",
                 "selected": capability.key in selected_models and available,
                 "disabled": not available,

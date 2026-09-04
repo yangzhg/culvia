@@ -125,6 +125,7 @@ These tools produce release-package and runtime evidence; they do not replace hu
 - Thumbnail cache and upload cache are runtime data and must not be committed.
 - Thumbnail cache retention uses soft LRU limits rather than a hard storage guarantee. The defaults are 2 GiB and 20,000 files; `CULVIA_THUMBNAIL_CACHE_MAX_BYTES` and `CULVIA_THUMBNAIL_CACHE_MAX_FILES` accept non-negative integer overrides, and `0` disables the corresponding limit.
 - Vision LLM review is explicit opt-in; local model paths do not upload photos by default.
+- Local Hugging Face model downloads follow the immutable revision, digest verification, and safe-loading policy in [Model Supply-Chain Security](model-supply-chain.md).
 - `tools/clean_runtime_artifacts.py` cleans local runtime artifacts, but it does not replace review before commit.
 - `bin/culvia-web` is the tracked source-checkout Web launcher. Desktop app launch belongs to the desktop app executable and bundled backend, not a repository `bin/` script.
 - Runtime data boundaries include: `model_cache/`, `analysis_cache/`, `thumbnail_cache/`, `upload_cache/`, `*.sqlite`, `*.sqlite-*`, `*.db`.

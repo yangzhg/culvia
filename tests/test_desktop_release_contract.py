@@ -358,6 +358,45 @@ class DesktopReleaseContractTests(unittest.TestCase):
             payload["failed"],
         )
 
+    def test_workflow_checker_requires_lite_safe_model_runtime_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    "import inspect, keyring, safetensors, torch",
+                    "import inspect, keyring, torch",
+                ),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn(
+            "workflow verifies a clean dependency-resolved Desktop Lite runtime wheel",
+            payload["failed"],
+        )
+
+    def test_workflow_checker_requires_macos_intel_clip_safetensors_smoke(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            copy_workflow_fixture(root)
+            workflow = root / ".github/workflows/desktop-release.yml"
+            workflow.write_text(
+                workflow.read_text(encoding="utf-8").replace(
+                    "use_safetensors=True",
+                    "use_safetensors=False",
+                ),
+                encoding="utf-8",
+            )
+
+            payload = check_desktop_release_workflow.result_payload(check_desktop_release_workflow.collect_checks(root))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("workflow verifies the macOS Intel model runtime contract", payload["failed"])
+
     def test_workflow_checker_rejects_direct_upload_path_without_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

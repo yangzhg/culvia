@@ -98,7 +98,12 @@ class ConfigPayloadTests(unittest.TestCase):
             model_keys=["core", "llm"],
             model_capabilities=capabilities,
             runtime_status={
-                "core-runtime": {"downloaded": True, "partial": False, "model_size_label": "123 MB"},
+                "core-runtime": {
+                    "downloaded": True,
+                    "partial": False,
+                    "integrity_state": "verified",
+                    "model_size_label": "123 MB",
+                },
                 "llm-runtime": {"downloaded": False, "partial": False, "model_size_label": ""},
             },
             llm_status={"configured": False, "model": "qwen-plus", "inputMode": "image"},
@@ -107,6 +112,7 @@ class ConfigPayloadTests(unittest.TestCase):
 
         self.assertTrue(options[0]["selected"])
         self.assertEqual(options[0]["size"], "123 MB")
+        self.assertEqual(options[0]["integrityState"], "verified")
         self.assertIsNone(options[0]["stateText"])
         self.assertIsNone(options[0]["detailText"])
         self.assertFalse(options[1]["selected"])

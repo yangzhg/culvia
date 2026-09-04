@@ -268,6 +268,88 @@ jobs:
         if: matrix.platform == 'macos' && matrix.profile == 'full'
         run: python -m pip install -e '.[desktop]'
 
+      - name: Verify macOS Intel model runtime contract
+        if: matrix.platform == 'macos' && matrix.arch == 'x64' && matrix.profile == 'full'
+        shell: bash
+        run: |
+          python -m pip check
+          python - <<'PY'
+          import inspect
+          import platform
+          import tempfile
+          from importlib.metadata import version
+          from pathlib import Path
+
+          import numpy
+          import torch
+          from transformers import CLIPConfig, CLIPModel, CLIPVisionConfig, CLIPVisionModel
+
+          expected = {
+              "torch": "2.2.2",
+              "torchvision": "0.17.2",
+              "transformers": "4.38.2",
+              "safetensors": "0.4.3",
+          }
+          actual = {name: version(name) for name in expected}
+          if actual != expected:
+              raise SystemExit(f"macOS Intel model dependency mismatch: {actual!r}")
+          if platform.machine() != "x86_64":
+              raise SystemExit(f"expected x86_64 runner, got {platform.machine()!r}")
+          if int(numpy.__version__.split(".", 1)[0]) >= 2:
+              raise SystemExit(f"Torch 2.2.2 requires NumPy 1.x, got {numpy.__version__}")
+          if "weights_only" not in inspect.signature(torch.load).parameters:
+              raise SystemExit("torch.load does not expose weights_only")
+
+          vision_model = CLIPVisionModel(
+              CLIPVisionConfig(
+                  hidden_size=8,
+                  intermediate_size=16,
+                  num_hidden_layers=1,
+                  num_attention_heads=2,
+                  image_size=16,
+                  patch_size=8,
+              )
+          )
+          vision_backbone = getattr(vision_model, "vision_model", vision_model)
+          if not next(iter(vision_backbone.state_dict())).startswith("embeddings."):
+              raise SystemExit("CLIP vision backbone keys do not match the audited core state dict")
+
+          config = CLIPConfig(
+              projection_dim=8,
+              text_config={
+                  "vocab_size": 32,
+                  "hidden_size": 8,
+                  "intermediate_size": 16,
+                  "num_hidden_layers": 1,
+                  "num_attention_heads": 2,
+                  "max_position_embeddings": 8,
+              },
+              vision_config={
+                  "hidden_size": 8,
+                  "intermediate_size": 16,
+                  "num_hidden_layers": 1,
+                  "num_attention_heads": 2,
+                  "image_size": 16,
+                  "patch_size": 8,
+                  "num_channels": 3,
+              },
+          )
+          model = CLIPModel(config)
+          with tempfile.TemporaryDirectory() as tmp:
+              model_dir = Path(tmp)
+              model.save_pretrained(model_dir, safe_serialization=True)
+              if not (model_dir / "model.safetensors").is_file():
+                  raise SystemExit("CLIP safetensors smoke did not create model.safetensors")
+              loaded = CLIPModel.from_pretrained(
+                  model_dir,
+                  local_files_only=True,
+                  use_safetensors=True,
+              )
+          if loaded.config.projection_dim != 8:
+              raise SystemExit("CLIP safetensors/config round trip changed projection_dim")
+          print(f"macOS Intel model runtime OK: {actual}")
+          PY
+
       - name: Show macOS runner architecture
         if: matrix.platform == 'macos'
         run: uname -m
@@ -367,7 +449,7 @@ jobs:
               --profile desktop-lite \
               --venv "${lite_venv}" \
               --json > "${RUNNER_TEMP}/culvia-lite-runtime-doctor.json"
-            "${lite_python}" -c "import keyring"
+            "${lite_python}" -c "import inspect, keyring, safetensors, torch; assert 'weights_only' in inspect.signature(torch.load).parameters"
           )
 
           python - <<'PY'

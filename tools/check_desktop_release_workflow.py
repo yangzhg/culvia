@@ -216,6 +216,7 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
     platform_input = workflow_dispatch_input_block(workflow, "platform")
     profile_input = workflow_dispatch_input_block(workflow, "profile")
     lite_runtime_step = workflow_step_block(workflow, "Verify clean Desktop Lite runtime wheel")
+    intel_model_runtime_step = workflow_step_block(workflow, "Verify macOS Intel model runtime contract")
     publish_step = workflow_step_block(workflow, "Publish assets to GitHub Release")
     upload_paths = upload_artifact_paths(workflow)
     artifact_paths = matrix_artifact_paths(workflow)
@@ -314,9 +315,29 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
             and 'report.get("runtimeContract") != expected_contract' in lite_runtime_step
             and 'report.get("profile", {}).get("required_modules") != expected_modules' in lite_runtime_step
             and 'report.get("missingModules")' in lite_runtime_step
-            and "import keyring" in lite_runtime_step
+            and "import inspect, keyring, safetensors, torch" in lite_runtime_step
+            and "inspect.signature(torch.load).parameters" in lite_runtime_step
             and "--no-deps" not in lite_runtime_step,
-            "the source job must install the built wheel[desktop-runtime] with dependencies in a fresh venv and verify service version, shell runtime contract, required modules, and the extra dependency",
+            "the source job must install the built wheel[desktop-runtime] with dependencies in a fresh venv and verify service version, shell runtime contract, required modules, safe model loading, and the extra dependency",
+        ),
+        check(
+            "workflow verifies the macOS Intel model runtime contract",
+            bool(intel_model_runtime_step)
+            and "matrix.platform == 'macos'" in intel_model_runtime_step
+            and "matrix.arch == 'x64'" in intel_model_runtime_step
+            and "matrix.profile == 'full'" in intel_model_runtime_step
+            and "python -m pip check" in intel_model_runtime_step
+            and '"torch": "2.2.2"' in intel_model_runtime_step
+            and '"torchvision": "0.17.2"' in intel_model_runtime_step
+            and '"transformers": "4.38.2"' in intel_model_runtime_step
+            and '"safetensors": "0.4.3"' in intel_model_runtime_step
+            and "numpy.__version__" in intel_model_runtime_step
+            and "inspect.signature(torch.load).parameters" in intel_model_runtime_step
+            and 'getattr(vision_model, "vision_model", vision_model)' in intel_model_runtime_step
+            and "safe_serialization=True" in intel_model_runtime_step
+            and "CLIPModel.from_pretrained" in intel_model_runtime_step
+            and "use_safetensors=True" in intel_model_runtime_step,
+            "the macOS Intel full-package runner must import the exact supported dependency set and round-trip a CLIP safetensors/config artifact",
         ),
         check(
             "contract tool runs the real release chain",

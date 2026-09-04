@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import hashlib
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 
 from culvia.local_model_scoring import (
     LoadedAestheticModel,
     aesthetic_output_values,
+    load_torch_object,
     normalize_torch_features,
     score_aesthetic_image,
     state_dict_from_loaded_object,
     torch_feature_tensor,
 )
+from culvia.job_text import TranslatableRuntimeError
 
 
 class FakeProcessor:
@@ -74,6 +80,105 @@ class LocalModelScoringTests(unittest.TestCase):
         )
 
         self.assertEqual(set(state or {}), {"backbone.weight", "head.bias"})
+
+    def test_torch_loader_uses_restricted_weights_only_mode(self) -> None:
+        payload = b"audited model bytes"
+        loaded_object = object()
+        observed: dict[str, object] = {}
+
+        def safe_load(model_file: object, **kwargs: object) -> object:
+            observed["payload"] = model_file.read()
+            observed["kwargs"] = kwargs
+            return loaded_object
+
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "model.pt"
+            model_path.write_bytes(payload)
+            with (
+                patch("torch.load", side_effect=safe_load) as torch_load,
+                patch(
+                    "culvia.local_model_scoring.MODEL_PT_SHA256",
+                    hashlib.sha256(payload).hexdigest(),
+                ),
+            ):
+                loaded = load_torch_object(str(model_path))
+
+        self.assertIs(loaded, loaded_object)
+        self.assertEqual(observed["payload"], payload)
+        self.assertEqual(observed["kwargs"], {"map_location": "cpu", "weights_only": True})
+        torch_load.assert_called_once()
+
+    def test_torch_loader_fails_closed_when_restricted_load_fails(self) -> None:
+        payload = b"audited model bytes"
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "model.pt"
+            model_path.write_bytes(payload)
+            with (
+                patch("torch.load", side_effect=RuntimeError("restricted loader rejected it")) as torch_load,
+                patch(
+                    "culvia.local_model_scoring.MODEL_PT_SHA256",
+                    hashlib.sha256(payload).hexdigest(),
+                ),
+            ):
+                with self.assertRaises(TranslatableRuntimeError) as caught:
+                    load_torch_object(str(model_path))
+
+        self.assertEqual(caught.exception.text, {"key": "error.modelSafeLoadFailed"})
+        self.assertTrue(torch_load.call_args.args[0].closed)
+        self.assertEqual(torch_load.call_args.kwargs, {"map_location": "cpu", "weights_only": True})
+
+    def test_torch_loader_fails_closed_when_weights_only_is_unavailable(self) -> None:
+        payload = b"audited model bytes"
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "model.pt"
+            model_path.write_bytes(payload)
+            with (
+                patch("torch.load", side_effect=TypeError("unknown argument")) as torch_load,
+                patch(
+                    "culvia.local_model_scoring.MODEL_PT_SHA256",
+                    hashlib.sha256(payload).hexdigest(),
+                ),
+            ):
+                with self.assertRaises(TranslatableRuntimeError) as caught:
+                    load_torch_object(str(model_path))
+
+        self.assertEqual(caught.exception.text, {"key": "error.modelSafeLoadFailed"})
+        self.assertEqual(torch_load.call_count, 1)
+        self.assertEqual(torch_load.call_args.kwargs, {"map_location": "cpu", "weights_only": True})
+
+    def test_torch_loader_rejects_file_changed_during_deserialization(self) -> None:
+        payload = b"audited model bytes"
+
+        def mutate_file(model_file: object, **_kwargs: object) -> object:
+            Path(model_file.name).write_bytes(b"changed while loading")
+            return object()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "model.pt"
+            model_path.write_bytes(payload)
+            with (
+                patch("torch.load", side_effect=mutate_file) as torch_load,
+                patch(
+                    "culvia.local_model_scoring.MODEL_PT_SHA256",
+                    hashlib.sha256(payload).hexdigest(),
+                ),
+            ):
+                with self.assertRaises(TranslatableRuntimeError) as caught:
+                    load_torch_object(str(model_path))
+
+        self.assertEqual(caught.exception.text["key"], "error.modelIntegrityFailed")
+        torch_load.assert_called_once()
+
+    def test_torch_loader_rejects_hash_mismatch_before_deserialization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "model.pt"
+            model_path.write_bytes(b"tampered")
+            with patch("torch.load") as torch_load:
+                with self.assertRaises(TranslatableRuntimeError) as caught:
+                    load_torch_object(str(model_path))
+
+        self.assertEqual(caught.exception.text["key"], "error.modelIntegrityFailed")
+        torch_load.assert_not_called()
 
 
 if __name__ == "__main__":

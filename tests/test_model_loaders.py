@@ -5,7 +5,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import torch
 
@@ -47,7 +47,17 @@ class FakeVisionModel:
         self.config = types.SimpleNamespace(hidden_size=3)
 
 
+class FakeWrappedVisionModel:
+    last_backbone: object | None = None
+
+    def __init__(self, _config: object) -> None:
+        self.vision_model = types.SimpleNamespace(config=types.SimpleNamespace(hidden_size=3))
+        type(self).last_backbone = self.vision_model
+
+
 class FakeClipModel:
+    last_use_safetensors: bool | None = None
+
     @classmethod
     def from_pretrained(
         cls,
@@ -55,6 +65,7 @@ class FakeClipModel:
         local_files_only: bool = True,
         use_safetensors: bool = False,
     ) -> "FakeClipModel":
+        cls.last_use_safetensors = use_safetensors
         return cls()
 
     def __init__(self) -> None:
@@ -117,13 +128,13 @@ class ModelLoaderTests(unittest.TestCase):
                     return_value=Path(tmp),
                 ),
                 patch(
-                    "culvia.model_loaders.get_app_model_path",
-                    return_value=model_path,
+                    "culvia.model_loaders.get_model_cache_status",
+                    return_value={"model_file": str(model_path)},
                 ),
                 patch(
                     "culvia.model_loaders.load_torch_object",
                     return_value=loaded_model,
-                ),
+                ) as load_object,
             ):
                 loaded = model_loaders.load_model("cpu")
 
@@ -131,6 +142,37 @@ class ModelLoaderTests(unittest.TestCase):
         self.assertIs(loaded.model, loaded_model)
         self.assertEqual(loaded.device, "cpu")
         ensure_files.assert_called_once()
+        load_object.assert_called_once_with(str(model_path))
+
+    def test_load_model_accepts_transformers_four_wrapped_vision_backbone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "model.pt"
+            model_path.write_bytes(b"model")
+            transformers_module = fake_transformers_module()
+            transformers_module.CLIPVisionModel = FakeWrappedVisionModel
+            scorer = Mock()
+            with (
+                patch.dict(sys.modules, {"transformers": transformers_module}),
+                patch("culvia.model_loaders.ensure_model_files"),
+                patch("culvia.model_loaders.get_model_assets_dir", return_value=Path(tmp)),
+                patch(
+                    "culvia.model_loaders.get_model_cache_status",
+                    return_value={"model_file": str(model_path)},
+                ),
+                patch(
+                    "culvia.model_loaders.load_torch_object",
+                    return_value={"backbone.weight": torch.ones(1)},
+                ),
+                patch("culvia.model_loaders.build_aesthetic_scorer", return_value=scorer) as build_scorer,
+            ):
+                loaded = model_loaders.load_model("cpu")
+
+        build_scorer.assert_called_once_with(FakeWrappedVisionModel.last_backbone)
+        state_dict = scorer.load_state_dict.call_args.args[0]
+        self.assertEqual(set(state_dict), {"backbone.weight"})
+        self.assertTrue(torch.equal(state_dict["backbone.weight"], torch.ones(1)))
+        self.assertEqual(scorer.load_state_dict.call_args.kwargs, {"strict": True})
+        self.assertIs(loaded.model, scorer)
 
     def test_load_clip_reference_model_precomputes_prompt_features(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -141,6 +183,7 @@ class ModelLoaderTests(unittest.TestCase):
                     "culvia.model_loaders.get_clip_reference_cache_status",
                     return_value={"snapshot_path": tmp},
                 ),
+                patch("culvia.model_loaders.verify_file_sha256") as verify_weight,
             ):
                 loaded = model_loaders.load_clip_reference_model("cpu")
 
@@ -148,6 +191,13 @@ class ModelLoaderTests(unittest.TestCase):
         self.assertEqual(set(loaded.text_features), set(model_loaders.CLIP_PROMPT_PAIRS))
         self.assertEqual(loaded.device, "cpu")
         ensure_files.assert_called_once()
+        self.assertTrue(FakeClipModel.last_use_safetensors)
+        verify_weight.assert_called_once_with(
+            Path(tmp) / model_loaders.CLIP_REFERENCE_WEIGHT_FILENAME,
+            model_loaders.CLIP_REFERENCE_WEIGHT_SHA256,
+            filename=model_loaders.CLIP_REFERENCE_WEIGHT_FILENAME,
+            revision=model_loaders.CLIP_REFERENCE_MODEL_REVISION,
+        )
 
 
 if __name__ == "__main__":

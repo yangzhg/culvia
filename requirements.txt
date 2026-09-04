@@ -2,10 +2,16 @@ starlette
 uvicorn
 python-multipart
 pandas
+numpy<2; platform_system == 'Darwin' and platform_machine == 'x86_64'
 requests
-torch
-torchvision
-transformers
+torch==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'
+torch>=2.10; platform_system != 'Darwin' or platform_machine != 'x86_64'
+torchvision==0.17.2; platform_system == 'Darwin' and platform_machine == 'x86_64'
+torchvision>=0.25; platform_system != 'Darwin' or platform_machine != 'x86_64'
+transformers==4.38.2; platform_system == 'Darwin' and platform_machine == 'x86_64'
+transformers>=4.38,<5; platform_system != 'Darwin' or platform_machine != 'x86_64'
+safetensors==0.4.3; platform_system == 'Darwin' and platform_machine == 'x86_64'
+safetensors>=0.4.3; platform_system != 'Darwin' or platform_machine != 'x86_64'
 pillow
 pillow-heif
 huggingface_hub

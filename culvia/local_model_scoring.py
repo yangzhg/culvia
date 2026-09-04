@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+
+from culvia.job_text import TranslatableRuntimeError
+from culvia.model_files import MODEL_PT_SHA256
 
 
 @dataclass
@@ -47,12 +53,50 @@ CLIP_PROMPT_PAIRS = {
 def load_torch_object(model_path: str) -> object:
     import torch
 
+    label = Path(model_path).name
+    digest = hashlib.sha256()
     try:
-        return torch.load(model_path, map_location="cpu", weights_only=True)
-    except TypeError:
-        return torch.load(model_path, map_location="cpu")
-    except Exception:
-        return torch.load(model_path, map_location="cpu", weights_only=False)
+        with Path(model_path).open("rb") as model_file:
+            before = os.fstat(model_file.fileno())
+            for chunk in iter(lambda: model_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+            after_hash = os.fstat(model_file.fileno())
+            fingerprint_fields = ("st_size", "st_mtime_ns", "st_ctime_ns", "st_ino")
+            if any(getattr(before, field) != getattr(after_hash, field) for field in fingerprint_fields):
+                raise TranslatableRuntimeError(
+                    "error.modelIntegrityFailed",
+                    fallback=f"模型文件完整性校验失败：{label}",
+                    filename=label,
+                )
+            if not hmac.compare_digest(digest.hexdigest(), MODEL_PT_SHA256):
+                raise TranslatableRuntimeError(
+                    "error.modelIntegrityFailed",
+                    fallback=f"模型文件完整性校验失败：{label}",
+                    filename=label,
+                )
+
+            model_file.seek(0)
+            try:
+                loaded = torch.load(model_file, map_location="cpu", weights_only=True)
+            except Exception as safe_error:
+                raise TranslatableRuntimeError(
+                    "error.modelSafeLoadFailed",
+                    fallback="模型无法安全加载，请检查运行环境或重新准备模型。",
+                ) from safe_error
+            after_load = os.fstat(model_file.fileno())
+            if any(getattr(after_hash, field) != getattr(after_load, field) for field in fingerprint_fields):
+                raise TranslatableRuntimeError(
+                    "error.modelIntegrityFailed",
+                    fallback=f"模型文件完整性校验失败：{label}",
+                    filename=label,
+                )
+            return loaded
+    except OSError as exc:
+        raise TranslatableRuntimeError(
+            "error.modelIntegrityFailed",
+            fallback=f"模型文件完整性校验失败：{label}",
+            filename=label,
+        ) from exc
 
 
 def state_dict_from_loaded_object(loaded: object) -> dict[str, object] | None:

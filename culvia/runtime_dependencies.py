@@ -10,6 +10,7 @@ REQUIRED_RUNTIME_MODULES: tuple[str, ...] = (
     "torch",
     "torchvision",
     "transformers",
+    "safetensors",
     "PIL",
     "pillow_heif",
     "huggingface_hub",
