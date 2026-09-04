@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -26,6 +27,24 @@ class ReleaseSmokeTests(unittest.TestCase):
         absolute = release_smoke.outside_source_tree_cwd(ROOT) / "culvia-dist"
 
         self.assertEqual(release_smoke.project_output_path(absolute, ROOT), absolute)
+
+    def test_module_graph_strips_cache_bust_queries_and_fragments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            web_dir = Path(tmp)
+            (web_dir / "main.js").write_text(
+                'import "./app.js?v=score-provenance";\nimport "https://example.test/external.js";\n',
+                encoding="utf-8",
+            )
+            (web_dir / "app.js").write_text(
+                'import "./locales/en.js?v=score-provenance#messages";\n',
+                encoding="utf-8",
+            )
+            (web_dir / "locales").mkdir()
+            (web_dir / "locales" / "en.js").write_text("export {};\n", encoding="utf-8")
+
+            files = release_smoke.module_graph_files(web_dir, "main.js")
+
+        self.assertEqual(files, {"main.js", "app.js", "locales/en.js"})
 
 
 if __name__ == "__main__":

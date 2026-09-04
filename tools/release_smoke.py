@@ -128,7 +128,10 @@ def module_graph_files(web_dir: Path, entry_relative: str) -> set[str]:
             continue
         parent = os.path.dirname(normalized)
         for spec in MODULE_IMPORT_RE.findall(path.read_text(encoding="utf-8")):
-            queue.append(os.path.join(parent, spec))
+            parsed = urlparse(spec)
+            if parsed.scheme or parsed.netloc or not parsed.path:
+                continue
+            queue.append(os.path.join(parent, parsed.path))
     return resolved
 
 
