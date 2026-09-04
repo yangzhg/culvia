@@ -127,7 +127,7 @@ class EntrypointAndPackagingTests(unittest.TestCase):
         runtime_dependencies = {item.strip().lower() for item in data["project"]["dependencies"]}
         dev_dependencies = {item.strip().lower() for item in data["project"]["optional-dependencies"]["dev"]}
 
-        for dependency in ("pre-commit>=3.7", "ruff>=0.8"):
+        for dependency in ("httpx2>=2,<3", "pre-commit>=3.7", "ruff>=0.8"):
             self.assertIn(dependency, dev_dependencies)
             self.assertNotIn(dependency, runtime_dependencies)
 
