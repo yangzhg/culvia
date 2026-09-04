@@ -15,7 +15,11 @@ window.CulviaExportList = (() => {
   function itemMarkup(photo, index, helpers) {
     const escapeHtml = helpers.escapeHtml;
     const name = safeText(helpers.pathName(photo?.path), t("export.listUnnamed", {}, "未命名照片"));
-    const scoreText = safeText(photo?.recommendationText || photo?.overallText, t("export.listNoRecommendation", {}, "暂无推荐"));
+    const rawScoreText = photo?.recommendationText || photo?.overallText;
+    const missingScoreText = t("export.listNoRecommendation", {}, "暂无推荐");
+    const scoreText = helpers.localizedMetricText
+      ? helpers.localizedMetricText(rawScoreText, missingScoreText)
+      : safeText(rawScoreText, missingScoreText);
     const localizedLevel = helpers.localizedScoreLevel ? helpers.localizedScoreLevel(photo?.level) : photo?.level;
     const level = safeText(localizedLevel, t("export.listUnrated", {}, "未评级"));
     const fullPath = safeText(photo?.path, name);

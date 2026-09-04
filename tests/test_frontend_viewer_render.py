@@ -53,6 +53,15 @@ class FrontendViewerRenderTests(unittest.TestCase):
             const fs = require("fs");
             const vm = require("vm");
             const state = {json.dumps(state)};
+            state.photos.push({{
+              ...state.photos[0],
+              path: "/tmp/unrated.jpg",
+              thumb: "/api/thumbnail?path=/tmp/unrated.jpg",
+              recommendation: null,
+              recommendationText: "暂无",
+              overallText: "暂无",
+              level: "未评分",
+            }});
             class FakeClassList {{
               constructor() {{ this.values = new Set(); }}
               add(...items) {{ items.forEach((item) => this.values.add(item)); }}
@@ -136,7 +145,7 @@ class FrontendViewerRenderTests(unittest.TestCase):
               console,
               window: {{}},
               document,
-              navigator: {{ language: "zh-CN" }},
+              navigator: {{ language: "en-US" }},
               localStorage,
               addEventListener() {{}},
               dispatchEvent() {{}},
@@ -174,6 +183,9 @@ class FrontendViewerRenderTests(unittest.TestCase):
               manualClass: document.querySelector("#manualStatusText").classList.contains("is-unreviewed"),
             }};
             if (!result.filmstrip.includes("thumb")) throw new Error("filmstrip was not rendered");
+            if (result.filmstrip.includes("暂无") || !result.filmstrip.includes("None")) {{
+              throw new Error("filmstrip did not localize its missing score");
+            }}
             if (!result.signalChips.includes("signal-chip")) throw new Error("score signals were not rendered");
             if (!result.scoreRows.includes("score-detail-panel")) throw new Error("score details were not rendered");
             if (!result.manualClass) throw new Error("manual status class was not applied");

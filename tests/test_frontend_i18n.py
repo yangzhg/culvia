@@ -383,6 +383,67 @@ class FrontendI18nTests(unittest.TestCase):
         self.assertIn('text === "未判断"', app_js)
         self.assertIn('localizedMetricText?.(value, options.t?.("common.noData"))', gallery_view_js)
 
+    def test_gallery_localizes_missing_score_text_in_cards_and_tooltips(self) -> None:
+        script = textwrap.dedent(
+            """
+            const fs = require("fs");
+            const vm = require("vm");
+            const context = { console };
+            context.window = context;
+            context.CulviaI18n = {
+              t(key) { return key === "export.listNoRecommendation" ? "No recommendation yet" : key; },
+            };
+            vm.createContext(context);
+            ["web/manual_status.js", "web/icons.js", "web/ui_helpers.js", "web/gallery_view.js", "web/export_list.js"]
+              .forEach((file) => vm.runInContext(fs.readFileSync(file, "utf8"), context, { filename: file }));
+
+            const photo = {
+              fileId: "photo-1",
+              path: "/photos/photo-1.jpg",
+              thumb: "thumb.jpg",
+              level: "未评分",
+              recommendationText: "暂无",
+              overallText: "暂无",
+              recommendationStars: "☆☆☆☆☆",
+              manual: {},
+            };
+            const options = {
+              t(key) { return key === "common.noData" ? "None" : key; },
+              localizedMetricText(value, missing) { return value === "暂无" ? missing : value; },
+              localizedScoreLevel() { return "Unrated"; },
+              localizedManualSource() { return "Unconfirmed"; },
+              manualStatusLabel() { return "Unreviewed"; },
+              manualStars() { return "☆☆☆☆☆"; },
+              galleryColorBadgeMarkup() { return ""; },
+              galleryQuickActionLabel() { return "Action"; },
+              gallerySelectLabel() { return "Select"; },
+            };
+            const card = context.CulviaGalleryView.cardMarkup(photo, 0, false, "signature", options);
+            const tooltip = context.CulviaGalleryView.tooltipMarkup(photo, options);
+            const exportList = context.CulviaExportList.renderMarkup([photo], {
+              canRevealFile: false,
+              escapeHtml: context.CulviaUiHelpers.escapeHtml,
+              iconMarkup: context.CulviaUiHelpers.iconMarkup,
+              localizedMetricText: options.localizedMetricText,
+              localizedScoreLevel: options.localizedScoreLevel,
+              manualBadgeMarkup() { return ""; },
+              pathName() { return "photo-1.jpg"; },
+            });
+            if (card.includes("暂无") || tooltip.includes("暂无") || exportList.includes("暂无")) {
+              throw new Error("Chinese missing-score text leaked into English markup");
+            }
+            if (!card.includes(">None</strong>") || !tooltip.includes(">None</strong>")) {
+              throw new Error("localized missing-score text was not rendered");
+            }
+            if (!exportList.includes("No recommendation yet")) {
+              throw new Error("export list did not localize its missing score");
+            }
+            """
+        )
+        result = subprocess.run(["node", "-e", script], cwd=ROOT, text=True, capture_output=True, check=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
     def test_app_localizes_api_error_codes(self) -> None:
         api_client_js = (WEB / "api_client.js").read_text(encoding="utf-8")
         messages = load_i18n_messages()

@@ -131,6 +131,14 @@
   margin: 2px 0 10px;
 }
 
+.score-provenance-notice {
+  margin: -2px 2px 10px;
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
 .model-option {
   --model-option-color: var(--accent);
   --model-option-rgb: var(--accent-rgb);

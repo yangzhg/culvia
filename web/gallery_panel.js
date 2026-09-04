@@ -511,6 +511,7 @@ window.CulviaGalleryPanel = (() => {
         galleryColorBadgeMarkup,
         galleryQuickActionLabel,
         gallerySelectLabel,
+        localizedMetricText,
         localizedScoreLevel,
         t,
       });

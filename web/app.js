@@ -417,6 +417,8 @@ function localizedModelOptionSubtitle(option = {}) {
 function localizedModelOptionState(option = {}) {
   const stateText = resolveTextRef(option.stateText, "");
   if (stateText) return stateText;
+  const needsRescore = Number(option.scoreCache?.needsRescore || 0);
+  if (needsRescore > 0) return t("model.needsScoreRefresh", { count: needsRescore });
   if (option.requiresDownload) return option.downloaded ? t("model.ready") : t("model.firstUse");
   return t("model.localCompute");
 }
@@ -761,6 +763,14 @@ function renderModelOptions() {
       `;
     })
     .join("");
+  const provenanceNotice = $("#scoreProvenanceNotice");
+  if (provenanceNotice) {
+    const refreshCount = (appState.model.options || [])
+      .filter((option) => option.selected)
+      .reduce((total, option) => total + Number(option.scoreCache?.needsRescore || 0), 0);
+    provenanceNotice.classList.toggle("is-hidden", refreshCount <= 0);
+    provenanceNotice.textContent = refreshCount > 0 ? t("model.scoreRefreshNotice", { count: refreshCount }) : "";
+  }
   container.querySelectorAll("[data-model-key]").forEach((input) => {
     input.addEventListener("change", updateSelectedModels);
   });
@@ -1186,6 +1196,7 @@ const exportPanel = window.CulviaExportPanel.create({
   setText,
   setTextWithHint,
   setButtonLabel,
+  localizedMetricText,
   localizedScoreLevel,
   manualBadgeMarkup,
   colorLabelMeta,

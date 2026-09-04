@@ -2,8 +2,8 @@
 // the import order below is the only place load order is declared.
 
 // Locale resources and i18n runtime.
-import "./locales/zh-CN.js?v=20260904-batch-confirm";
-import "./locales/en.js?v=20260904-batch-confirm";
+import "./locales/zh-CN.js?v=20260904-score-provenance";
+import "./locales/en.js?v=20260904-score-provenance";
 import "./i18n_messages.js";
 import "./i18n.js";
 
@@ -24,7 +24,7 @@ import "./export_preflight_state.js";
 import "./export_result_data.js";
 import "./export_result.js";
 import "./export_actions.js";
-import "./export_list.js";
+import "./export_list.js?v=20260904-score-provenance";
 import "./batch_actions.js?v=20260904-batch-confirm";
 import "./clipboard.js";
 import "./api_client.js";
@@ -33,16 +33,16 @@ import "./distribution_model.js";
 import "./app_config.js";
 import "./icons.js";
 import "./ui_helpers.js";
-import "./gallery_view.js";
+import "./gallery_view.js?v=20260904-score-provenance";
 import "./distribution_view.js";
 import "./distribution_panel.js";
-import "./export_panel.js?v=20260904-batch-confirm";
+import "./export_panel.js?v=20260904-score-provenance";
 import "./llm_config_panel.js";
 import "./gallery_panel.js?v=20260904-full-filter-scope";
-import "./viewer_panel.js";
+import "./viewer_panel.js?v=20260904-score-provenance";
 import "./source_panel.js";
 import "./filter_panel.js";
 import "./viewer_inspector.js";
 
 // Orchestrator: wires state, rendering, and events together.
-import "./app.js?v=20260904-batch-confirm";
+import "./app.js?v=20260904-score-provenance";

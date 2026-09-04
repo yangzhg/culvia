@@ -238,6 +238,8 @@
   "model.tooltipSubtitle": "Each photo combines multiple models and local QC dimensions.",
   "model.defaultCombo": "Default stack",
   "model.localCompute": "Local compute",
+  "model.needsScoreRefresh": "{count} to refresh",
+  "model.scoreRefreshNotice": "{count} outdated or incomplete model results will be refreshed on the next scoring run.",
   "model.option.rsinema_aesthetic.label": "Core aesthetic",
   "model.option.rsinema_aesthetic.subtitle": "rsinema/aesthetic-scorer · composition, light, color",
   "model.option.clip_iqa.label": "Model quality",

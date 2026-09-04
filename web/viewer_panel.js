@@ -239,11 +239,15 @@ window.CulviaViewerPanel = (() => {
           .map((item, offset) => {
             const index = windowRange.start + offset;
             const itemLevel = localizedScoreLevel(item.level);
-            const thumbHint = `${itemLevel} · ${item.recommendationText || item.overallText}`;
+            const itemScoreText = localizedMetricText(
+              item.recommendationText || item.overallText,
+              t("score.noData"),
+            );
+            const thumbHint = `${itemLevel} · ${itemScoreText}`;
             return `
               <button class="thumb ${index === activeIndex ? "is-active" : ""}" type="button" data-index="${index}" aria-label="${escapeHtml(thumbHint)}" data-ui-tooltip="${escapeHtml(thumbHint)}">
                 <img src="${item.thumb}" alt="${escapeHtml(t("viewer.thumbAlt"))}" loading="lazy" />
-                <span>${item.recommendationText || item.overallText}</span>
+                <span>${escapeHtml(itemScoreText)}</span>
                 ${manualBadgeMarkup(item.manual, true)}
               </button>
             `;
@@ -387,7 +391,10 @@ window.CulviaViewerPanel = (() => {
       mainImage.alt = t("viewer.currentPhotoAlt");
       if (mainImage.complete) mainImage.onload();
       const currentLevel = localizedScoreLevel(photo.level);
-      const mainScoreText = photo.recommendationText || photo.overallText;
+      const mainScoreText = localizedMetricText(
+        photo.recommendationText || photo.overallText,
+        t("score.noData"),
+      );
       const mainScoreEmpty = !mainScoreText || mainScoreText === t("common.noData") || mainScoreText === t("score.noData");
       setText("#mainScore", mainScoreText);
       const mainScoreEl = $("#mainScore");

@@ -238,6 +238,8 @@
   "model.tooltipSubtitle": "同一张照片会叠加多个模型和本地质检维度。",
   "model.defaultCombo": "默认组合",
   "model.localCompute": "本机计算",
+  "model.needsScoreRefresh": "{count} 张待更新",
+  "model.scoreRefreshNotice": "发现 {count} 项旧版或不完整的模型评分；\u200b下\u2060次\u2060评\u2060分\u2060时会只补算这些项目。",
   "model.option.rsinema_aesthetic.label": "核心审美",
   "model.option.rsinema_aesthetic.subtitle": "rsinema/aesthetic-scorer · 构图、光线、色彩",
   "model.option.clip_iqa.label": "模型画质",

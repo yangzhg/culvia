@@ -69,10 +69,16 @@ window.CulviaGalleryView = (() => {
     `;
   }
 
+  function photoScoreText(photo, options = {}) {
+    const raw = photo.recommendationText || photo.overallText || "";
+    return options.localizedMetricText?.(raw, options.t?.("common.noData")) || raw;
+  }
+
   function tooltipMarkup(photo, options = {}) {
     const manual = photo.manual || {};
     const manualStatusText = options.manualStatusLabel?.(manual.status || "") || "";
     const photoLevel = options.localizedScoreLevel?.(photo.level) || "";
+    const scoreText = photoScoreText(photo, options);
     const detailRows = [
       [options.t?.("gallery.detail.manualDecision") || "", manualStatusText],
       [options.t?.("gallery.detail.manualRating") || "", manual.rating ? options.manualStars?.(manual.rating) : options.t?.("gallery.unscored")],
@@ -114,7 +120,7 @@ window.CulviaGalleryView = (() => {
       <div class="rating-tooltip" role="tooltip">
         <div class="rating-tooltip-head">
           <span${textHintAttributes(photoLevel)}>${escapeHtml(photoLevel)}</span>
-          <strong${textHintAttributes(photo.recommendationText || photo.overallText)}>${escapeHtml(photo.recommendationText || photo.overallText)}</strong>
+          <strong${textHintAttributes(scoreText)}>${escapeHtml(scoreText)}</strong>
         </div>
         ${tooltipRows}
         ${photo.llmInsight?.summary ? `<p class="rating-tooltip-summary">${escapeHtml(photo.llmInsight.summary)}</p>` : ""}
@@ -127,6 +133,7 @@ window.CulviaGalleryView = (() => {
     const manual = photo.manual || {};
     const disabled = Boolean(options.disabled);
     const photoLevel = options.localizedScoreLevel?.(photo.level) || "";
+    const scoreText = photoScoreText(photo, options);
     const selectLabel = options.gallerySelectLabel?.(photo, selected) || "";
     const pickLabel = options.galleryQuickActionLabel?.(photo, "pick") || "";
     const pendingLabel = options.galleryQuickActionLabel?.(photo, "hold") || "";
@@ -189,7 +196,7 @@ window.CulviaGalleryView = (() => {
             aria-label="${escapeHtml(options.t?.("gallery.viewRating") || "")}"
           >
             <span class="rating-label"${textHintAttributes(photoLevel)}>${escapeHtml(photoLevel)}</span>
-            <strong>${escapeHtml(photo.recommendationText || photo.overallText)}</strong>
+            <strong>${escapeHtml(scoreText)}</strong>
             <span>${escapeHtml(photo.recommendationStars || photo.stars)}</span>
           </div>
         </footer>
