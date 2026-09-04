@@ -886,12 +886,12 @@ function applyCommandDomPlan(plan) {
   currentPhoto.classList.toggle("is-hidden", plan.currentPhoto.hidden);
   if (plan.currentPhoto.hidden) {
     $(plan.currentPhoto.thumbSelector).removeAttribute("src");
-    setText(plan.currentPhoto.fileSelector, "");
+    setTextWithHint(plan.currentPhoto.fileSelector, "");
     setText(plan.currentPhoto.stageSelector, "");
     $(plan.currentPhoto.completedSelector).innerHTML = "";
   } else {
     $(plan.currentPhoto.thumbSelector).src = plan.currentPhoto.thumb;
-    setText(plan.currentPhoto.fileSelector, plan.currentPhoto.file);
+    setTextWithHint(plan.currentPhoto.fileSelector, plan.currentPhoto.file);
     setText(plan.currentPhoto.stageSelector, plan.currentPhoto.stage);
     const completed = plan.currentPhoto.completed;
     $(plan.currentPhoto.completedSelector).innerHTML = completed.length

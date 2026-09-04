@@ -338,6 +338,7 @@ class FrontendI18nTests(unittest.TestCase):
             "score.signal.aestheticReference",
             "score.signal.llm",
             "score.signal.technical",
+            "score.signal.overallSource",
             "score.signal.notCalculated",
             "score.signal.notReviewed",
         )

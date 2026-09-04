@@ -37,6 +37,78 @@
     width: 100%;
   }
 
+  .gallery-bulk-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gallery-bulk-copy {
+    display: grid;
+    grid-template-columns: max-content max-content minmax(0, 1fr);
+    align-items: center;
+  }
+
+  .gallery-bulk-copy .batch-scope-pill {
+    grid-column: 3;
+  }
+
+  .gallery-source-status,
+  .gallery-thumb-progress {
+    grid-column: 1 / -1;
+  }
+
+  .gallery-bulk-actions {
+    justify-content: flex-start;
+  }
+
+  .distribution-view-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .distribution-lenses,
+  .distribution-view-layout .distribution-lenses {
+    position: static;
+    display: flex;
+    gap: 7px;
+    width: 100%;
+    padding: 5px;
+    overflow-x: auto;
+    border: 1px solid rgba(54, 61, 74, 0.08);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.58);
+  }
+
+  .distribution-view-layout .distribution-lens::before {
+    display: none;
+  }
+
+  .distribution-lens,
+  .distribution-view-layout .distribution-lens {
+    grid-template-columns: 32px minmax(0, 1fr);
+    flex: 0 0 156px;
+    min-width: 0;
+    min-height: 46px;
+    padding: 6px 10px 6px 2px;
+  }
+
+  .distribution-view-layout .distribution-lens-icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .distribution-view-layout .distribution-lens-icon .icon {
+    width: 26px;
+    height: 26px;
+  }
+
+  .distribution-view-layout .distribution-lens.is-active::after {
+    right: 6px;
+    height: 18px;
+  }
+
+  .distribution-decision-panel {
+    grid-template-columns: 1fr;
+  }
+
   .export-result-card {
     grid-template-columns: minmax(0, 1fr) auto;
   }
@@ -169,6 +241,36 @@
   .command-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-shell.has-results .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 16px;
+    padding: 0;
+  }
+
+  .app-shell.has-results .stat-card,
+  .app-shell.has-results .stat-card + .stat-card {
+    min-width: 0;
+    padding: 2px 0;
+    border-right: 0;
+  }
+
+  .gallery-bulk-actions {
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .gallery-action-group {
+    flex-wrap: nowrap;
+    gap: 5px;
+  }
+
+  .gallery-bulk-action {
+    min-width: 0;
+    padding: 0 6px;
+    white-space: nowrap;
   }
 }
 
@@ -334,56 +436,6 @@
     justify-content: flex-start;
   }
 
-  .distribution-lenses {
-    display: flex;
-    width: 100%;
-    overflow-x: auto;
-  }
-
-  .distribution-lens {
-    flex: 0 0 auto;
-    min-width: 142px;
-  }
-
-  .distribution-view-layout .distribution-lenses {
-    position: static;
-    display: flex;
-    gap: 7px;
-    width: 100%;
-    padding: 5px;
-    overflow-x: auto;
-    border: 1px solid rgba(54, 61, 74, 0.08);
-    border-radius: 18px;
-    background: rgba(255, 255, 255, 0.58);
-  }
-
-  .distribution-view-layout .distribution-lens::before {
-    display: none;
-  }
-
-  .distribution-view-layout .distribution-lens {
-    grid-template-columns: 32px minmax(0, 1fr);
-    flex: 0 0 auto;
-    min-width: 156px;
-    min-height: 46px;
-    padding: 6px 10px 6px 2px;
-  }
-
-  .distribution-view-layout .distribution-lens-icon {
-    width: 32px;
-    height: 32px;
-  }
-
-  .distribution-view-layout .distribution-lens-icon .icon {
-    width: 26px;
-    height: 26px;
-  }
-
-  .distribution-view-layout .distribution-lens.is-active::after {
-    right: 6px;
-    height: 18px;
-  }
-
   .distribution-head {
     flex-direction: column;
     padding: 18px;
@@ -391,10 +443,6 @@
 
   .distribution-score {
     min-width: 0;
-  }
-
-  .distribution-decision-panel {
-    grid-template-columns: 1fr;
   }
 
   .decision-metrics {
@@ -477,6 +525,8 @@
   }
 
   .rating-tooltip {
+    --rating-tooltip-arrow-right: 22px;
+
     right: 0;
     left: auto;
     width: min(calc(100vw - 32px), max(100%, 220px));
@@ -552,6 +602,25 @@
     min-height: 44px;
   }
 
+  .source-folder-row {
+    grid-template-columns: minmax(0, 1fr) 44px 44px;
+  }
+
+  .saved-filter-head,
+  .shortcut-help-head,
+  .settings-drawer-head {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .saved-filter-save.icon-button,
+  .shortcut-help-close.icon-button,
+  .settings-drawer-close.icon-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
   .language-trigger,
   .view-tab,
   .command-center.is-compact .command-actions .button {
@@ -572,7 +641,7 @@
   }
 
   .settings-drawer-head {
-    grid-template-columns: minmax(0, 1fr) 38px;
+    grid-template-columns: minmax(0, 1fr) 44px;
     gap: 12px;
     padding: 16px 16px 12px;
   }
@@ -625,6 +694,94 @@
   }
 }
 
+@media (max-width: 560px) {
+  .topbar-meta {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
+
+  .topbar-global-actions,
+  .top-status {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .topbar-global-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .gallery-bulk-copy {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 10px;
+  }
+
+  .gallery-bulk-copy .batch-scope-pill,
+  .gallery-source-status,
+  .gallery-thumb-progress {
+    grid-column: 1 / -1;
+  }
+
+  .gallery-bulk-actions {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .gallery-action-group {
+    flex-wrap: nowrap;
+    gap: 5px;
+    padding: 3px;
+    width: 100%;
+  }
+
+  .gallery-action-group.is-selection,
+  .gallery-action-group.is-decision {
+    flex: 0 0 auto;
+  }
+
+  .gallery-bulk-action {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 5px;
+  }
+}
+
+@media (max-width: 500px) {
+  .view-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 460px) {
+  .command-center.is-compact .command-main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .command-center.is-compact h2 {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .command-state {
+    width: fit-content;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .app-shell.has-results .stat-card {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+}
+
 .llm-confirm-actions .button,
 .batch-confirm-actions .button,
 .danger-confirm-actions .button {
@@ -671,14 +828,6 @@
     max-height: min(68vh, 520px);
     overflow-y: auto;
     transform-origin: bottom center;
-  }
-
-  .rating-tooltip::after {
-    right: 22px;
-  }
-
-  .distribution-view-layout {
-    grid-template-columns: 1fr;
   }
 
   .decision-metrics {

@@ -701,7 +701,7 @@ body.is-batch-confirm-open {
 .batch-confirm-facts {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.8fr) minmax(72px, 0.6fr);
   gap: 8px;
   margin: 4px 0 0;
 }

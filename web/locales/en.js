@@ -552,7 +552,7 @@
   "score.empty.file": "This photo has no file info yet.",
   "score.signalAria": "Score signals",
   "score.signal.overall": "Overall",
-  "score.signal.overallSource": "Recommendation mix",
+  "score.signal.overallSource": "Blended score",
   "score.signal.core": "Core aesthetic",
   "score.signal.coreSource": "Comp / light / color",
   "score.signal.aestheticReference": "Aesthetic ref.",

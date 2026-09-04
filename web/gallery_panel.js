@@ -1,4 +1,31 @@
 window.CulviaGalleryPanel = (() => {
+  function ratingTooltipPlacement({
+    anchorRect,
+    naturalHeight,
+    toolbarRect,
+    tooltipRect,
+    viewportHeight,
+    viewportWidth,
+  }) {
+    const viewportPadding = 16;
+    const tooltipGap = 12;
+    const toolbarVisible = toolbarRect && toolbarRect.bottom > 0 && toolbarRect.top < viewportHeight;
+    const safeTop = Math.max(viewportPadding, toolbarVisible ? toolbarRect.bottom + 8 : viewportPadding);
+    const availableAbove = Math.max(0, anchorRect.top - tooltipGap - safeTop);
+    const availableBelow = Math.max(0, viewportHeight - viewportPadding - anchorRect.bottom - tooltipGap);
+    const desiredHeight = Math.max(1, Number(naturalHeight || tooltipRect.height || 1));
+    const below = availableBelow >= Math.min(desiredHeight, 240) || availableBelow > availableAbove;
+    const maxHeight = Math.max(1, Math.min(desiredHeight, below ? availableBelow : availableAbove));
+    let shiftX = 0;
+    if (tooltipRect.left < viewportPadding) {
+      shiftX = viewportPadding - tooltipRect.left;
+    } else if (tooltipRect.right > viewportWidth - viewportPadding) {
+      shiftX = viewportWidth - viewportPadding - tooltipRect.right;
+    }
+    const arrowRight = Math.max(12, Math.min(tooltipRect.width - 24, 18 + shiftX));
+    return { arrowRight, below, maxHeight, shiftX };
+  }
+
   function create({
     $,
     $$,
@@ -638,15 +665,6 @@ window.CulviaGalleryPanel = (() => {
       }) || null;
     }
 
-    function rectanglesIntersect(first, second) {
-      return !!(first && second && !(
-        first.right <= second.left ||
-        first.left >= second.right ||
-        first.bottom <= second.top ||
-        first.top >= second.bottom
-      ));
-    }
-
     function ensureGalleryRatingTooltip(rating) {
       const card = rating?.closest?.("#galleryGrid .photo-card");
       if (!card) return null;
@@ -675,14 +693,24 @@ window.CulviaGalleryPanel = (() => {
       const tooltip = ensureGalleryRatingTooltip(rating);
       if (!tooltip) return;
       tooltip.classList.remove("is-placement-below");
+      tooltip.style.removeProperty("max-height");
+      tooltip.style.removeProperty("--rating-tooltip-arrow-right");
+      tooltip.style.removeProperty("--rating-tooltip-shift-x");
       const toolbar = visibleElement(".gallery-bulk-toolbar");
-      if (!toolbar) return;
+      const anchorRect = rating.getBoundingClientRect();
       const tooltipRect = tooltip.getBoundingClientRect();
-      const toolbarRect = toolbar.getBoundingClientRect();
-      const hitsToolbar = rectanglesIntersect(tooltipRect, toolbarRect);
-      if (hitsToolbar || tooltipRect.top < toolbarRect.bottom + 8) {
-        tooltip.classList.add("is-placement-below");
-      }
+      const placement = ratingTooltipPlacement({
+        anchorRect,
+        naturalHeight: tooltipRect.height,
+        toolbarRect: toolbar?.getBoundingClientRect() || null,
+        tooltipRect,
+        viewportHeight: window.innerHeight,
+        viewportWidth: window.innerWidth,
+      });
+      tooltip.classList.toggle("is-placement-below", placement.below);
+      tooltip.style.maxHeight = `${Math.floor(placement.maxHeight)}px`;
+      tooltip.style.setProperty("--rating-tooltip-arrow-right", `${Math.floor(placement.arrowRight)}px`);
+      tooltip.style.setProperty("--rating-tooltip-shift-x", `${Math.round(placement.shiftX)}px`);
     }
 
     function handleGalleryTooltipIntent(event) {
@@ -764,5 +792,5 @@ window.CulviaGalleryPanel = (() => {
     };
   }
 
-  return { create };
+  return { create, ratingTooltipPlacement };
 })();

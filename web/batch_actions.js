@@ -64,7 +64,7 @@ window.CulviaBatchActions = (() => {
     return {
       actionLabel: meta.label,
       buttonLabel: t("batch.confirmStatus", { status: meta.label }, `确认${meta.label}`),
-      countText: t("batch.confirmCount", { count: Number(target.count || 0), scope: target.label || t("batch.scopeFiltered", {}, "当前筛选") }, `${Number(target.count || 0)} 张 · ${target.label || "当前筛选"}`),
+      countText: t("common.photoCount", { count: Number(target.count || 0) }, `${Number(target.count || 0)} 张`),
       detail: meta.detail,
       icon: meta.icon,
       scopeText: target.label || t("batch.scopeFiltered", {}, "当前筛选"),

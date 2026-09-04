@@ -46,6 +46,10 @@ class FrontendBatchActionsTests(unittest.TestCase):
             if (colorNotice.state !== "Marked" || colorNotice.title !== "Color label cleared") {
               throw new Error("color notice should be localized");
             }
+            const confirm = actions.confirmView("pick", target);
+            if (confirm.countText !== "4 photos" || confirm.scopeText !== "Current filter") {
+              throw new Error("confirm facts should stay concise and non-redundant");
+            }
             """
         )
         result = subprocess.run(["node", "-e", script], cwd=ROOT, text=True, capture_output=True, check=False)
@@ -109,7 +113,7 @@ class FrontendBatchActionsTests(unittest.TestCase):
             if (confirm.title !== "批量设为淘汰？" || confirm.buttonLabel !== "确认淘汰") {
               throw new Error("confirm labels are wrong");
             }
-            if (confirm.countText !== "2 张 · 已选照片" || confirm.icon !== "x" || confirm.tone !== "reject") {
+            if (confirm.countText !== "2 张" || confirm.icon !== "x" || confirm.tone !== "reject") {
               throw new Error("confirm detail is wrong");
             }
             if (confirm.scopeText !== "已选照片") {

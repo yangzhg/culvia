@@ -627,7 +627,6 @@ body.has-tooltip-portal [data-ui-tooltip]::after {
   margin-top: 8px;
 }
 
-.manual-path-edit:not([open]) textarea,
-.manual-path-edit:not([open]) .text-input {
+.manual-path-edit:not([open]) > :not(summary) {
   display: none;
 }
