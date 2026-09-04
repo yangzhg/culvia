@@ -40,7 +40,7 @@ rg -n "sk-[A-Za-z0-9]{12,}" --glob '!model_cache/**' --glob '!thumbnail_cache/**
 python tools/formal_gate.py
 python tools/formal_gate.py --skip-release-smoke
 python tools/formal_gate.py --build-sdist
-python tools/formal_gate.py --sdist-artifact dist/python/culvia-0.1.1.tar.gz
+python tools/formal_gate.py --sdist-artifact dist/python/culvia-0.2.0.tar.gz
 ```
 
 前端改动至少运行：
@@ -199,10 +199,10 @@ python tools/build_windows_zip.py --check-plan --target x86_64-pc-windows-msvc -
 python tools/build_windows_zip.py --build --target x86_64-pc-windows-msvc --desktop-binary <culvia-desktop.exe> --backend-binary <culvia-server.exe> --json
 python tools/build_windows_zip.py --runtime-profile lite --check-plan --target x86_64-pc-windows-msvc --desktop-binary <culvia-desktop.exe> --json
 python tools/build_windows_zip.py --runtime-profile lite --build --target x86_64-pc-windows-msvc --desktop-binary <culvia-desktop.exe> --json
-python tools/check_portable_package_preflight.py --windows-zip dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip --json
-python tools/check_portable_package_preflight.py --windows-lite-zip dist/windows-lite/culvia-0.1.1-windows-lite-x86_64-pc-windows-msvc.zip --json
-python tools/check_portable_package_runtime.py --windows-zip dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip --exit-after-ms 20000 --json
-python tools/formal_gate.py --windows-zip-artifact dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip --skip-release-smoke
+python tools/check_portable_package_preflight.py --windows-zip dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip --json
+python tools/check_portable_package_preflight.py --windows-lite-zip dist/windows-lite/culvia-0.2.0-windows-lite-x86_64-pc-windows-msvc.zip --json
+python tools/check_portable_package_runtime.py --windows-zip dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip --exit-after-ms 20000 --json
+python tools/formal_gate.py --windows-zip-artifact dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip --skip-release-smoke
 ```
 
 Linux：
@@ -220,10 +220,10 @@ python tools/build_linux_tgz.py --check-plan --target x86_64-unknown-linux-gnu -
 python tools/build_linux_tgz.py --build --target x86_64-unknown-linux-gnu --desktop-binary <culvia-desktop> --backend-binary <culvia-server> --json
 python tools/build_linux_tgz.py --runtime-profile lite --check-plan --target x86_64-unknown-linux-gnu --desktop-binary <culvia-desktop> --json
 python tools/build_linux_tgz.py --runtime-profile lite --build --target x86_64-unknown-linux-gnu --desktop-binary <culvia-desktop> --json
-python tools/check_portable_package_preflight.py --linux-tgz dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz --json
-python tools/check_portable_package_preflight.py --linux-lite-tgz dist/linux-lite/culvia-0.1.1-linux-lite-x86_64-unknown-linux-gnu.tar.gz --json
-python tools/check_portable_package_runtime.py --linux-tgz dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz --exit-after-ms 20000 --json
-python tools/formal_gate.py --linux-tgz-artifact dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz --skip-release-smoke
+python tools/check_portable_package_preflight.py --linux-tgz dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz --json
+python tools/check_portable_package_preflight.py --linux-lite-tgz dist/linux-lite/culvia-0.2.0-linux-lite-x86_64-unknown-linux-gnu.tar.gz --json
+python tools/check_portable_package_runtime.py --linux-tgz dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz --exit-after-ms 20000 --json
+python tools/formal_gate.py --linux-tgz-artifact dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz --skip-release-smoke
 ```
 
 Full 包必须自包含 Python runtime 和 web data，不要求用户安装系统 Python。Lite 包有意不内置 backend 和 web data，默认使用应用自己管理的 virtualenv runtime，并在首次启动时需要 Python 3.11+。`tools/check_portable_package_preflight.py` 验证压缩包结构、路径安全、manifest、可执行文件类型和 forbidden runtime artifacts。`tools/check_portable_package_runtime.py` 必须在目标 OS runner 上验证 full 包 launcher、bundled backend 和 fixture workflow。

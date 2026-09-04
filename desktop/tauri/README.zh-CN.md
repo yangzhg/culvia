@@ -106,8 +106,8 @@ npm run windows:zip:build -- --target x86_64-pc-windows-msvc --desktop-binary sr
 构建 Windows/Linux 压缩包后，应对最终压缩包运行便携包预检，而不是检查 staging 目录：
 
 ```bash
-npm run windows:zip:preflight -- ../../dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip
-npm run linux:tgz:preflight -- ../../dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz
+npm run windows:zip:preflight -- ../../dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip
+npm run linux:tgz:preflight -- ../../dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 Windows/Linux runner 的权威流程位于 `../../tools/desktop_release_contract.py`，手动 GitHub Actions 入口是 `../../.github/workflows/desktop-release.yml`。工作流检查器是 `../../tools/check_desktop_release_workflow.py`；它限制上传路径只能是最终 `.zip` / `.tar.gz` 包，并拒绝 release bypass 或 secret 使用。

@@ -40,7 +40,7 @@ Aggregated gate:
 python tools/formal_gate.py
 python tools/formal_gate.py --skip-release-smoke
 python tools/formal_gate.py --build-sdist
-python tools/formal_gate.py --sdist-artifact dist/python/culvia-0.1.1.tar.gz
+python tools/formal_gate.py --sdist-artifact dist/python/culvia-0.2.0.tar.gz
 ```
 
 For frontend changes, at least run:
@@ -199,10 +199,10 @@ python tools/build_windows_zip.py --check-plan --target x86_64-pc-windows-msvc -
 python tools/build_windows_zip.py --build --target x86_64-pc-windows-msvc --desktop-binary <culvia-desktop.exe> --backend-binary <culvia-server.exe> --json
 python tools/build_windows_zip.py --runtime-profile lite --check-plan --target x86_64-pc-windows-msvc --desktop-binary <culvia-desktop.exe> --json
 python tools/build_windows_zip.py --runtime-profile lite --build --target x86_64-pc-windows-msvc --desktop-binary <culvia-desktop.exe> --json
-python tools/check_portable_package_preflight.py --windows-zip dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip --json
-python tools/check_portable_package_preflight.py --windows-lite-zip dist/windows-lite/culvia-0.1.1-windows-lite-x86_64-pc-windows-msvc.zip --json
-python tools/check_portable_package_runtime.py --windows-zip dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip --exit-after-ms 20000 --json
-python tools/formal_gate.py --windows-zip-artifact dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip --skip-release-smoke
+python tools/check_portable_package_preflight.py --windows-zip dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip --json
+python tools/check_portable_package_preflight.py --windows-lite-zip dist/windows-lite/culvia-0.2.0-windows-lite-x86_64-pc-windows-msvc.zip --json
+python tools/check_portable_package_runtime.py --windows-zip dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip --exit-after-ms 20000 --json
+python tools/formal_gate.py --windows-zip-artifact dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip --skip-release-smoke
 ```
 
 Linux:
@@ -220,10 +220,10 @@ python tools/build_linux_tgz.py --check-plan --target x86_64-unknown-linux-gnu -
 python tools/build_linux_tgz.py --build --target x86_64-unknown-linux-gnu --desktop-binary <culvia-desktop> --backend-binary <culvia-server> --json
 python tools/build_linux_tgz.py --runtime-profile lite --check-plan --target x86_64-unknown-linux-gnu --desktop-binary <culvia-desktop> --json
 python tools/build_linux_tgz.py --runtime-profile lite --build --target x86_64-unknown-linux-gnu --desktop-binary <culvia-desktop> --json
-python tools/check_portable_package_preflight.py --linux-tgz dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz --json
-python tools/check_portable_package_preflight.py --linux-lite-tgz dist/linux-lite/culvia-0.1.1-linux-lite-x86_64-unknown-linux-gnu.tar.gz --json
-python tools/check_portable_package_runtime.py --linux-tgz dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz --exit-after-ms 20000 --json
-python tools/formal_gate.py --linux-tgz-artifact dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz --skip-release-smoke
+python tools/check_portable_package_preflight.py --linux-tgz dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz --json
+python tools/check_portable_package_preflight.py --linux-lite-tgz dist/linux-lite/culvia-0.2.0-linux-lite-x86_64-unknown-linux-gnu.tar.gz --json
+python tools/check_portable_package_runtime.py --linux-tgz dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz --exit-after-ms 20000 --json
+python tools/formal_gate.py --linux-tgz-artifact dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz --skip-release-smoke
 ```
 
 Full packages must contain their own Python runtime and web data; users should not need to install system Python. Lite packages intentionally do not bundle the backend or web data; they default to the app-managed virtualenv runtime and require Python 3.11+ on first launch. `tools/check_portable_package_preflight.py` verifies archive structure, path safety, manifest data, executable file types, and forbidden runtime artifacts. `tools/check_portable_package_runtime.py` must run on the target OS runner to verify full package launcher, bundled backend, and fixture workflow.

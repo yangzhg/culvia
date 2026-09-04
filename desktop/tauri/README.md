@@ -106,8 +106,8 @@ npm run windows:zip:build -- --target x86_64-pc-windows-msvc --desktop-binary sr
 After building Windows/Linux archives, run portable package artifact preflight against the final archive, not the staging directory:
 
 ```bash
-npm run windows:zip:preflight -- ../../dist/windows/culvia-0.1.1-windows-x86_64-pc-windows-msvc.zip
-npm run linux:tgz:preflight -- ../../dist/linux/culvia-0.1.1-linux-x86_64-unknown-linux-gnu.tar.gz
+npm run windows:zip:preflight -- ../../dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip
+npm run linux:tgz:preflight -- ../../dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 The authoritative Windows/Linux runner sequence lives in `../../tools/desktop_release_contract.py`, and the manual GitHub Actions entrypoint is `../../.github/workflows/desktop-release.yml`. The workflow checker is `../../tools/check_desktop_release_workflow.py`; it keeps upload paths limited to final `.zip` / `.tar.gz` archives and rejects release bypass or secret usage in those jobs.
