@@ -141,6 +141,26 @@ class InsightStoreTests(unittest.TestCase):
             )
 
             self.assertEqual(matches, {"image-current": AnalysisInsightMatch(2.0)})
+            mapped_matches = store.latest_matching_results(
+                cache_path,
+                file_ids=file_ids,
+                analyzer_key="llm_review",
+                provider="unit",
+                model="mock-vlm",
+                model_version="mock-vlm",
+                prompt_version="unused-fallback",
+                prompt_versions_by_file_id={
+                    "image-current": "current",
+                    "image-stale": "stale",
+                },
+            )
+            self.assertEqual(
+                mapped_matches,
+                {
+                    "image-current": AnalysisInsightMatch(2.0),
+                    "image-stale": AnalysisInsightMatch(2.0),
+                },
+            )
             self.assertEqual(
                 {insight.file_id for insight in store.load(cache_path, file_ids=file_ids)},
                 {"image-current", "image-stale"},

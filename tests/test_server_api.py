@@ -32,6 +32,17 @@ def make_test_image(path: Path, size: tuple[int, int] = (32, 24)) -> Path:
     return path
 
 
+def current_core_score_fields(overall: float) -> dict[str, object]:
+    values: dict[str, object] = {
+        column: overall / 2 if column.endswith("_0_5") else overall
+        for column in scoring.CORE_AESTHETIC_GROUP.cache_columns
+    }
+    values[scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CORE_AESTHETIC]] = scoring.MODEL_CAPABILITIES[
+        scoring.MODEL_CORE_AESTHETIC
+    ].result_version
+    return values
+
+
 def make_direct_request(app: object, path: str, query: dict[str, str] | None = None) -> Request:
     return Request(
         {
@@ -168,7 +179,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "a.jpg",
                         "error": "",
-                        "overall_0_10": 8.6,
+                        **current_core_score_fields(8.6),
                     },
                     {
                         "file_id": "image-2",
@@ -176,7 +187,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "b.jpg",
                         "error": "",
-                        "overall_0_10": 6.1,
+                        **current_core_score_fields(6.1),
                     },
                 ]
             )
@@ -1103,7 +1114,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": str(root),
                         "filename": selected_path.name,
                         "error": "",
-                        "overall_0_10": 8.8,
+                        **current_core_score_fields(8.8),
                     },
                     {
                         "file_id": "image-2",
@@ -1111,7 +1122,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": str(root),
                         "filename": rejected_path.name,
                         "error": "",
-                        "overall_0_10": 5.2,
+                        **current_core_score_fields(5.2),
                     },
                     {
                         "file_id": "image-3",
@@ -1119,7 +1130,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": str(root),
                         "filename": missing_path.name,
                         "error": "",
-                        "overall_0_10": 8.1,
+                        **current_core_score_fields(8.1),
                     },
                 ]
             )
@@ -1192,7 +1203,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "a.jpg",
                         "error": "",
-                        "overall_0_10": 8.4,
+                        **current_core_score_fields(8.4),
                     },
                     {
                         "file_id": "image-2",
@@ -1200,7 +1211,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "b.jpg",
                         "error": "",
-                        "overall_0_10": 5.1,
+                        **current_core_score_fields(5.1),
                     },
                 ]
             )
@@ -1254,7 +1265,13 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": f"photo-{index:04d}.jpg",
                         "error": "",
-                        "overall_0_10": 8.0,
+                        **{
+                            column: 4.0 if column.endswith("_0_5") else 8.0
+                            for column in scoring.CORE_AESTHETIC_GROUP.cache_columns
+                        },
+                        scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CORE_AESTHETIC]: scoring.MODEL_CAPABILITIES[
+                            scoring.MODEL_CORE_AESTHETIC
+                        ].result_version,
                     }
                     for index in range(620)
                 ]
@@ -1292,6 +1309,14 @@ class ServerApiTests(unittest.TestCase):
             self.assertEqual(state_payload["summary"]["matched"], 620)
             self.assertEqual(state_payload["summary"]["showing"], 80)
             self.assertEqual(len(state_payload["photos"]), 80)
+            self.assertEqual(
+                state_payload["scoreProvenance"]["summary"][scoring.MODEL_CORE_AESTHETIC]["current"],
+                620,
+            )
+            self.assertEqual(
+                state_payload["photos"][0]["scoreProvenance"][scoring.MODEL_CORE_AESTHETIC]["state"],
+                "current",
+            )
 
             self.assertEqual(status_response.status_code, 200)
             self.assertEqual(status_response.json()["action"]["marked"], 620)
@@ -1308,6 +1333,8 @@ class ServerApiTests(unittest.TestCase):
             self.assertEqual(marks["photo-0000"].note, "keeper")
 
             self.assertEqual(csv_response.status_code, 200)
+            self.assertIn("core_aesthetic_result_version", csv_response.text.splitlines()[0])
+            self.assertIn("core_aesthetic_result_state", csv_response.text.splitlines()[0])
             csv_rows = list(csv.DictReader(io.StringIO(csv_response.content.decode("utf-8-sig"))))
             self.assertEqual(len(csv_rows), 620)
             self.assertIn("photo-0619", {row["file_id"] for row in csv_rows})
@@ -1331,7 +1358,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": str(root),
                         "filename": pick_path.name,
                         "error": "",
-                        "overall_0_10": 6.1,
+                        **current_core_score_fields(6.1),
                         scoring.LLM_REVIEW_GENERATION_COLUMN: 1.0,
                         "llm_review_overall_0_10": 8.2,
                     },
@@ -1341,7 +1368,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": str(root),
                         "filename": reject_path.name,
                         "error": "",
-                        "overall_0_10": 8.8,
+                        **current_core_score_fields(8.8),
                         scoring.LLM_REVIEW_GENERATION_COLUMN: 2.0,
                         "llm_review_overall_0_10": 5.2,
                     },
@@ -1351,7 +1378,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": str(root),
                         "filename": skipped_path.name,
                         "error": "",
-                        "overall_0_10": 7.3,
+                        **current_core_score_fields(7.3),
                         "llm_review_overall_0_10": None,
                     },
                 ]
@@ -1463,7 +1490,13 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "current.jpg",
                         "error": "",
-                        "overall_0_10": 4.0,
+                        **{
+                            column: 2.0 if column.endswith("_0_5") else 4.0
+                            for column in scoring.CORE_AESTHETIC_GROUP.cache_columns
+                        },
+                        scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CORE_AESTHETIC]: scoring.MODEL_CAPABILITIES[
+                            scoring.MODEL_CORE_AESTHETIC
+                        ].result_version,
                         scoring.LLM_REVIEW_GENERATION_COLUMN: 10.0,
                         "llm_review_overall_0_10": 9.0,
                         "llm_aesthetic_overall_0_10": 9.0,
@@ -1475,7 +1508,13 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "stale.jpg",
                         "error": "",
-                        "overall_0_10": 4.0,
+                        **{
+                            column: 2.0 if column.endswith("_0_5") else 4.0
+                            for column in scoring.CORE_AESTHETIC_GROUP.cache_columns
+                        },
+                        scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CORE_AESTHETIC]: scoring.MODEL_CAPABILITIES[
+                            scoring.MODEL_CORE_AESTHETIC
+                        ].result_version,
                         scoring.LLM_REVIEW_GENERATION_COLUMN: 1.0,
                         "llm_review_overall_0_10": 9.7,
                         "llm_aesthetic_overall_0_10": 10.0,
@@ -1557,6 +1596,81 @@ class ServerApiTests(unittest.TestCase):
             self.assertEqual(selected_rows["stale"][scoring.LLM_REVIEW_GENERATION_COLUMN], "")
             self.assertEqual(float(selected_rows["stale"]["recommendation_0_10"]), 4.0)
 
+    def test_stale_local_scores_are_masked_from_state_acceptance_and_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = str(Path(tmp) / "scores.sqlite")
+            version_column = scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CORE_AESTHETIC]
+            current_version = scoring.MODEL_CAPABILITIES[scoring.MODEL_CORE_AESTHETIC].result_version
+
+            def score_row(file_id: str, value: float, version: str | None) -> dict[str, object]:
+                row: dict[str, object] = {
+                    "file_id": file_id,
+                    "path": f"/photos/{file_id}.jpg",
+                    "folder": "/photos",
+                    "filename": f"{file_id}.jpg",
+                    "error": "",
+                }
+                row.update({column: value for column in scoring.CORE_AESTHETIC_GROUP.cache_columns})
+                if version is not None:
+                    row[version_column] = version
+                return row
+
+            source_df = pd.DataFrame(
+                [
+                    score_row("current", 8.0, current_version),
+                    score_row("legacy", 9.0, None),
+                    score_row("stale", 9.6, "score-v1:old"),
+                ]
+            )
+            store = AppStateStore(
+                create_initial_state(
+                    scores_df=source_df,
+                    default_photo_dirs=["/photos"],
+                    default_cache_path=cache_path,
+                    filter_defaults=culvia_app.FILTER_DEFAULTS,
+                    default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+                )
+            )
+            with store.lock:
+                store.data["filters"].update({"minScore": 7.0, "limit": 80})
+            for file_id in ("current", "legacy", "stale"):
+                photo_curation.save_photo_mark(cache_path, file_id, status="pick")
+            client = TestClient(culvia_app.create_app(store))
+
+            state_response = client.get("/api/state")
+            accept_response = client.post("/api/mark/accept", json={"scope": "filtered", "basis": "model"})
+            filtered_csv_response = client.get("/api/export")
+            selected_csv_response = client.get("/api/export/selected")
+
+            self.assertEqual(state_response.status_code, 200)
+            payload = state_response.json()
+            self.assertEqual([photo["fileId"] for photo in payload["photos"]], ["current"])
+            core_summary = payload["scoreProvenance"]["summary"][scoring.MODEL_CORE_AESTHETIC]
+            self.assertEqual((core_summary["current"], core_summary["legacy"], core_summary["stale"]), (1, 1, 1))
+            core_option = next(
+                option for option in payload["model"]["options"] if option["key"] == scoring.MODEL_CORE_AESTHETIC
+            )
+            self.assertEqual(core_option["resultVersion"], current_version)
+            self.assertEqual(core_option["scoreCache"]["needsRescore"], 2)
+            self.assertEqual(accept_response.json()["action"]["accepted"], 1)
+
+            filtered_rows = list(csv.DictReader(io.StringIO(filtered_csv_response.content.decode("utf-8-sig"))))
+            self.assertEqual([row["file_id"] for row in filtered_rows], ["current"])
+            self.assertEqual(filtered_rows[0]["core_aesthetic_result_state"], "current")
+
+            selected_rows = {
+                row["file_id"]: row
+                for row in csv.DictReader(io.StringIO(selected_csv_response.content.decode("utf-8-sig")))
+            }
+            self.assertEqual(set(selected_rows), {"current", "legacy", "stale"})
+            self.assertEqual(selected_rows["current"]["overall_0_10"], "8.0")
+            self.assertEqual(selected_rows["current"]["core_aesthetic_result_state"], "current")
+            self.assertEqual(selected_rows["legacy"]["overall_0_10"], "")
+            self.assertEqual(selected_rows["legacy"]["core_aesthetic_result_state"], "legacy")
+            self.assertEqual(selected_rows["stale"]["overall_0_10"], "")
+            self.assertEqual(selected_rows["stale"]["core_aesthetic_result_state"], "stale")
+            self.assertEqual(float(store.data["scores_df"].set_index("file_id").loc["legacy", "overall_0_10"]), 9.0)
+
     def test_accept_marks_can_apply_to_selected_photo_ids(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache_path = str(Path(tmp) / "scores.sqlite")
@@ -1568,7 +1682,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "a.jpg",
                         "error": "",
-                        "overall_0_10": 8.4,
+                        **current_core_score_fields(8.4),
                     },
                     {
                         "file_id": "image-2",
@@ -1576,7 +1690,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "b.jpg",
                         "error": "",
-                        "overall_0_10": 7.6,
+                        **current_core_score_fields(7.6),
                     },
                     {
                         "file_id": "image-3",
@@ -1584,7 +1698,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "c.jpg",
                         "error": "",
-                        "overall_0_10": 5.1,
+                        **current_core_score_fields(5.1),
                     },
                 ]
             )
@@ -2249,7 +2363,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "a.jpg",
                         "error": "",
-                        "overall_0_10": 8.4,
+                        **current_core_score_fields(8.4),
                     },
                     {
                         "file_id": "image-2",
@@ -2257,7 +2371,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "b.jpg",
                         "error": "",
-                        "overall_0_10": 7.1,
+                        **current_core_score_fields(7.1),
                     },
                     {
                         "file_id": "image-3",
@@ -2265,7 +2379,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "c.jpg",
                         "error": "",
-                        "overall_0_10": 5.8,
+                        **current_core_score_fields(5.8),
                     },
                 ]
             )
@@ -2387,7 +2501,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "a.jpg",
                         "error": "",
-                        "overall_0_10": 8.4,
+                        **current_core_score_fields(8.4),
                     },
                     {
                         "file_id": "image-2",
@@ -2395,7 +2509,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "b.jpg",
                         "error": "",
-                        "overall_0_10": 7.1,
+                        **current_core_score_fields(7.1),
                     },
                     {
                         "file_id": "image-3",
@@ -2403,7 +2517,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "c.jpg",
                         "error": "",
-                        "overall_0_10": 5.8,
+                        **current_core_score_fields(5.8),
                     },
                 ]
             )
@@ -2536,7 +2650,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "a.jpg",
                         "error": "",
-                        "overall_0_10": 8.4,
+                        **current_core_score_fields(8.4),
                     },
                     {
                         "file_id": "image-2",
@@ -2544,7 +2658,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "b.jpg",
                         "error": "",
-                        "overall_0_10": 7.1,
+                        **current_core_score_fields(7.1),
                     },
                 ]
             )
@@ -2592,7 +2706,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "a.jpg",
                         "error": "",
-                        "overall_0_10": 8.4,
+                        **current_core_score_fields(8.4),
                     },
                     {
                         "file_id": "image-2",
@@ -2600,7 +2714,7 @@ class ServerApiTests(unittest.TestCase):
                         "folder": "/photos",
                         "filename": "b.jpg",
                         "error": "",
-                        "overall_0_10": 7.1,
+                        **current_core_score_fields(7.1),
                     },
                 ]
             )

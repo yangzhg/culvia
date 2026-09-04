@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from culvia.job_text import TranslatableRuntimeError
+from culvia.local_score_contracts import CLIP_LOGIT_SCALE, CLIP_PROMPT_PAIRS, CLIP_SCORE_SCALE
 from culvia.model_files import MODEL_PT_SHA256
 
 
@@ -24,30 +25,6 @@ class LoadedClipReferenceModel:
     model: object
     device: str
     text_features: dict[str, object]
-
-
-CLIP_PROMPT_PAIRS = {
-    "clip_iqa_overall": (
-        "a high quality photo",
-        "a low quality photo",
-    ),
-    "clip_iqa_sharpness": (
-        "a sharp clear photo",
-        "a blurry out of focus photo",
-    ),
-    "clip_iqa_exposure": (
-        "a well exposed photo",
-        "an overexposed or underexposed photo",
-    ),
-    "clip_iqa_cleanliness": (
-        "a clean photo with little noise",
-        "a noisy grainy photo",
-    ),
-    "clip_aesthetic": (
-        "a beautiful aesthetically pleasing photograph",
-        "an unattractive poorly composed photograph",
-    ),
-}
 
 
 def load_torch_object(model_path: str) -> object:
@@ -245,7 +222,7 @@ def score_clip_reference_image(
 
     scores: dict[str, float] = {}
     for field, text_features in loaded_model.text_features.items():
-        logits = 100.0 * image_features @ text_features.T
+        logits = CLIP_LOGIT_SCALE * image_features @ text_features.T
         probability = torch.softmax(logits, dim=-1)[0, 0].item()
-        scores[field] = clamp_score(probability * 10.0)
+        scores[field] = clamp_score(probability * CLIP_SCORE_SCALE)
     return scores

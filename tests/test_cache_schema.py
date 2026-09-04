@@ -62,6 +62,28 @@ class CacheSchemaHelperTests(unittest.TestCase):
 
         self.assertEqual(columns["llm_review_generation"], "REAL")
 
+    def test_result_version_migration_is_nullable_and_does_not_bless_legacy_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "scores.sqlite"
+            with sqlite3.connect(cache_path) as conn:
+                ensure_cache_schema(conn, ["file_id", "overall_0_10"], {"file_id"})
+                conn.execute(
+                    "INSERT INTO culvia_scores (file_id, overall_0_10) VALUES (?, ?)",
+                    ("legacy-photo", 8.2),
+                )
+                ensure_cache_schema(
+                    conn,
+                    ["file_id", "overall_0_10", "core_aesthetic_result_version"],
+                    {"file_id", "core_aesthetic_result_version"},
+                )
+                row = conn.execute("SELECT overall_0_10, core_aesthetic_result_version FROM culvia_scores").fetchone()
+                column_type = {
+                    item[1]: item[2] for item in conn.execute("PRAGMA table_info(culvia_scores)").fetchall()
+                }["core_aesthetic_result_version"]
+
+        self.assertEqual(row, (8.2, None))
+        self.assertEqual(column_type, "TEXT")
+
     def test_readonly_legacy_schema_remains_readable_without_migration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache_path = Path(tmp) / "scores.sqlite"

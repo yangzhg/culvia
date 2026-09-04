@@ -13,6 +13,7 @@ from culvia.curation import PhotoMark, curation_export_dataframe, load_photo_mar
 from culvia.curation_context import DisplayDataframeBuilder, build_curation_display_context
 from culvia.curation_targets import frame_file_ids
 from culvia.job_text import text_ref
+from culvia.local_score_provenance import preserve_local_result_states
 
 
 EXPORT_PAYLOAD_VERSION = 1
@@ -169,6 +170,7 @@ def export_csv_bytes(
     normalize_dataframe: Callable[[pd.DataFrame], pd.DataFrame],
 ) -> bytes:
     export_df = curation_export_dataframe(df, marks, normalize_dataframe=normalize_dataframe)
+    export_df = preserve_local_result_states(df, export_df)
     return export_df.to_csv(index=False).encode("utf-8-sig")
 
 

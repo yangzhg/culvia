@@ -12,6 +12,7 @@ from culvia.cache_schema import is_sqlite_cache_path
 from culvia.insight_store import AnalysisInsight, AnalysisInsightMatch
 from culvia.job_service import JobCancelled
 from culvia.llm_provenance import resolve_llm_score_dataframe
+from culvia.local_score_provenance import current_local_score_context
 from culvia.schema import (
     CSV_COLUMNS,
     LLM_REVIEW_FIELDS,
@@ -23,6 +24,7 @@ from culvia.schema import (
     MODEL_LLM_REVIEW,
     RECOMMENDATION_COLUMN,
     score_column,
+    stamp_model_result_version,
 )
 
 ProgressCallback = Callable[[int, int, Path, str], None]
@@ -70,6 +72,8 @@ class ScoreImagePathDependencies:
     load_latest_matching_analysis_insight_results: Callable[..., Mapping[str, AnalysisInsightMatch]]
     save_analysis_insights: Callable[[Iterable[AnalysisInsight], str | Path], None]
     llm_review_prompt_version: Callable[[], str]
+    llm_review_result_prompt_version: Callable[..., str]
+    llm_review_input_mode: Callable[[], str]
     llm_review_provider: Callable[[], str]
     llm_review_model_name: Callable[[], str]
 
@@ -106,13 +110,20 @@ def score_image_paths(
         use_cache=use_cache,
         dependencies=dependencies,
     )
+    llm_input_mode = dependencies.llm_review_input_mode()
     current_llm_file_ids = _resolve_cached_llm_reviews(
         entries,
         cache_path=cache_path,
         use_cache=use_cache,
         dependencies=dependencies,
+        input_mode=llm_input_mode,
     )
-    _refresh_llm_review_needs(entries, active_models, current_llm_file_ids=current_llm_file_ids)
+    _refresh_llm_review_needs(
+        entries,
+        active_models,
+        current_llm_file_ids=current_llm_file_ids,
+        contextual=llm_input_mode == "text",
+    )
 
     loaded_model: object | None = None
     if pending_core_count:
@@ -156,6 +167,7 @@ def score_image_paths(
                             record,
                             dependencies.score_aesthetic_image(entry.path, loaded_model),
                         )
+                        record = stamp_model_result_version(record, MODEL_CORE_AESTHETIC)
                     except JobCancelled:
                         raise
                     except Exception as exc:
@@ -197,6 +209,9 @@ def score_image_paths(
                                 requested_clip_fields.update(dependencies.model_output_fields(model_key))
                         clip_scores = {key: value for key, value in clip_scores.items() if key in requested_clip_fields}
                         record = dependencies.apply_clip_reference_scores(record, clip_scores)
+                        for model_key in (MODEL_CLIP_IQA, MODEL_CLIP_AESTHETIC):
+                            if entry.needs.get(model_key):
+                                record = stamp_model_result_version(record, model_key)
                     except JobCancelled:
                         raise
                     except Exception as exc:
@@ -212,7 +227,7 @@ def score_image_paths(
                         llm_output = dependencies.score_llm_review_image(
                             entry.path,
                             file_id=entry.file_id,
-                            score_context=record,
+                            score_context=current_local_score_context(record),
                         )
                         generation = _llm_output_generation(llm_output)
                         record = dependencies.apply_llm_review_scores(
@@ -309,12 +324,24 @@ def _resolve_cached_llm_reviews(
     cache_path: str | Path | None,
     use_cache: bool,
     dependencies: ScoreImagePathDependencies,
+    input_mode: str,
 ) -> frozenset[str]:
     if not cache_path or not use_cache:
         return frozenset()
 
-    matching_llm_review_results = _matching_llm_review_results(entries, cache_path, dependencies)
-    cached_entries = [entry for entry in entries if not entry.pre_error and entry.cached_record is not None]
+    matching_llm_review_results = _matching_llm_review_results(
+        entries,
+        cache_path,
+        dependencies,
+        input_mode=input_mode,
+    )
+    cached_entries = [
+        entry
+        for entry in entries
+        if not entry.pre_error
+        and entry.cached_record is not None
+        and _has_cached_value(entry.cached_record.get(LLM_REVIEW_GENERATION_COLUMN))
+    ]
     resolution = resolve_llm_score_dataframe(
         pd.DataFrame([entry.cached_record for entry in cached_entries]),
         matching_llm_review_results,
@@ -349,11 +376,19 @@ def _refresh_llm_review_needs(
     active_models: Iterable[str],
     *,
     current_llm_file_ids: frozenset[str],
+    contextual: bool,
 ) -> None:
     if MODEL_LLM_REVIEW not in set(active_models):
         return
     for entry in entries:
-        if not entry.pre_error and entry.cached_record is not None and entry.file_id not in current_llm_file_ids:
+        upstream_will_change = contextual and any(
+            needed for model_key, needed in entry.needs.items() if model_key != MODEL_LLM_REVIEW
+        )
+        if (
+            not entry.pre_error
+            and entry.cached_record is not None
+            and (entry.file_id not in current_llm_file_ids or upstream_will_change)
+        ):
             entry.needs[MODEL_LLM_REVIEW] = True
 
 
@@ -361,15 +396,28 @@ def _matching_llm_review_results(
     entries: Iterable[ScoreEntry],
     cache_path: str | Path,
     dependencies: ScoreImagePathDependencies,
+    *,
+    input_mode: str,
 ) -> Mapping[str, AnalysisInsightMatch]:
     cache_path_obj = Path(cache_path).expanduser()
     if not is_sqlite_cache_path(cache_path_obj) or not cache_path_obj.exists():
         return {}
 
-    current_prompt_version = dependencies.llm_review_prompt_version()
     current_provider = dependencies.llm_review_provider()
     current_model = dependencies.llm_review_model_name()
-    file_ids = [entry.file_id for entry in entries if not entry.pre_error]
+    cached_entries = [entry for entry in entries if not entry.pre_error and entry.cached_record is not None]
+    file_ids = [entry.file_id for entry in cached_entries]
+    prompt_version = dependencies.llm_review_prompt_version()
+    prompt_versions_by_file_id = None
+    if input_mode == "text":
+        prompt_versions_by_file_id = {
+            entry.file_id: dependencies.llm_review_result_prompt_version(
+                current_local_score_context(entry.cached_record or {}),
+                prompt_version=prompt_version,
+                input_mode=input_mode,
+            )
+            for entry in cached_entries
+        }
     return dependencies.load_latest_matching_analysis_insight_results(
         cache_path_obj,
         file_ids=file_ids,
@@ -377,7 +425,8 @@ def _matching_llm_review_results(
         provider=current_provider,
         model=current_model,
         model_version=current_model,
-        prompt_version=current_prompt_version,
+        prompt_version=prompt_version,
+        prompt_versions_by_file_id=prompt_versions_by_file_id,
     )
 
 

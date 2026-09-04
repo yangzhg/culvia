@@ -12,6 +12,7 @@ from culvia.app_state import AppStateStore
 from culvia.cache_schema import SQLITE_CACHE_EXTENSIONS
 from culvia.insight_store import AnalysisInsightMatch
 from culvia.llm_provenance import resolve_llm_score_dataframe
+from culvia.local_score_provenance import resolve_local_score_dataframe
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,8 @@ class StatePayloadDependencies:
     llm_review_provider: Callable[[], str]
     llm_review_model_name: Callable[[], str]
     llm_review_prompt_version: Callable[[], str]
+    llm_review_result_prompt_version: Callable[..., str]
+    llm_review_input_mode: Callable[[], str]
     serialize_photo: Callable[[pd.Series, Mapping[str, Any], Mapping[str, Any]], dict[str, Any]]
     curation_summary: Callable[[Mapping[str, Any], Sequence[str]], dict[str, Any]]
     application_info: Callable[[], Mapping[str, Any]]
@@ -75,14 +78,39 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         models = _json_clone(state["models"])
         job = _json_clone(state["job"])
 
+    local_score_resolution = resolve_local_score_dataframe(source_df)
+    source_df = local_score_resolution.dataframe
+
     maintenance_running = bool(job.get("running")) and str(job.get("kind") or "") == "maintenance"
     if not maintenance_running:
         deps.refresh_persisted_llm_config(str(source.get("cachePath") or deps.default_cache_path))
     cache_path = str(source.get("cachePath") or "")
     source_file_ids = deps.frame_file_ids(source_df)
+    llm_candidate_df = source_df[
+        pd.to_numeric(
+            source_df.get(
+                deps.llm_review_generation_column,
+                pd.Series(pd.NA, index=source_df.index, dtype="object"),
+            ),
+            errors="coerce",
+        ).notna()
+    ]
+    llm_candidate_file_ids = deps.frame_file_ids(llm_candidate_df)
     current_llm_provider = deps.llm_review_provider()
     current_llm_model = deps.llm_review_model_name()
     current_llm_prompt_version = deps.llm_review_prompt_version()
+    current_llm_input_mode = deps.llm_review_input_mode()
+    prompt_versions_by_file_id = None
+    if current_llm_input_mode == "text":
+        prompt_versions_by_file_id = {
+            str(record.get("file_id") or ""): deps.llm_review_result_prompt_version(
+                record,
+                prompt_version=current_llm_prompt_version,
+                input_mode=current_llm_input_mode,
+            )
+            for record in llm_candidate_df.to_dict(orient="records")
+            if str(record.get("file_id") or "")
+        }
     is_sqlite_cache = bool(
         not maintenance_running
         and cache_path
@@ -93,12 +121,13 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         current_llm_results = dict(
             deps.load_latest_matching_analysis_insight_results(
                 cache_path,
-                file_ids=source_file_ids,
+                file_ids=llm_candidate_file_ids,
                 analyzer_key=deps.model_llm_review,
                 provider=current_llm_provider,
                 model=current_llm_model,
                 model_version=current_llm_model,
                 prompt_version=current_llm_prompt_version,
+                prompt_versions_by_file_id=prompt_versions_by_file_id,
             )
         )
     resolution = resolve_llm_score_dataframe(
@@ -132,7 +161,11 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
                 analyzer_key=deps.model_llm_review,
                 provider=current_llm_provider,
                 model=current_llm_model,
-                prompt_version=current_llm_prompt_version,
+                prompt_version=(
+                    current_llm_prompt_version
+                    if prompt_versions_by_file_id is None
+                    else prompt_versions_by_file_id.get(insight.file_id, current_llm_prompt_version)
+                ),
             ):
                 continue
             match = current_llm_results.get(insight.file_id)
@@ -165,6 +198,24 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         "heifAvailable": deps.heif_available,
     }
     app_payload.update(deps.application_info())
+    model_payload = dict(
+        (deps.maintenance_model_payload if maintenance_running else deps.model_payload)(
+            network,
+            deps.normalize_selected_models(models.get("selected")),
+        )
+    )
+    model_options = []
+    for raw_option in model_payload.get("options") or []:
+        option = dict(raw_option)
+        cache_summary = local_score_resolution.summary.get(str(option.get("key") or ""))
+        if cache_summary is not None:
+            option["scoreCache"] = {
+                **cache_summary,
+                "needsRescore": sum(cache_summary[state] for state in ("legacy", "stale", "incomplete")),
+            }
+        model_options.append(option)
+    if "options" in model_payload:
+        model_payload["options"] = model_options
     return {
         "app": app_payload,
         "capabilities": deps.local_capabilities(),
@@ -184,10 +235,8 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         "network": deps.network_payload(network),
         "llm": deps.llm_config_payload(),
         "models": models,
-        "model": (deps.maintenance_model_payload if maintenance_running else deps.model_payload)(
-            network,
-            deps.normalize_selected_models(models.get("selected")),
-        ),
+        "model": model_payload,
+        "scoreProvenance": {"summary": local_score_resolution.summary},
         "job": job,
         "summary": summary,
         "curation": {

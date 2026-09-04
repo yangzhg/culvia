@@ -57,6 +57,7 @@ from culvia.llm_runtime import (
     build_llm_text_only_prompt,
     build_score_context_lines,
     llm_prompt_signature,
+    llm_result_prompt_version as _llm_result_prompt_version,
     post_llm_review_request,
     score_llm_review_image as run_llm_review_image,
 )
@@ -72,6 +73,15 @@ from culvia.local_model_scoring import (
     state_dict_from_loaded_object as _state_dict_from_loaded_object,
     torch_feature_tensor as _torch_feature_tensor,
 )
+from culvia.local_score_contracts import (
+    CORE_SCORE_MULTIPLIER,
+    MODEL_ANALYSIS_CACHE_VARIANT,
+    MODEL_ANALYSIS_JPEG_QUALITY,
+    MODEL_ANALYSIS_MAX_SIZE,
+    MODEL_ANALYSIS_MIN_SIZE,
+    MODEL_ANALYSIS_SIZE_LIMIT,
+)
+from culvia.local_score_provenance import preserve_local_result_states, resolve_local_score_dataframe
 from culvia.model_loaders import get_device, load_clip_reference_model, load_model
 from culvia.model_files import (
     APP_MODEL_CACHE_DIR,
@@ -102,6 +112,7 @@ from culvia.model_files import (
     sanitize_proxy_env_for_httpx,
 )
 from culvia.photo_scan import SUPPORTED_EXTENSIONS, build_file_id, scan_image_paths
+from culvia.recommendation import FILTER_DEFAULTS, enrich_scores_for_display as _enrich_scores_for_display
 from culvia.llm_review import (
     extract_json_mapping,
     first_text_choice,
@@ -141,6 +152,7 @@ from culvia.schema import (
     MODEL_CLIP_IQA,
     MODEL_CORE_AESTHETIC,
     MODEL_QUALITY_GROUP,
+    MODEL_RESULT_VERSION_COLUMNS,
     MODEL_KEYS,
     MODEL_LLM_REVIEW,
     MODEL_QUALITY_FIELDS,
@@ -171,6 +183,7 @@ from culvia.schema import (
     normalize_selected_models,
     score_column,
     score_columns_for_fields,
+    stamp_model_result_version,
 )
 from culvia.source_requests import normalize_cache_path, normalize_source_folders, normalize_source_mode
 from culvia.score_records import (
@@ -241,7 +254,7 @@ def _default_app_data_dir() -> Path:
 
 APP_DATA_DIR = _env_path(ENV_DATA_DIR, user_cache_dir())
 ANALYSIS_IMAGE_CACHE_DIR = analysis_image_cache_dir()
-MODEL_INPUT_MAX_SIZE = 768
+MODEL_INPUT_MAX_SIZE = MODEL_ANALYSIS_MAX_SIZE
 LLM_INPUT_MAX_SIZE = 1024
 DEFAULT_LLM_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 ANALYSIS_IMAGE_CACHE_LOCK = threading.Lock()
@@ -312,6 +325,20 @@ def llm_review_prompt_version() -> str:
     )
 
 
+def llm_review_result_prompt_version(
+    score_context: Mapping[str, object] | None = None,
+    *,
+    prompt_version: str | None = None,
+    input_mode: str | None = None,
+) -> str:
+    return _llm_result_prompt_version(
+        llm_review_prompt_version() if prompt_version is None else prompt_version,
+        llm_review_input_mode() if input_mode is None else input_mode,
+        score_context,
+        _score_context_lines,
+    )
+
+
 def llm_review_input_mode() -> str:
     return _llm_config_review_input_mode(active_llm_config())
 
@@ -361,7 +388,7 @@ def llm_review_status() -> dict[str, object]:
     }
 
 
-TEXT_COLUMNS = set(BASE_RECORD_COLUMNS)
+TEXT_COLUMNS = set(BASE_RECORD_COLUMNS) | set(MODEL_RESULT_VERSION_COLUMNS.values())
 SCORE_CACHE_STORE = ScoreCacheStore(
     csv_columns=tuple(CSV_COLUMNS),
     text_columns=frozenset(TEXT_COLUMNS),
@@ -432,6 +459,7 @@ def load_latest_matching_analysis_insight_results(
     model: str,
     model_version: str,
     prompt_version: str,
+    prompt_versions_by_file_id: Mapping[str, str] | None = None,
 ) -> dict[str, AnalysisInsightMatch]:
     return ANALYSIS_INSIGHT_STORE.latest_matching_results(
         cache_path,
@@ -441,6 +469,7 @@ def load_latest_matching_analysis_insight_results(
         model=model,
         model_version=model_version,
         prompt_version=prompt_version,
+        prompt_versions_by_file_id=prompt_versions_by_file_id,
     )
 
 
@@ -502,9 +531,10 @@ def cached_resized_image_path(path: str | Path, max_size: int = MODEL_INPUT_MAX_
         path,
         ANALYSIS_IMAGE_CACHE_DIR,
         max_size,
-        minimum_size=224,
-        maximum_size=1600,
-        quality=90,
+        minimum_size=MODEL_ANALYSIS_MIN_SIZE,
+        maximum_size=MODEL_ANALYSIS_SIZE_LIMIT,
+        quality=MODEL_ANALYSIS_JPEG_QUALITY,
+        cache_variant=MODEL_ANALYSIS_CACHE_VARIANT,
         lock=ANALYSIS_IMAGE_CACHE_LOCK,
     )
 
@@ -588,7 +618,7 @@ def score_llm_review_image(
         analyzer_key=MODEL_LLM_REVIEW,
         provider=llm_review_provider(),
         model=llm_review_model_name(),
-        prompt_version=llm_review_prompt_version(),
+        prompt_version=llm_review_result_prompt_version(score_context),
         prompt_text=llm_review_prompt_text(),
         input_mode=llm_review_input_mode(),
         score_context_lines=_score_context_lines,
@@ -653,7 +683,7 @@ def _apply_aesthetic_scores(record: dict[str, object], scores: dict[str, float])
         scores=scores,
         source_scale="0_5",
         target_scale="0_10",
-        multiplier=2.0,
+        multiplier=CORE_SCORE_MULTIPLIER,
     )
 
 
@@ -715,6 +745,8 @@ def _score_image_path_dependencies() -> ScoreImagePathDependencies:
         load_latest_matching_analysis_insight_results=load_latest_matching_analysis_insight_results,
         save_analysis_insights=save_analysis_insights,
         llm_review_prompt_version=llm_review_prompt_version,
+        llm_review_result_prompt_version=llm_review_result_prompt_version,
+        llm_review_input_mode=llm_review_input_mode,
         llm_review_provider=llm_review_provider,
         llm_review_model_name=llm_review_model_name,
     )
@@ -748,7 +780,24 @@ def score_image_paths(
 def write_csv(df: pd.DataFrame, output_path: str | Path) -> None:
     path = Path(output_path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    normalize_score_dataframe(df).to_csv(path, index=False, encoding="utf-8-sig")
+    resolution = resolve_local_score_dataframe(normalize_score_dataframe(df))
+    enriched = _enrich_scores_for_display(
+        resolution.dataframe,
+        FILTER_DEFAULTS,
+        normalize_dataframe=normalize_score_dataframe,
+        score_fields=(
+            *SCORE_FIELDS,
+            *TECHNICAL_FIELDS,
+            *MODEL_QUALITY_FIELDS,
+            *AESTHETIC_REFERENCE_FIELDS,
+            *LLM_REVIEW_FIELDS,
+        ),
+    )
+    export_df = preserve_local_result_states(
+        resolution.dataframe,
+        enriched,
+    )
+    export_df.to_csv(path, index=False, encoding="utf-8-sig")
 
 
 from culvia.batch_cli import main, parse_args, print_top_scores

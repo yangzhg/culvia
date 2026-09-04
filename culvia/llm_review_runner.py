@@ -12,6 +12,7 @@ from culvia.insight_store import AnalysisInsight, AnalysisInsightMatch
 from culvia.job_service import JobCancelled, ScoringJobService
 from culvia.job_text import exception_text, text_ref
 from culvia.llm_provenance import resolve_llm_score_dataframe
+from culvia.local_score_provenance import current_local_score_context
 from culvia.llm_runtime import AnalyzerOutput
 from culvia.schema import (
     CSV_COLUMNS,
@@ -35,6 +36,7 @@ class LlmReviewRunnerDependencies:
     refresh_persisted_llm_config: Callable[[str], None]
     llm_review_configured: Callable[[], bool]
     llm_review_status: Callable[[], Mapping[str, object]]
+    llm_review_result_prompt_version: Callable[..., str]
     sanitize_uploaded_paths: Callable[[object], list[Path]]
     scan_image_paths: Callable[[Sequence[str]], tuple[list[Path], list[dict[str, Any]]]]
     build_file_id: Callable[[str | Path], str]
@@ -76,6 +78,7 @@ def run_llm_review_job(
         provider = str(status.get("provider") or "")
         model = str(status.get("model") or "")
         prompt_version = str(status.get("promptVersion") or "")
+        input_mode = "text" if status.get("inputMode") == "text" else "image"
 
         with state_store.lock:
             source_df = dependencies.normalize_score_dataframe(pd.DataFrame(state_store.data.get("scores_df"))).copy()
@@ -101,7 +104,29 @@ def run_llm_review_job(
             )
 
         existing_cache = dependencies.load_cache_records(cache_path)
-        file_ids = [str(value) for value in source_df.get("file_id", pd.Series(dtype=object)).tolist() if str(value)]
+        llm_candidate_df = source_df[
+            pd.to_numeric(
+                source_df.get(
+                    LLM_REVIEW_GENERATION_COLUMN,
+                    pd.Series(pd.NA, index=source_df.index, dtype="object"),
+                ),
+                errors="coerce",
+            ).notna()
+        ]
+        file_ids = [
+            str(value) for value in llm_candidate_df.get("file_id", pd.Series(dtype=object)).tolist() if str(value)
+        ]
+        prompt_versions_by_file_id = None
+        if input_mode == "text":
+            prompt_versions_by_file_id = {
+                str(record.get("file_id") or ""): dependencies.llm_review_result_prompt_version(
+                    current_local_score_context(record),
+                    prompt_version=prompt_version,
+                    input_mode=input_mode,
+                )
+                for record in llm_candidate_df.to_dict(orient="records")
+                if str(record.get("file_id") or "")
+            }
         current_insight_results = dependencies.load_latest_matching_analysis_insight_results(
             cache_path,
             file_ids=file_ids,
@@ -110,6 +135,7 @@ def run_llm_review_job(
             model=model,
             model_version=model,
             prompt_version=prompt_version,
+            prompt_versions_by_file_id=prompt_versions_by_file_id,
         )
         resolution = resolve_llm_score_dataframe(
             source_df,
@@ -181,7 +207,7 @@ def run_llm_review_job(
                 activeEvaluation="stage.llmReview",
                 completedEvaluations=[],
             )
-            output = dependencies.score_llm_review_image(path, file_id, record)
+            output = dependencies.score_llm_review_image(path, file_id, current_local_score_context(record))
             generation = _llm_output_generation(output)
             updated_record = dependencies.apply_llm_review_scores(
                 dict(record),

@@ -12,6 +12,7 @@ from culvia.llm_runtime import (
     build_llm_review_request_payload,
     build_score_context_lines,
     llm_prompt_signature,
+    llm_result_prompt_version,
     score_llm_review_image,
 )
 
@@ -36,6 +37,20 @@ class LLMRuntimeTests(unittest.TestCase):
         self.assertTrue(first.startswith("photo-review-v3:image:balanced:"))
         self.assertNotEqual(first, second)
         self.assertNotEqual(first, third)
+
+    def test_text_result_prompt_version_binds_the_actual_score_context(self) -> None:
+        def context_lines(context: Mapping[str, object] | None) -> list[str]:
+            return [f"- score: {context.get('score', '')}"] if context else []
+
+        first = llm_result_prompt_version("prompt-v1", "text", {"score": 7.0}, context_lines)
+        same = llm_result_prompt_version("prompt-v1", "text", {"score": 7.0}, context_lines)
+        changed = llm_result_prompt_version("prompt-v1", "text", {"score": 8.0}, context_lines)
+        image = llm_result_prompt_version("prompt-v1", "image", {"score": 8.0}, context_lines)
+
+        self.assertEqual(first, same)
+        self.assertTrue(first.startswith("prompt-v1:context:"))
+        self.assertNotEqual(first, changed)
+        self.assertEqual(image, "prompt-v1")
 
     def test_build_score_context_lines_skips_excluded_group_and_missing_scores(self) -> None:
         lines = build_score_context_lines(

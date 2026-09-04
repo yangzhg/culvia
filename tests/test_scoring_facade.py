@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -17,6 +18,7 @@ import culvia_app
 from culvia import scoring
 from culvia import curation as photo_curation
 from culvia.job_service import JobCancelled
+from culvia.local_score_provenance import current_local_score_context
 
 
 def make_image(path: Path, size: tuple[int, int] = (1600, 900)) -> Path:
@@ -509,6 +511,10 @@ class ScoringCheckpointTests(unittest.TestCase):
             checkpointed = scoring.load_cache_records(cache_path).iloc[0]
             self.assertFalse(pd.isna(checkpointed["overall_0_10"]))
             self.assertTrue(pd.isna(checkpointed["technical_overall_0_10"]))
+            self.assertEqual(
+                checkpointed[scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CORE_AESTHETIC]],
+                scoring.MODEL_CAPABILITIES[scoring.MODEL_CORE_AESTHETIC].result_version,
+            )
 
             with (
                 patch.object(scoring, "score_image", side_effect=AssertionError("aesthetic score was recomputed")),
@@ -524,6 +530,162 @@ class ScoringCheckpointTests(unittest.TestCase):
         technical.assert_called_once_with(image_path)
         self.assertFalse(pd.isna(result.loc[0, "overall_0_10"]))
         self.assertFalse(pd.isna(result.loc[0, "technical_overall_0_10"]))
+
+    def test_text_llm_refreshes_after_upstream_score_changes_in_the_same_run(self) -> None:
+        original_layers = scoring.llm_config_layers()
+        try:
+            scoring.set_session_llm_config(
+                {
+                    "api_key": "test-key",
+                    "input_mode": "text",
+                    "model": "context-vlm",
+                    "provider": "unit",
+                },
+                replace=True,
+            )
+            with tempfile.TemporaryDirectory() as tmp:
+                image_path = make_image(Path(tmp) / "photo.jpg")
+                cache_path = Path(tmp) / "scores.sqlite"
+                file_id = scoring.build_file_id(image_path)
+                stale = scoring._apply_aesthetic_scores(
+                    scoring._make_empty_record(image_path, file_id),
+                    self.aesthetic_scores(4.0),
+                )
+                stale[scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CORE_AESTHETIC]] = "score-v1:old"
+                stale = scoring.apply_llm_review_scores(
+                    stale,
+                    {field: 7.0 for field in scoring.LLM_REVIEW_FIELDS},
+                    generation=1.0,
+                )
+                scoring.save_cache_records(pd.DataFrame([stale]), cache_path)
+                old_prompt_version = scoring.llm_review_result_prompt_version(current_local_score_context(stale))
+                scoring.save_analysis_insights(
+                    [
+                        scoring.AnalysisInsight(
+                            file_id=file_id,
+                            analyzer_key=scoring.MODEL_LLM_REVIEW,
+                            provider=scoring.llm_review_provider(),
+                            model=scoring.llm_review_model_name(),
+                            model_version=scoring.llm_review_model_name(),
+                            prompt_version=old_prompt_version,
+                            score=7.0,
+                            created_at=1.0,
+                        )
+                    ],
+                    cache_path,
+                )
+                contexts: list[dict[str, object]] = []
+
+                def review_image(
+                    _path: str | Path,
+                    file_id: str = "",
+                    score_context: Mapping[str, object] | None = None,
+                ) -> scoring.AnalyzerOutput:
+                    context = dict(score_context or {})
+                    contexts.append(context)
+                    return scoring.AnalyzerOutput(
+                        scores={field: 8.0 for field in scoring.LLM_REVIEW_FIELDS},
+                        insights=(
+                            scoring.AnalysisInsight(
+                                file_id=file_id,
+                                analyzer_key=scoring.MODEL_LLM_REVIEW,
+                                provider=scoring.llm_review_provider(),
+                                model=scoring.llm_review_model_name(),
+                                model_version=scoring.llm_review_model_name(),
+                                prompt_version=scoring.llm_review_result_prompt_version(context),
+                                score=8.0,
+                                created_at=2.0,
+                            ),
+                        ),
+                    )
+
+                with (
+                    patch.object(scoring, "score_image", return_value=self.aesthetic_scores(4.5)),
+                    patch.object(scoring, "score_llm_review_image", side_effect=review_image) as review,
+                ):
+                    result, _device = scoring.score_image_paths(
+                        [image_path],
+                        cache_path=cache_path,
+                        model_loader=lambda _device: SimpleNamespace(device="cpu"),
+                        selected_models=[scoring.MODEL_CORE_AESTHETIC, scoring.MODEL_LLM_REVIEW],
+                    )
+
+            review.assert_called_once()
+            self.assertEqual(float(contexts[0]["overall_0_10"]), 9.0)
+            self.assertEqual(float(result.loc[0, scoring.LLM_REVIEW_GENERATION_COLUMN]), 2.0)
+            self.assertEqual(
+                result.loc[0, scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CORE_AESTHETIC]],
+                scoring.MODEL_CAPABILITIES[scoring.MODEL_CORE_AESTHETIC].result_version,
+            )
+        finally:
+            restore_llm_config_layers(original_layers)
+
+    def test_shared_clip_checkpoint_stamps_only_completed_capabilities(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = make_image(Path(tmp) / "photo.jpg")
+            cache_path = Path(tmp) / "scores.sqlite"
+            clip_scores = {field: 7.0 for field in (*scoring.MODEL_QUALITY_FIELDS, *scoring.AESTHETIC_REFERENCE_FIELDS)}
+
+            with patch.object(scoring, "score_clip_reference_image", return_value=clip_scores) as score_clip:
+                first, _device = scoring.score_image_paths(
+                    [image_path],
+                    cache_path=cache_path,
+                    clip_reference_loader=lambda _device: SimpleNamespace(device="cpu"),
+                    selected_models=[scoring.MODEL_CLIP_IQA, scoring.MODEL_CLIP_AESTHETIC],
+                )
+
+            score_clip.assert_called_once()
+            first_row = first.iloc[0]
+            for model_key in (scoring.MODEL_CLIP_IQA, scoring.MODEL_CLIP_AESTHETIC):
+                self.assertEqual(
+                    first_row[scoring.MODEL_RESULT_VERSION_COLUMNS[model_key]],
+                    scoring.MODEL_CAPABILITIES[model_key].result_version,
+                )
+
+            stale = first.copy()
+            iqa_version_column = scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CLIP_IQA]
+            aesthetic_version_column = scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CLIP_AESTHETIC]
+            stale.loc[0, iqa_version_column] = "score-v1:old"
+            scoring.save_cache_records(stale, cache_path)
+
+            with patch.object(scoring, "score_clip_reference_image", return_value=clip_scores):
+                refreshed, _device = scoring.score_image_paths(
+                    [image_path],
+                    cache_path=cache_path,
+                    clip_reference_loader=lambda _device: SimpleNamespace(device="cpu"),
+                    selected_models=[scoring.MODEL_CLIP_IQA],
+                )
+
+            refreshed_row = refreshed.iloc[0]
+            self.assertEqual(
+                refreshed_row[iqa_version_column],
+                scoring.MODEL_CAPABILITIES[scoring.MODEL_CLIP_IQA].result_version,
+            )
+            self.assertEqual(refreshed_row[aesthetic_version_column], first_row[aesthetic_version_column])
+
+    def test_failed_stale_clip_result_is_not_stamped_current(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = make_image(Path(tmp) / "photo.jpg")
+            cache_path = Path(tmp) / "scores.sqlite"
+            record = scoring._make_empty_record(image_path, scoring.build_file_id(image_path))
+            record = scoring._apply_clip_reference_scores(
+                record,
+                {field: 6.0 for field in scoring.MODEL_QUALITY_FIELDS},
+            )
+            version_column = scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CLIP_IQA]
+            record[version_column] = "score-v1:old"
+            scoring.save_cache_records(pd.DataFrame([record]), cache_path)
+
+            with patch.object(scoring, "score_clip_reference_image", side_effect=RuntimeError("clip failed")):
+                failed, _device = scoring.score_image_paths(
+                    [image_path],
+                    cache_path=cache_path,
+                    clip_reference_loader=lambda _device: SimpleNamespace(device="cpu"),
+                    selected_models=[scoring.MODEL_CLIP_IQA],
+                )
+
+            self.assertEqual(failed.loc[0, version_column], "score-v1:old")
+            self.assertIn("clip failed", failed.loc[0, "error"])
 
     def test_successful_retry_clears_the_checkpointed_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -551,6 +713,66 @@ class ScoringCheckpointTests(unittest.TestCase):
 
 
 class ModelPlanningTests(unittest.TestCase):
+    def test_text_llm_cache_identity_changes_with_current_local_score_context(self) -> None:
+        original_layers = scoring.llm_config_layers()
+        try:
+            scoring.set_session_llm_config(
+                {
+                    "input_mode": "text",
+                    "model": "context-vlm",
+                    "provider": "unit",
+                },
+                replace=True,
+            )
+            row: dict[str, object] = {
+                "file_id": "image-1",
+                "path": "/photos/image-1.jpg",
+                "folder": "/photos",
+                "filename": "image-1.jpg",
+                "error": "",
+                scoring.LLM_REVIEW_GENERATION_COLUMN: 1.0,
+                scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CORE_AESTHETIC]: scoring.MODEL_CAPABILITIES[
+                    scoring.MODEL_CORE_AESTHETIC
+                ].result_version,
+            }
+            row.update(
+                {
+                    column: 4.0 if column.endswith("_0_5") else 8.0
+                    for column in scoring.CORE_AESTHETIC_GROUP.cache_columns
+                }
+            )
+            row.update({f"{field}_0_10": 8.0 for field in scoring.LLM_REVIEW_FIELDS})
+            source = scoring.normalize_score_dataframe(pd.DataFrame([row]))
+            prompt_version = scoring.llm_review_result_prompt_version(source.iloc[0].to_dict())
+
+            with tempfile.TemporaryDirectory() as tmp:
+                cache_path = Path(tmp) / "scores.sqlite"
+                scoring.save_analysis_insights(
+                    [
+                        scoring.AnalysisInsight(
+                            file_id="image-1",
+                            analyzer_key=scoring.MODEL_LLM_REVIEW,
+                            provider=scoring.llm_review_provider(),
+                            model=scoring.llm_review_model_name(),
+                            model_version=scoring.llm_review_model_name(),
+                            prompt_version=prompt_version,
+                            score=8.0,
+                            created_at=1.0,
+                        )
+                    ],
+                    cache_path,
+                )
+
+                current = culvia_app.current_llm_score_dataframe(source, cache_path)
+                changed_source = source.copy()
+                changed_source.loc[0, "overall_0_10"] = 7.5
+                changed = culvia_app.current_llm_score_dataframe(changed_source, cache_path)
+
+            self.assertEqual(float(current.loc[0, "llm_review_overall_0_10"]), 8.0)
+            self.assertTrue(pd.isna(changed.loc[0, "llm_review_overall_0_10"]))
+        finally:
+            restore_llm_config_layers(original_layers)
+
     def test_llm_models_url_uses_openai_compatible_base_url(self) -> None:
         self.assertEqual(
             culvia_app.llm_models_url(
@@ -656,12 +878,13 @@ class ModelPlanningTests(unittest.TestCase):
             finally:
                 culvia_app.UPLOAD_CACHE_DIR = original_upload_dir
 
-    def test_model_recompute_plan_only_marks_missing_outputs(self) -> None:
+    def test_model_recompute_plan_marks_missing_or_outdated_outputs(self) -> None:
         record = {"file_id": "image-1"}
         for column in scoring.model_output_columns(scoring.MODEL_CORE_AESTHETIC):
             record[column] = 8.0
         for column in scoring.model_output_columns(scoring.MODEL_BASIC_TECHNICAL):
             record[column] = 7.0
+        record = scoring.stamp_model_result_version(record, scoring.MODEL_CORE_AESTHETIC)
 
         plan = scoring.model_recompute_plan(record, scoring.DEFAULT_SELECTED_MODELS)
 
@@ -676,6 +899,41 @@ class ModelPlanningTests(unittest.TestCase):
 
         self.assertFalse(plan[scoring.MODEL_CLIP_IQA])
         self.assertTrue(plan[scoring.MODEL_CLIP_AESTHETIC])
+
+    def test_cli_csv_masks_legacy_scores_and_exports_provenance_state(self) -> None:
+        current = {
+            "file_id": "current",
+            "path": "/current.jpg",
+            "error": "",
+            "recommendation_0_10": 8.4,
+        }
+        legacy = {
+            "file_id": "legacy",
+            "path": "/legacy.jpg",
+            "error": "",
+            "recommendation_0_10": 9.4,
+        }
+        for column in scoring.CORE_AESTHETIC_GROUP.cache_columns:
+            current[column] = 8.0
+            legacy[column] = 9.0
+        current = scoring.stamp_model_result_version(current, scoring.MODEL_CORE_AESTHETIC)
+        for column in scoring.MODEL_QUALITY_GROUP.cache_columns:
+            current[column] = 10.0
+        current[scoring.MODEL_RESULT_VERSION_COLUMNS[scoring.MODEL_CLIP_IQA]] = "score-v1:old"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = Path(tmp) / "scores.csv"
+            scoring.write_csv(pd.DataFrame([current, legacy]), output_path)
+            exported = pd.read_csv(output_path, keep_default_na=False).set_index("file_id")
+
+        self.assertEqual(float(exported.loc["current", "overall_0_10"]), 8.0)
+        self.assertEqual(float(exported.loc["current", "recommendation_0_10"]), 8.0)
+        self.assertEqual(exported.loc["current", "clip_iqa_overall_0_10"], "")
+        self.assertEqual(exported.loc["current", "clip_iqa_result_state"], "stale")
+        self.assertEqual(exported.loc["current", "core_aesthetic_result_state"], "current")
+        self.assertEqual(exported.loc["legacy", "overall_0_10"], "")
+        self.assertEqual(exported.loc["legacy", "recommendation_0_10"], "")
+        self.assertEqual(exported.loc["legacy", "core_aesthetic_result_state"], "legacy")
 
     def test_llm_review_model_is_optional_and_adds_columns(self) -> None:
         self.assertNotIn(scoring.MODEL_LLM_REVIEW, scoring.DEFAULT_SELECTED_MODELS)
@@ -1059,8 +1317,14 @@ class ImageCacheTests(unittest.TestCase):
                 image_path = make_image(Path(tmp) / "source.jpg")
                 cached = scoring.cached_resized_image_path(image_path, max_size=300)
                 cached_again = scoring.cached_resized_image_path(image_path, max_size=300)
+                generic_cache_path = scoring.resized_image_cache_path(
+                    image_path,
+                    scoring.ANALYSIS_IMAGE_CACHE_DIR,
+                    300,
+                )
 
                 self.assertEqual(cached, cached_again)
+                self.assertNotEqual(cached, generic_cache_path)
                 self.assertTrue(cached.exists())
                 with Image.open(cached) as image:
                     self.assertLessEqual(max(image.size), 300)

@@ -52,6 +52,20 @@ class ImageIOTests(unittest.TestCase):
             with Image.open(cached) as image:
                 self.assertLessEqual(max(image.size), 300)
 
+    def test_resized_image_cache_variant_invalidates_preprocessed_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.jpg"
+            cache_dir = root / "cache"
+            Image.new("RGB", (80, 60), (96, 128, 180)).save(source)
+
+            first = resized_image_cache_path(source, cache_dir, 300, cache_variant="model-input-v1")
+            same = resized_image_cache_path(source, cache_dir, 300, cache_variant="model-input-v1")
+            changed = resized_image_cache_path(source, cache_dir, 300, cache_variant="model-input-v2")
+
+        self.assertEqual(first, same)
+        self.assertNotEqual(first, changed)
+
     def test_concurrent_cache_writers_publish_from_unique_temporary_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

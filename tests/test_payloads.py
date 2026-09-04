@@ -19,6 +19,12 @@ from culvia.payloads import (
     summarize_scores,
     technical_tags,
 )
+from culvia.schema import (
+    MODEL_CAPABILITIES,
+    MODEL_CORE_AESTHETIC,
+    MODEL_RESULT_STATE_COLUMNS,
+    MODEL_RESULT_VERSION_COLUMNS,
+)
 
 
 class PayloadTests(unittest.TestCase):
@@ -109,6 +115,10 @@ class PayloadTests(unittest.TestCase):
                 "llm_review_overall_0_10": 7.7,
                 "llm_aesthetic_overall_0_10": 8.1,
                 "llm_technical_overall_0_10": 6.8,
+                MODEL_RESULT_VERSION_COLUMNS[MODEL_CORE_AESTHETIC]: MODEL_CAPABILITIES[
+                    MODEL_CORE_AESTHETIC
+                ].result_version,
+                MODEL_RESULT_STATE_COLUMNS[MODEL_CORE_AESTHETIC]: "current",
             }
         )
         insight = AnalysisInsight(
@@ -139,6 +149,11 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(payload["technicalTexts"]["sharpness"], "7.6")
         self.assertEqual(payload["manual"]["sourceLabel"], "综合模型")
         self.assertEqual(payload["llmInsight"]["title"], "标题")
+        self.assertEqual(payload["scoreProvenance"][MODEL_CORE_AESTHETIC]["state"], "current")
+        self.assertEqual(
+            payload["scoreProvenance"][MODEL_CORE_AESTHETIC]["storedResultVersion"],
+            MODEL_CAPABILITIES[MODEL_CORE_AESTHETIC].result_version,
+        )
         self.assertIn("清晰稳定", payload["technicalTags"])
         self.assertIn("曝光稳定", payload["technicalTags"])
 

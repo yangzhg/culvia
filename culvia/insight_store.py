@@ -112,32 +112,47 @@ class AnalysisInsightStore:
         model: str,
         model_version: str,
         prompt_version: str,
+        prompt_versions_by_file_id: Mapping[str, str] | None = None,
     ) -> dict[str, AnalysisInsightMatch]:
         path = Path(cache_path).expanduser()
         ids = self._normalized_file_ids(file_ids)
         if not is_sqlite_cache_path(path) or not path.exists() or not ids:
             return {}
+        expected_prompt_versions = (
+            {str(file_id): str(version) for file_id, version in prompt_versions_by_file_id.items()}
+            if prompt_versions_by_file_id is not None
+            else None
+        )
+        if expected_prompt_versions is not None and not expected_prompt_versions:
+            return {}
         matches: dict[str, AnalysisInsightMatch] = {}
-        identity = (analyzer_key, provider, model, model_version, prompt_version)
         with sqlite3.connect(path) as conn:
             self.schema_ensurer(conn)
             for batch in self._file_id_batches(ids):
                 placeholders = ", ".join(["?"] * len(batch))
+                prompt_predicate = "" if expected_prompt_versions is not None else 'AND current."prompt_version" = ? '
+                parameters = [*batch, analyzer_key, provider, model, model_version]
+                if expected_prompt_versions is None:
+                    parameters.append(prompt_version)
                 rows = conn.execute(
-                    f'SELECT current."file_id", current."created_at" '
+                    f'SELECT current."file_id", current."created_at", current."prompt_version" '
                     f"FROM {self.table_name} AS current "
                     f'WHERE current."file_id" IN ({placeholders}) AND current."analyzer_key" = ? '
                     'AND current."provider" = ? AND current."model" = ? '
-                    'AND current."model_version" = ? AND current."prompt_version" = ? '
+                    f'AND current."model_version" = ? {prompt_predicate}'
                     f"AND current.rowid = (SELECT candidate.rowid FROM {self.table_name} AS candidate "
                     'WHERE candidate."file_id" = current."file_id" '
                     'AND candidate."analyzer_key" = current."analyzer_key" '
                     'ORDER BY candidate."created_at" DESC, candidate.rowid DESC LIMIT 1)',
-                    [*batch, analyzer_key, *identity[1:]],
+                    parameters,
                 ).fetchall()
                 for row in rows:
                     if row[1] is None or pd.isna(row[1]):
                         continue
+                    if expected_prompt_versions is not None:
+                        expected = expected_prompt_versions.get(str(row[0]))
+                        if expected is None or str(row[2] or "") != expected:
+                            continue
                     matches[str(row[0])] = AnalysisInsightMatch(generation=float(row[1]))
         return matches
 

@@ -62,10 +62,19 @@ def bounded_image_cache_size(max_size: int | None, minimum: int = 80, maximum: i
     return max(minimum, min(int(max_size or maximum), maximum))
 
 
-def resized_image_cache_path(path: str | Path, cache_dir: str | Path, max_size: int) -> Path:
+def resized_image_cache_path(
+    path: str | Path,
+    cache_dir: str | Path,
+    max_size: int,
+    *,
+    cache_variant: str = "",
+) -> Path:
     source = Path(path).expanduser()
     stat = source.stat()
-    key = hashlib.sha1(f"{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}|{max_size}".encode("utf-8")).hexdigest()
+    identity = f"{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}|{max_size}"
+    if cache_variant:
+        identity = f"{identity}|{cache_variant}"
+    key = hashlib.sha1(identity.encode("utf-8")).hexdigest()
     return Path(cache_dir).expanduser() / f"{key}.jpg"
 
 
@@ -77,6 +86,7 @@ def ensure_resized_image_cache(
     minimum_size: int = 80,
     maximum_size: int = 1600,
     quality: int = 90,
+    cache_variant: str = "",
     lock: object | None = None,
     cache_path: Path | None = None,
     max_decode_pixels: int | None = None,
@@ -85,7 +95,12 @@ def ensure_resized_image_cache(
     publish_temp: Callable[[Path, Path], None] | None = None,
 ) -> Path:
     bounded_size = bounded_image_cache_size(max_size, minimum=minimum_size, maximum=maximum_size)
-    cache_path = cache_path or resized_image_cache_path(path, cache_dir, bounded_size)
+    cache_path = cache_path or resized_image_cache_path(
+        path,
+        cache_dir,
+        bounded_size,
+        cache_variant=cache_variant,
+    )
     if cache_path.exists() and cache_path.stat().st_size > 0:
         return cache_path
 

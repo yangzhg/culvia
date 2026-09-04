@@ -23,6 +23,8 @@ class FakeCapability:
     runtime_key: str
     requires_download: bool
     provider: str = "local"
+    model_version: str = ""
+    result_version: str = ""
     supports_text_insights: bool = False
 
 
@@ -82,7 +84,14 @@ class ConfigPayloadTests(unittest.TestCase):
 
     def test_model_options_disable_llm_until_configured(self) -> None:
         capabilities = {
-            "core": FakeCapability("core", "core-model", "core-runtime", True),
+            "core": FakeCapability(
+                "core",
+                "core-model",
+                "core-runtime",
+                True,
+                model_version="model-v1",
+                result_version="result-v1",
+            ),
             "llm": FakeCapability(
                 "llm",
                 "default-llm",
@@ -113,6 +122,8 @@ class ConfigPayloadTests(unittest.TestCase):
         self.assertTrue(options[0]["selected"])
         self.assertEqual(options[0]["size"], "123 MB")
         self.assertEqual(options[0]["integrityState"], "verified")
+        self.assertEqual(options[0]["modelVersion"], "model-v1")
+        self.assertEqual(options[0]["resultVersion"], "result-v1")
         self.assertIsNone(options[0]["stateText"])
         self.assertIsNone(options[0]["detailText"])
         self.assertFalse(options[1]["selected"])

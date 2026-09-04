@@ -69,6 +69,7 @@ from culvia.llm_review_runner import (
     run_llm_review_job as run_llm_review_job_with_dependencies,
 )
 from culvia.llm_provenance import resolve_llm_score_dataframe
+from culvia.local_score_provenance import preserve_local_result_states, resolve_local_score_dataframe
 from culvia.llm_config_requests import llm_config_from_payload as _llm_config_from_payload
 from culvia.llm_config_service import (
     LLMConfigServiceDependencies,
@@ -225,8 +226,10 @@ from culvia.scoring import (
     llm_review_api_key,
     llm_review_custom_prompt,
     llm_review_endpoint,
+    llm_review_input_mode,
     llm_review_model_name,
     llm_review_prompt_version,
+    llm_review_result_prompt_version,
     llm_review_prompt_preset,
     llm_review_provider,
     llm_review_status,
@@ -495,7 +498,7 @@ def unique_destination_path(destination: Path, filename: str) -> Path:
 
 
 def enrich_scores_for_display(df: pd.DataFrame, filters: dict[str, Any]) -> pd.DataFrame:
-    return _enrich_scores_for_display(
+    enriched = _enrich_scores_for_display(
         df,
         filters,
         normalize_dataframe=normalize_score_dataframe,
@@ -507,6 +510,7 @@ def enrich_scores_for_display(df: pd.DataFrame, filters: dict[str, Any]) -> pd.D
             *LLM_REVIEW_FIELDS,
         ),
     )
+    return preserve_local_result_states(df, enriched)
 
 
 def device_text(device: str | None = None) -> dict[str, Any]:
@@ -569,22 +573,46 @@ def refresh_persisted_llm_config_for_state(cache_path: str | Path) -> None:
 
 def current_llm_score_dataframe(source_df: pd.DataFrame, cache_path: str | Path) -> pd.DataFrame:
     normalized = normalize_score_dataframe(source_df)
+    local_resolution = resolve_local_score_dataframe(normalized)
     refresh_persisted_llm_config_for_state(cache_path)
     matches = {}
     path = Path(cache_path).expanduser()
     if path.suffix.lower() in SQLITE_CACHE_EXTENSIONS:
         model = llm_review_model_name()
+        prompt_version = llm_review_prompt_version()
+        input_mode = llm_review_input_mode()
+        llm_candidate_df = local_resolution.dataframe[
+            pd.to_numeric(
+                local_resolution.dataframe.get(
+                    LLM_REVIEW_GENERATION_COLUMN,
+                    pd.Series(pd.NA, index=local_resolution.dataframe.index, dtype="object"),
+                ),
+                errors="coerce",
+            ).notna()
+        ]
+        prompt_versions_by_file_id = None
+        if input_mode == "text":
+            prompt_versions_by_file_id = {
+                str(record.get("file_id") or ""): llm_review_result_prompt_version(
+                    record,
+                    prompt_version=prompt_version,
+                    input_mode=input_mode,
+                )
+                for record in llm_candidate_df.to_dict(orient="records")
+                if str(record.get("file_id") or "")
+            }
         matches = load_latest_matching_analysis_insight_results(
             path,
-            file_ids=frame_file_ids(normalized),
+            file_ids=frame_file_ids(llm_candidate_df),
             analyzer_key=MODEL_LLM_REVIEW,
             provider=llm_review_provider(),
             model=model,
             model_version=model,
-            prompt_version=llm_review_prompt_version(),
+            prompt_version=prompt_version,
+            prompt_versions_by_file_id=prompt_versions_by_file_id,
         )
     return resolve_llm_score_dataframe(
-        normalized,
+        local_resolution.dataframe,
         matches,
         generation_column=LLM_REVIEW_GENERATION_COLUMN,
         score_columns=tuple(f"{field}_0_10" for field in LLM_REVIEW_FIELDS),
@@ -854,6 +882,8 @@ STATE_PAYLOAD_DEPENDENCIES = StatePayloadDependencies(
     llm_review_provider=llm_review_provider,
     llm_review_model_name=llm_review_model_name,
     llm_review_prompt_version=llm_review_prompt_version,
+    llm_review_result_prompt_version=llm_review_result_prompt_version,
+    llm_review_input_mode=llm_review_input_mode,
     serialize_photo=serialize_photo,
     curation_summary=curation_summary,
     application_info=application_info,
@@ -1450,6 +1480,7 @@ def llm_review_runner_dependencies() -> LlmReviewRunnerDependencies:
         refresh_persisted_llm_config=refresh_persisted_llm_config,
         llm_review_configured=llm_review_configured,
         llm_review_status=llm_review_status,
+        llm_review_result_prompt_version=llm_review_result_prompt_version,
         sanitize_uploaded_paths=sanitize_uploaded_paths,
         scan_image_paths=scan_image_paths,
         build_file_id=build_file_id,

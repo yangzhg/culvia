@@ -42,6 +42,19 @@ def llm_prompt_signature(base_version: str, input_mode: str, prompt_preset: str,
     return f"{base_version}:{input_mode}:{prompt_preset}:{prompt_hash}"
 
 
+def llm_result_prompt_version(
+    prompt_version: str,
+    input_mode: str,
+    score_context: Mapping[str, object] | None,
+    score_context_lines: Callable[[Mapping[str, object] | None], list[str]],
+) -> str:
+    if input_mode != "text":
+        return prompt_version
+    context = "\n".join(score_context_lines(score_context))
+    context_hash = hashlib.sha256(context.encode("utf-8")).hexdigest()[:16]
+    return f"{prompt_version}:context:{context_hash}"
+
+
 def build_score_context_lines(
     record: Mapping[str, object] | None,
     *,

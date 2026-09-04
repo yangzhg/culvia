@@ -56,4 +56,14 @@ Treat a model revision update as a security-sensitive dependency change:
 1. Resolve the proposed upstream revision to a full commit and retrieve file metadata with `blobs=true`.
 2. Review the repository tree, model card, license, weight format, and upstream security scan. Prefer safetensors when an audited compatible artifact exists.
 3. Download the exact candidate bytes, recompute SHA-256 locally, and run a real load and representative scoring smoke test.
-4. Update the revision, digest, tests, and this document together. Never change only the revision or only the digest.
+4. Update the revision, digest, canonical result-version contract, tests, and this document together. Never change only the revision or only the digest.
+5. Verify that an old result version is reported as stale, that only selected capabilities are recomputed, and that a successful checkpoint stores the new result version with its score fields.
+
+Result versions are capability-specific. They are derived from the exact model identity, revision, weight digest, and
+score contract. CLIP contracts include the real prompt pairs, so a prompt edit changes the corresponding result
+version automatically. Score-affecting preprocessing, output mapping, calibration, or scale changes must update the
+contract even when model bytes do not change.
+
+The model-analysis image cache key is derived from the same input contract used by the result version, including the
+size bounds, JPEG quality, color mode, and cache profile. A preprocessing change therefore cannot recompute a new
+result version from an old cached JPEG.

@@ -25,11 +25,27 @@ Core columns:
 | text columns | `TEXT` | File metadata and error fields from `CSV_COLUMNS` |
 | `recommendation_0_10` | `REAL` | Combined recommendation score |
 | `llm_review_generation` | `REAL` | Generation shared with the matching LLM insight; stale or partially published review scores are ignored |
+| `core_aesthetic_result_version` | `TEXT` | Semantic producer version for the core aesthetic fields |
+| `clip_iqa_result_version` | `TEXT` | Semantic producer version for the CLIP-IQA fields |
+| `clip_aesthetic_result_version` | `TEXT` | Semantic producer version for the CLIP aesthetic field |
 | `updated_at` | `REAL` | Unix timestamp |
 
 Score columns include local aesthetic, technical, CLIP reference, CLIP-IQA, and LLM review dimensions defined in `culvia.schema`.
 Existing score tables are extended in place when new cache columns are introduced.
 Scoring checkpoints use full-record UPSERTs for only the supplied `file_id`; rows outside the checkpoint are never rewritten from an older in-memory snapshot. Explicit `NULL` values remain meaningful and clear stale model output.
+
+The three local-model result versions bind the capability, pinned repository revision, verified weight digest,
+and score-affecting contract. The two CLIP capabilities have independent versions even though they share one runtime.
+Their contracts include their actual prompt pairs, so changing only one prompt family invalidates only that capability.
+
+Older rows are not automatically stamped as current. A schema upgrade only adds nullable columns: rows with complete
+scores and no result version are `legacy`, while a nonmatching version is `stale`. State, filtering, recommendation,
+model acceptance, and CSV exports mask non-current local-model values without deleting the stored historical values.
+An explicit scoring run refreshes only selected capabilities for photos in the active source, and successful score
+fields and their result version are committed by the same checkpoint.
+
+CSV exports include stored `*_result_version` columns plus derived `*_result_state` columns. Result states are
+`current`, `legacy`, `stale`, `incomplete`, or `missing`; derived state columns are not persisted in SQLite.
 
 ## `photo_analysis_insights`
 
@@ -66,6 +82,9 @@ For LLM review, `created_at` is also the result generation stored in `culvia_sco
 The UI and cache reuse a review only when the latest insight identity and generation both match the score row.
 After upgrading an older database, rows without a generation are treated as stale and reviewed again. This avoids
 binding unrelated per-dimension scores merely because two review generations happened to share the same overall score.
+For text-only review, `prompt_version` also includes a digest of the exact current score-context lines sent to the
+model. Updating or completing an upstream local score therefore invalidates the old text review in the same scoring
+run. Image-mode review does not include local score context and keeps the normal prompt identity.
 
 ## `photo_app_config`
 

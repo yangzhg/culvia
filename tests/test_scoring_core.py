@@ -10,14 +10,22 @@ import pandas as pd
 
 from culvia.insight_store import AnalysisInsight, AnalysisInsightMatch
 from culvia.schema import (
+    CORE_AESTHETIC_GROUP,
     LLM_REVIEW_GENERATION_COLUMN,
+    MODEL_CAPABILITIES,
     MODEL_BASIC_TECHNICAL,
     MODEL_CLIP_AESTHETIC,
     MODEL_CLIP_IQA,
     MODEL_CORE_AESTHETIC,
     MODEL_LLM_REVIEW,
+    MODEL_RESULT_VERSION_COLUMNS,
 )
-from culvia.scoring_core import ScoreImagePathDependencies, score_image_paths
+from culvia.scoring_core import (
+    ScoreEntry,
+    ScoreImagePathDependencies,
+    _refresh_llm_review_needs,
+    score_image_paths,
+)
 
 
 MODEL_KEYS = (
@@ -41,6 +49,7 @@ def make_dependencies(
     current_insight_generations: dict[str, float] | None = None,
     recompute_plan: dict[str, bool] | None = None,
     calls: dict[str, object] | None = None,
+    llm_input_mode: str = "image",
 ) -> ScoreImagePathDependencies:
     call_log = calls if calls is not None else {}
     active_recompute_plan = recompute_plan if recompute_plan is not None else base_plan()
@@ -115,12 +124,83 @@ def make_dependencies(
         },
         save_analysis_insights=save_analysis_insights,
         llm_review_prompt_version=lambda: "prompt-v1",
+        llm_review_result_prompt_version=lambda _context, **_identity: "prompt-v1",
+        llm_review_input_mode=lambda: llm_input_mode,
         llm_review_provider=lambda: "test-provider",
         llm_review_model_name=lambda: "test-model",
     )
 
 
 class ScoringCoreTests(unittest.TestCase):
+    def test_text_llm_is_refreshed_when_an_upstream_score_will_change(self) -> None:
+        text_entry = ScoreEntry(
+            Path("photo.jpg"),
+            "image-1",
+            {"file_id": "image-1"},
+            None,
+            base_plan(**{MODEL_CORE_AESTHETIC: True}),
+        )
+        image_entry = ScoreEntry(
+            Path("photo.jpg"),
+            "image-1",
+            {"file_id": "image-1"},
+            None,
+            base_plan(**{MODEL_CORE_AESTHETIC: True}),
+        )
+
+        _refresh_llm_review_needs(
+            [text_entry],
+            [MODEL_CORE_AESTHETIC, MODEL_LLM_REVIEW],
+            current_llm_file_ids=frozenset({"image-1"}),
+            contextual=True,
+        )
+        _refresh_llm_review_needs(
+            [image_entry],
+            [MODEL_CORE_AESTHETIC, MODEL_LLM_REVIEW],
+            current_llm_file_ids=frozenset({"image-1"}),
+            contextual=False,
+        )
+
+        self.assertTrue(text_entry.needs[MODEL_LLM_REVIEW])
+        self.assertFalse(image_entry.needs[MODEL_LLM_REVIEW])
+
+    def test_text_llm_receives_current_context_without_overwriting_stale_cache(self) -> None:
+        stale_version = "score-v1:old"
+        cached = {
+            "file_id": "image-1",
+            "path": "/photos/image-1.jpg",
+            "filename": "image-1.jpg",
+            "error": "",
+            **{column: 9.0 for column in CORE_AESTHETIC_GROUP.cache_columns},
+            MODEL_RESULT_VERSION_COLUMNS[MODEL_CORE_AESTHETIC]: stale_version,
+        }
+        calls: dict[str, object] = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "scores.sqlite"
+            cache_path.touch()
+            result, _device = score_image_paths(
+                [cached["path"]],
+                dependencies=make_dependencies(
+                    cache_df=pd.DataFrame([cached]),
+                    recompute_plan=base_plan(**{MODEL_LLM_REVIEW: True}),
+                    calls=calls,
+                    llm_input_mode="text",
+                ),
+                cache_path=cache_path,
+                model_loader=lambda _device: None,
+                clip_reference_loader=lambda _device: None,
+                selected_models=[MODEL_LLM_REVIEW],
+            )
+
+        context = calls["llm_paths"][0][2]
+        self.assertTrue(pd.isna(context["overall_0_10"]))
+        self.assertEqual(float(result.loc[0, "overall_0_10"]), 9.0)
+        self.assertEqual(result.loc[0, MODEL_RESULT_VERSION_COLUMNS[MODEL_CORE_AESTHETIC]], stale_version)
+        self.assertNotEqual(
+            stale_version,
+            MODEL_CAPABILITIES[MODEL_CORE_AESTHETIC].result_version,
+        )
+
     def test_cached_llm_scores_without_matching_insight_are_recomputed(self) -> None:
         cache_df = pd.DataFrame(
             [

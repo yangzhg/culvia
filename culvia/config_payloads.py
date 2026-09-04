@@ -12,6 +12,8 @@ class ModelCapabilityLike(Protocol):
     runtime_key: str
     requires_download: bool
     provider: str
+    model_version: str
+    result_version: str
     supports_text_insights: bool
 
 
@@ -130,6 +132,8 @@ def model_option_payloads(
             {
                 "key": capability.key,
                 "model": str(llm_status["model"]) if is_llm else capability.model_id,
+                "modelVersion": str(llm_status["model"]) if is_llm else capability.model_version,
+                "resultVersion": capability.result_version,
                 "requiresDownload": capability.requires_download,
                 "downloaded": bool(status.get("downloaded")),
                 "partial": bool(status.get("partial")),

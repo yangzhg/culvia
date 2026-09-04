@@ -27,8 +27,9 @@ def make_store() -> ScoreCacheStore:
             "recommendation_0_10",
             "overall_0_10",
             "quality_0_10",
+            "core_aesthetic_result_version",
         ),
-        text_columns=frozenset({"file_id", "path", "folder", "filename", "error"}),
+        text_columns=frozenset({"file_id", "path", "folder", "filename", "error", "core_aesthetic_result_version"}),
         field_groups=(DummyFieldGroup(("overall_0_10", "quality_0_10")),),
         recommendation_column="recommendation_0_10",
     )
@@ -53,6 +54,7 @@ class CacheRecordStoreTests(unittest.TestCase):
         self.assertEqual(row["error"], "")
         self.assertAlmostEqual(float(row["overall_0_10"]), 8.2)
         self.assertTrue(pd.isna(row["quality_0_10"]))
+        self.assertEqual(row["core_aesthetic_result_version"], "")
 
     def test_sqlite_roundtrip_merges_existing_and_current_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -69,6 +71,7 @@ class CacheRecordStoreTests(unittest.TestCase):
                         "folder": "/",
                         "filename": "new.jpg",
                         "overall_0_10": 9.0,
+                        "core_aesthetic_result_version": "score-v1:current",
                     },
                     {
                         "file_id": "image-2",
@@ -88,6 +91,7 @@ class CacheRecordStoreTests(unittest.TestCase):
         second = loaded.set_index("file_id").loc["image-2"]
         self.assertEqual(first["path"], "/new.jpg")
         self.assertAlmostEqual(float(first["overall_0_10"]), 9.0)
+        self.assertEqual(first["core_aesthetic_result_version"], "score-v1:current")
         self.assertAlmostEqual(float(second["quality_0_10"]), 7.5)
 
     def test_upsert_updates_only_the_supplied_records(self) -> None:

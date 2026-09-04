@@ -13,9 +13,12 @@ from culvia.job_service import ScoringJobService
 from culvia.llm_review_runner import LlmReviewRunnerDependencies, run_llm_review_job
 from culvia.llm_runtime import AnalyzerOutput
 from culvia.schema import (
+    CORE_AESTHETIC_GROUP,
     LLM_REVIEW_FIELDS,
     LLM_REVIEW_GENERATION_COLUMN,
+    MODEL_CORE_AESTHETIC,
     MODEL_LLM_REVIEW,
+    MODEL_RESULT_VERSION_COLUMNS,
     score_column,
 )
 from culvia.scoring import (
@@ -90,6 +93,7 @@ def make_dependencies(calls: dict[str, Any], *, configured: bool = True) -> LlmR
         refresh_persisted_llm_config=lambda cache_path: calls.setdefault("refreshed", []).append(cache_path),
         llm_review_configured=lambda: configured,
         llm_review_status=lambda: {"provider": "unit", "model": "mock-vlm", "promptVersion": "prompt-v1"},
+        llm_review_result_prompt_version=lambda _context: "prompt-v1",
         sanitize_uploaded_paths=lambda value: [Path(item) for item in value or []],
         scan_image_paths=lambda folders: ([], []),
         build_file_id=lambda path: f"id:{Path(path).name}",
@@ -202,6 +206,7 @@ class LlmReviewRunnerTests(unittest.TestCase):
                     "model": str(status["model"]),
                     "model_version": str(status["model"]),
                     "prompt_version": llm_review_prompt_version(),
+                    "prompt_versions_by_file_id": None,
                 }
                 else {}
             ),
@@ -334,6 +339,54 @@ class LlmReviewRunnerTests(unittest.TestCase):
         self.assertEqual([call[1] for call in calls["reviewed"]], ["current", "current"])
         with store.lock:
             self.assertEqual(store.data["job"]["phase"], "done")
+
+    def test_text_review_masks_stale_local_context_without_clearing_cached_values(self) -> None:
+        cache_path = "/tmp/llm-review-stale-local.sqlite"
+        stale_version = "score-v1:old"
+        row = make_row("stale-local", "/photos/stale-local.jpg")
+        row.update({column: 9.0 for column in CORE_AESTHETIC_GROUP.cache_columns})
+        row[MODEL_RESULT_VERSION_COLUMNS[MODEL_CORE_AESTHETIC]] = stale_version
+        row[LLM_REVIEW_GENERATION_COLUMN] = 1.0
+        row.update({score_column(field, "0_10"): 8.0 for field in LLM_REVIEW_FIELDS})
+        store = make_store(cache_path, normalize_score_dataframe(pd.DataFrame([row])))
+        service = ScoringJobService(store)
+        job_id = service.reserve(kind="llm_review")
+        self.assertTrue(job_id)
+        calls: dict[str, Any] = {}
+
+        def load_matching(_cache_path: str, **identity: object) -> dict[str, AnalysisInsightMatch]:
+            calls["matching_identity"] = identity
+            return {}
+
+        dependencies = replace(
+            make_dependencies(calls),
+            llm_review_status=lambda: {
+                "provider": "unit",
+                "model": "mock-vlm",
+                "promptVersion": "prompt-v1",
+                "inputMode": "text",
+            },
+            llm_review_result_prompt_version=lambda _context, **_identity: "prompt-v1:context:current",
+            load_latest_matching_analysis_insight_results=load_matching,
+        )
+
+        run_llm_review_job(
+            str(job_id),
+            {"mode": "folders", "folders": ["/photos"], "cachePath": cache_path},
+            store,
+            service,
+            dependencies,
+        )
+
+        context = calls["reviewed"][0][2]
+        self.assertTrue(pd.isna(context["overall_0_10"]))
+        self.assertEqual(
+            calls["matching_identity"]["prompt_versions_by_file_id"],
+            {"stale-local": "prompt-v1:context:current"},
+        )
+        saved = calls["cache_saves"][0][0].set_index("file_id").loc["stale-local"]
+        self.assertEqual(float(saved["overall_0_10"]), 9.0)
+        self.assertEqual(saved[MODEL_RESULT_VERSION_COLUMNS[MODEL_CORE_AESTHETIC]], stale_version)
 
     def test_cancelled_job_preserves_cancelled_phase(self) -> None:
         cache_path = "/tmp/llm-review-cancel.sqlite"

@@ -25,11 +25,26 @@ Culvia 使用 SQLite 保存评分结果、人工选片数据、大模型 insight
 | text columns | `TEXT` | `CSV_COLUMNS` 中的文件元数据和错误字段 |
 | `recommendation_0_10` | `REAL` | 综合推荐分 |
 | `llm_review_generation` | `REAL` | 与对应大模型 insight 共享的结果代次；过期或未完整发布的评审分数会被忽略 |
+| `core_aesthetic_result_version` | `TEXT` | 核心审美字段的语义生产版本 |
+| `clip_iqa_result_version` | `TEXT` | CLIP-IQA 字段的语义生产版本 |
+| `clip_aesthetic_result_version` | `TEXT` | CLIP 审美字段的语义生产版本 |
 | `updated_at` | `REAL` | Unix 时间戳 |
 
 评分字段包含 `culvia.schema` 中定义的本地审美、技术、CLIP 参考、CLIP-IQA 和大模型评审维度。
 新增缓存字段时，现有评分表会原地扩展。
 评分 checkpoint 仅对传入的 `file_id` 执行完整记录 UPSERT，不会用旧的内存快照重写其它行。显式 `NULL` 仍有清除过期模型结果的语义。
+
+三个本地模型结果版本会绑定 capability、固定的仓库 revision、已校验的权重摘要和影响评分语义的契约。
+两个 CLIP capability 即使共享同一运行时，也各自拥有独立版本；契约直接包含实际 prompt pairs，因此只修改
+其中一组提示词时，只会让对应 capability 失效。
+
+旧行不会被自动标记为当前。升级 schema 只增加 nullable 字段：分数完整但没有结果版本的行属于
+`legacy`，版本不匹配的行属于 `stale`。状态、筛选、推荐、模型采纳和 CSV 导出会屏蔽非当前的本地模型值，
+但不会删除数据库中的历史原值。只有用户显式启动评分时，才会对当前来源内已选择的 capability 补算；
+成功的分数字段与结果版本由同一个 checkpoint 提交。
+
+CSV 会同时导出已存储的 `*_result_version` 字段和派生的 `*_result_state` 字段。状态值包括 `current`、
+`legacy`、`stale`、`incomplete` 和 `missing`；派生状态不会写入 SQLite。
 
 ## `photo_analysis_insights`
 
@@ -66,6 +81,8 @@ Culvia 使用 SQLite 保存评分结果、人工选片数据、大模型 insight
 只有最新 insight 的身份与代次都和评分行一致时，界面与缓存才会复用这次评审。
 旧数据库升级后，缺少代次的评分行会视为过期并重新评审，避免因为两次评审碰巧总分相同，
 就把不属于同一代次的各维度分数错误绑定在一起。
+纯文本评审的 `prompt_version` 还会包含实际发送给模型的当前评分上下文摘要。本地上游评分更新或补全后，
+旧的纯文本评审会在同一次评分任务中失效并重算。图片模式不使用本地评分上下文，继续沿用普通 prompt 身份。
 
 ## `photo_app_config`
 

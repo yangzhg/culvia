@@ -12,7 +12,13 @@ from culvia.app_state import AppStateStore, create_initial_state
 from culvia.job_service import ScoringJobService
 from culvia.photo_scan import build_file_id, scan_image_paths
 from culvia.score_records import make_empty_score_record
-from culvia.schema import CSV_COLUMNS, FIELD_GROUPS, RECOMMENDATION_COLUMN
+from culvia.schema import (
+    CSV_COLUMNS,
+    FIELD_GROUPS,
+    MODEL_CORE_AESTHETIC,
+    MODEL_RESULT_VERSION_COLUMNS,
+    RECOMMENDATION_COLUMN,
+)
 from culvia.source_preview import (
     SourcePreviewDependencies,
     SourcePreviewStartError,
@@ -88,6 +94,7 @@ class SourcePreviewTests(unittest.TestCase):
                         "filename": "b.jpg",
                         "error": "",
                         "recommendation_0_10": 8.4,
+                        "overall_0_10": 8.1,
                     }
                 ]
             )
@@ -102,6 +109,8 @@ class SourcePreviewTests(unittest.TestCase):
         self.assertEqual(result.scores_df["file_id"].nunique(), 2)
         cached_row = result.scores_df[result.scores_df["file_id"] == second_id].iloc[0]
         self.assertEqual(float(cached_row["recommendation_0_10"]), 8.4)
+        self.assertEqual(float(cached_row["overall_0_10"]), 8.1)
+        self.assertTrue(pd.isna(cached_row[MODEL_RESULT_VERSION_COLUMNS[MODEL_CORE_AESTHETIC]]))
 
     def test_preview_uses_uploaded_paths_without_scanning_directories(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

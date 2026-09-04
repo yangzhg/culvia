@@ -6,12 +6,15 @@ from dataclasses import dataclass
 import pandas as pd
 
 from culvia.llm_config import normalize_llm_prompt_preset as _normalize_llm_prompt_preset
+from culvia.local_score_contracts import canonical_result_version, clip_score_contract, core_aesthetic_score_contract
 from culvia.model_files import (
     CLIP_REFERENCE_MODEL_ID,
     CLIP_REFERENCE_MODEL_REPO_DIR,
     CLIP_REFERENCE_MODEL_REVISION,
+    CLIP_REFERENCE_WEIGHT_SHA256,
     MODEL_CACHE_REPO_DIR,
     MODEL_ID,
+    MODEL_PT_SHA256,
     MODEL_REVISION,
 )
 
@@ -82,6 +85,7 @@ class ModelCapability:
     default_enabled: bool = True
     provider: str = "local"
     model_version: str = ""
+    result_version: str = ""
     prompt_version: str = ""
     supports_text_insights: bool = False
 
@@ -192,6 +196,13 @@ MODEL_CAPABILITIES = {
         requires_download=True,
         repo_cache_dir=MODEL_CACHE_REPO_DIR,
         model_version=MODEL_REVISION,
+        result_version=canonical_result_version(
+            capability_key=MODEL_CORE_AESTHETIC,
+            model_id=MODEL_ID,
+            model_version=MODEL_REVISION,
+            weight_sha256=MODEL_PT_SHA256,
+            score_contract=core_aesthetic_score_contract(CORE_AESTHETIC_GROUP.fields),
+        ),
     ),
     MODEL_CLIP_IQA: ModelCapability(
         key=MODEL_CLIP_IQA,
@@ -202,6 +213,13 @@ MODEL_CAPABILITIES = {
         repo_cache_dir=CLIP_REFERENCE_MODEL_REPO_DIR,
         provider="openai",
         model_version=CLIP_REFERENCE_MODEL_REVISION,
+        result_version=canonical_result_version(
+            capability_key=MODEL_CLIP_IQA,
+            model_id=CLIP_REFERENCE_MODEL_ID,
+            model_version=CLIP_REFERENCE_MODEL_REVISION,
+            weight_sha256=CLIP_REFERENCE_WEIGHT_SHA256,
+            score_contract=clip_score_contract(MODEL_QUALITY_GROUP.fields),
+        ),
     ),
     MODEL_CLIP_AESTHETIC: ModelCapability(
         key=MODEL_CLIP_AESTHETIC,
@@ -212,6 +230,13 @@ MODEL_CAPABILITIES = {
         repo_cache_dir=CLIP_REFERENCE_MODEL_REPO_DIR,
         provider="openai",
         model_version=CLIP_REFERENCE_MODEL_REVISION,
+        result_version=canonical_result_version(
+            capability_key=MODEL_CLIP_AESTHETIC,
+            model_id=CLIP_REFERENCE_MODEL_ID,
+            model_version=CLIP_REFERENCE_MODEL_REVISION,
+            weight_sha256=CLIP_REFERENCE_WEIGHT_SHA256,
+            score_contract=clip_score_contract(AESTHETIC_REFERENCE_GROUP.fields),
+        ),
     ),
     MODEL_BASIC_TECHNICAL: ModelCapability(
         key=MODEL_BASIC_TECHNICAL,
@@ -234,6 +259,11 @@ MODEL_CAPABILITIES = {
     ),
 }
 MODEL_KEYS = list(MODEL_CAPABILITIES)
+VERSIONED_LOCAL_MODEL_KEYS = (
+    MODEL_CORE_AESTHETIC,
+    MODEL_CLIP_IQA,
+    MODEL_CLIP_AESTHETIC,
+)
 DEFAULT_SELECTED_MODELS = [key for key, capability in MODEL_CAPABILITIES.items() if capability.default_enabled]
 MODEL_REPO_CACHE_DIRS = sorted(
     {capability.repo_cache_dir for capability in MODEL_CAPABILITIES.values() if capability.repo_cache_dir}
@@ -264,11 +294,20 @@ SORT_FIELD_LABELS = {
 SORT_FIELDS = list(SORT_FIELD_LABELS)
 
 BASE_RECORD_COLUMNS = ("file_id", "path", "folder", "filename", "error")
+MODEL_RESULT_VERSION_COLUMNS = {
+    model_key: f"{MODEL_CAPABILITIES[model_key].field_group_key}_result_version"
+    for model_key in VERSIONED_LOCAL_MODEL_KEYS
+}
+MODEL_RESULT_STATE_COLUMNS = {
+    model_key: f"{MODEL_CAPABILITIES[model_key].field_group_key}_result_state"
+    for model_key in VERSIONED_LOCAL_MODEL_KEYS
+}
 CSV_COLUMNS = [
     *BASE_RECORD_COLUMNS,
     RECOMMENDATION_COLUMN,
     LLM_REVIEW_GENERATION_COLUMN,
     *(column for group in FIELD_GROUPS for column in group.cache_columns),
+    *MODEL_RESULT_VERSION_COLUMNS.values(),
 ]
 
 
@@ -308,6 +347,34 @@ def missing_model_output_columns(record: Mapping[str, object] | pd.Series | None
     return missing_score_columns(record, model_output_columns(model_key))
 
 
+def model_result_state(record: Mapping[str, object] | pd.Series | None, model_key: str) -> str:
+    if record is None:
+        return "missing"
+    group = field_group_for_model(model_key)
+    present = [not pd.isna(record.get(column)) for column in group.required_columns]
+    any_present = any(not pd.isna(record.get(column)) for column in group.cache_columns)
+    stored_value = record.get(MODEL_RESULT_VERSION_COLUMNS[model_key])
+    stored_version = "" if stored_value is None or pd.isna(stored_value) else str(stored_value).strip()
+    if present and all(present) and stored_version == MODEL_CAPABILITIES[model_key].result_version:
+        return "current"
+    if present and all(present) and not stored_version:
+        return "legacy"
+    if present and all(present) and stored_version:
+        return "stale"
+    if not any_present and not stored_version:
+        return "missing"
+    return "incomplete"
+
+
+def stamp_model_result_version(record: Mapping[str, object], model_key: str) -> dict[str, object]:
+    missing = missing_model_output_columns(record, model_key)
+    if missing:
+        raise ValueError(f"Cannot stamp incomplete {model_key} result: {', '.join(missing)}")
+    updated = dict(record)
+    updated[MODEL_RESULT_VERSION_COLUMNS[model_key]] = MODEL_CAPABILITIES[model_key].result_version
+    return updated
+
+
 def normalize_selected_models(selected_models: Iterable[str] | None = None) -> list[str]:
     if selected_models is None:
         return DEFAULT_SELECTED_MODELS.copy()
@@ -327,7 +394,12 @@ def model_recompute_plan(
 ) -> dict[str, bool]:
     active_models = set(normalize_selected_models(selected_models))
     return {
-        model_key: model_key in active_models and bool(missing_model_output_columns(record, model_key))
+        model_key: model_key in active_models
+        and (
+            model_result_state(record, model_key) != "current"
+            if model_key in VERSIONED_LOCAL_MODEL_KEYS
+            else bool(missing_model_output_columns(record, model_key))
+        )
         for model_key in MODEL_KEYS
     }
 

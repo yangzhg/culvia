@@ -112,6 +112,7 @@ class StatePayloadBuilderTests(unittest.TestCase):
             model: str,
             model_version: str,
             prompt_version: str,
+            prompt_versions_by_file_id: dict[str, str] | None = None,
         ) -> dict[str, AnalysisInsightMatch]:
             self.assertEqual(cache_path, "/tmp/culvia_scores.sqlite")
             self.assertEqual(analyzer_key, "llm_review")
@@ -119,6 +120,7 @@ class StatePayloadBuilderTests(unittest.TestCase):
             self.assertEqual(model, "current-model")
             self.assertEqual(model_version, "current-model")
             self.assertEqual(prompt_version, "current-prompt")
+            self.assertIsNone(prompt_versions_by_file_id)
             calls["matchingInsightFileIds"] = list(file_ids)
             return {
                 "a": AnalysisInsightMatch(1.0),
@@ -169,6 +171,10 @@ class StatePayloadBuilderTests(unittest.TestCase):
             llm_review_provider=lambda: "current-provider",
             llm_review_model_name=lambda: "current-model",
             llm_review_prompt_version=lambda: "current-prompt",
+            llm_review_result_prompt_version=lambda _context, **_identity: self.fail(
+                "image-mode state must not build per-photo prompt identities"
+            ),
+            llm_review_input_mode=lambda: "image",
             serialize_photo=serialize_photo,
             curation_summary=lambda mark_by_file_id, file_ids: {
                 "fileIds": list(file_ids),
@@ -228,6 +234,10 @@ class StatePayloadBuilderTests(unittest.TestCase):
         self.assertEqual(payload["curation"]["visible"]["fileIds"], ["b"])
         self.assertEqual(payload["curation"]["filteredLlmReviewedCount"], 1)
         self.assertEqual(payload["curation"]["selectedPreviewCount"], 1)
+        self.assertEqual(
+            {key: states["missing"] for key, states in payload["scoreProvenance"]["summary"].items()},
+            {"rsinema_aesthetic": 2, "clip_iqa": 2, "clip_aesthetic": 2},
+        )
 
         payload["source"]["folders"].append("/mutated")
         self.assertEqual(store.data["source"]["folders"], ["/photos"])

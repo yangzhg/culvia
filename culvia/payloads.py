@@ -15,6 +15,7 @@ from culvia.curation import (
     normalize_color_label,
     normalize_manual_rating,
 )
+from culvia.local_score_provenance import local_score_provenance_payload
 from culvia.recommendation import numeric_column, numeric_score
 
 
@@ -190,6 +191,7 @@ def serialize_photo(
         "llmReviewTexts": _score_texts(llm_review_scores, fields.llm_review_fields),
         "llmReviewStars": _score_stars(llm_review_scores, fields.llm_review_fields),
         "llmInsight": serialize_insight(llm_insight),
+        "scoreProvenance": local_score_provenance_payload(row),
         "manual": serialize_mark((mark_by_file_id or {}).get(file_id)),
         "technicalTags": technical_tags(technical_scores),
     }
