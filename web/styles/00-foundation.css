@@ -564,16 +564,47 @@ body.has-tooltip-portal [data-ui-tooltip]::after {
 }
 
 .path-summary {
-  display: -webkit-box;
+  display: grid;
+  gap: 1px;
   margin-top: 3px;
+  min-width: 0;
   overflow: hidden;
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
   line-height: 1.35;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+}
+
+.path-summary-meta,
+.path-summary-folders {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.path-summary-meta-item,
+.path-summary-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-summary-meta-item:first-child,
+.path-summary-divider,
+.path-summary-folder-separator {
+  flex: none;
+}
+
+.path-summary-divider {
+  margin: 0 4px;
+}
+
+.path-summary-folder-separator {
+  white-space: pre;
 }
 
 .manual-path-edit {

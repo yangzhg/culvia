@@ -549,7 +549,6 @@ const sourcePanel = window.CulviaSourcePanel.create({
   escapeHtml,
   iconMarkup,
   pathName,
-  parentPath,
   setText,
   apiClient,
   postJson,
@@ -743,7 +742,7 @@ function renderModelOptions() {
       const disabled = running || option.disabled;
       const optionHint = `${label} · ${subtitle}`;
       return `
-        <label class="model-option ${option.selected ? "is-selected" : ""} ${option.disabled ? "is-disabled" : ""}" data-model-option="${escapeHtml(option.key)}" aria-label="${escapeHtml(optionHint)}">
+        <label class="model-option ${option.selected ? "is-selected" : ""} ${option.disabled ? "is-disabled" : ""}" data-model-option="${escapeHtml(option.key)}" aria-label="${escapeHtml(optionHint)}" data-ui-tooltip="${escapeHtml(optionHint)}">
           <input
             type="checkbox"
             data-model-key="${escapeHtml(option.key)}"
@@ -1039,12 +1038,13 @@ function renderCurationHistory() {
       const undoState = historyUndoStateMeta(record.undoState);
       const summary = localizedHistorySummary(record, kind);
       const scopeLabel = localizedHistoryScope(record.scope);
+      const context = [scopeLabel, timeText].filter(Boolean).join(" · ");
       return `
         <article class="curation-history-item">
           <span class="curation-history-kind">${escapeHtml(kind)}</span>
-          <div>
+          <div class="curation-history-copy">
             <strong>${escapeHtml(summary || kind)}</strong>
-            <small>${escapeHtml([scopeLabel, timeText].filter(Boolean).join(" · "))}</small>
+            <small>${escapeHtml(context)}</small>
           </div>
           <span class="curation-history-state is-${escapeHtml(undoState.tone)}">${escapeHtml(undoState.label)}</span>
         </article>

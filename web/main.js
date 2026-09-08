@@ -2,14 +2,14 @@
 // the import order below is the only place load order is declared.
 
 // Locale resources and i18n runtime.
-import "./locales/zh-CN.js?v=20260904-score-provenance";
-import "./locales/en.js?v=20260904-score-provenance";
+import "./locales/zh-CN.js?v=20260908-responsive-readability";
+import "./locales/en.js?v=20260908-responsive-readability";
 import "./i18n_messages.js";
 import "./i18n.js";
 
 // Pure state and interaction helpers.
 import "./filter_state.js";
-import "./filter_presets.js";
+import "./filter_presets.js?v=20260908-responsive-readability";
 import "./culling_flow.js";
 import "./shortcuts.js";
 import "./gallery_keyboard.js";
@@ -38,11 +38,11 @@ import "./distribution_view.js";
 import "./distribution_panel.js";
 import "./export_panel.js?v=20260904-score-provenance";
 import "./llm_config_panel.js";
-import "./gallery_panel.js?v=20260904-full-filter-scope";
+import "./gallery_panel.js?v=20260908-responsive-readability";
 import "./viewer_panel.js?v=20260904-score-provenance";
-import "./source_panel.js";
-import "./filter_panel.js";
+import "./source_panel.js?v=20260908-responsive-readability";
+import "./filter_panel.js?v=20260908-responsive-readability";
 import "./viewer_inspector.js";
 
 // Orchestrator: wires state, rendering, and events together.
-import "./app.js?v=20260904-score-provenance";
+import "./app.js?v=20260908-responsive-readability";

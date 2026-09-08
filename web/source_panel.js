@@ -7,7 +7,6 @@ window.CulviaSourcePanel = (() => {
     escapeHtml,
     iconMarkup,
     pathName,
-    parentPath,
     setText,
     apiClient,
     postJson,
@@ -161,24 +160,50 @@ window.CulviaSourcePanel = (() => {
     }
 
     function updatePathSummaries() {
-      $("#folderSummary")?.removeAttribute("data-i18n");
+      const summary = $("#folderSummary");
+      if (!summary) return;
+      summary.removeAttribute("data-i18n");
       const folders = foldersFromInput();
       const preview = matchingPreview(folders);
-      const previewText = isPreviewActive()
-        ? ` · ${t("source.previewScanningState")}`
+      const previewLabel = isPreviewActive()
+        ? t("source.previewScanningState")
         : preview
-          ? ` · ${t("source.previewCount", { count: Number(preview.total) })}`
+          ? t("source.previewCount", { count: Number(preview.total) })
           : "";
       if (!folders.length) {
         setText("#folderSummary", t("source.empty"));
-      } else if (folders.length === 1) {
-        setText("#folderSummary", `${pathName(folders[0])} · ${parentPath(folders[0])}${previewText}`);
-      } else {
-        setText(
-          "#folderSummary",
-          `${tr("source.folderCount", { count: folders.length }, `${folders.length} 个目录`)} · ${folders.slice(0, 2).map(pathName).join("、")}${previewText}`,
-        );
+        summary.removeAttribute("aria-label");
+        delete summary.dataset.uiTooltip;
+        summary.removeAttribute("tabindex");
+        summary.removeAttribute("title");
+        return;
       }
+
+      const countLabel = t(folders.length === 1 ? "source.folderCountOne" : "source.folderCount", {
+        count: folders.length,
+      });
+      const folderSeparator = t("source.folderSeparator");
+      const visibleFolders = folders.slice(0, 2);
+      const previewMarkup = previewLabel
+        ? `<span class="path-summary-divider" aria-hidden="true">·</span><span class="path-summary-meta-item">${escapeHtml(previewLabel)}</span>`
+        : "";
+      const separatorMarkup = `<span class="path-summary-folder-separator" aria-hidden="true">${escapeHtml(folderSeparator)}</span>`;
+      const folderMarkup = visibleFolders
+        .map((folder) => `<span class="path-summary-folder">${escapeHtml(pathName(folder))}</span>`)
+        .join(separatorMarkup);
+      const hint = [countLabel, previewLabel, folders.join(folderSeparator)].filter(Boolean).join(" · ");
+
+      summary.innerHTML = `
+        <span class="path-summary-meta">
+          <span class="path-summary-meta-item">${escapeHtml(countLabel)}</span>
+          ${previewMarkup}
+        </span>
+        <span class="path-summary-folders">${folderMarkup}</span>
+      `;
+      summary.setAttribute("aria-label", hint);
+      summary.setAttribute("tabindex", "0");
+      summary.dataset.uiTooltip = hint;
+      summary.removeAttribute("title");
     }
 
     function setSourceMode(mode, { dirty = false } = {}) {

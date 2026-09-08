@@ -42,6 +42,8 @@ In folder mode, the source editor is a list of folder rows. You can add paths on
 
 In drop mode, dropping a folder recursively imports supported images from that folder as temporary uploads. Folder source choices are restored on the next app start when the current score library is a SQLite file.
 
+The source summary separates folder names from folder and photo counts. Hover over it or focus it with the keyboard to read the complete paths; use the source editor to copy a path.
+
 ## Manual Decisions
 
 Manual decisions are the final culling layer. Model and LLM scores help sort and explain, but they do not override your pick/hold/reject decisions.
@@ -50,6 +52,8 @@ Manual decisions are the final culling layer. Model and LLM scores help sort and
 - `Hold`: worth another pass.
 - `Reject`: excluded from the final set.
 - Star ratings and color labels can be used for later Lightroom/Capture One style workflows.
+
+On desktop-sized windows, manual decisions sit beside the photo. In compact layouts, they follow the photo, ahead of the filmstrip and detailed scores. Distribution views wrap into rows so every view remains available without horizontal scrolling.
 
 ## LLM Review
 

@@ -39,6 +39,12 @@
     return value;
   }
 
+  function labeledValue(context, label, value) {
+    const language = typeof context.language === "function" ? context.language() : "zh-CN";
+    const separator = String(language || "zh-CN").toLowerCase().startsWith("zh") ? "：" : ": ";
+    return `${label}${separator}${value}`;
+  }
+
   function activeFilterChips(filters = {}, context = {}) {
     const chips = [];
     const options = context.options || {};
@@ -50,13 +56,25 @@
     const weightPreset = filters.weightPreset || "balanced";
 
     if (manualStatus !== "all") {
-      chips.push(`${t(context, "filters.chip.manual", {}, "人工")}：${contextualOptionLabel(context, "manual", options.manualStatusOptions, manualStatus, manualStatusText(manualStatus, context))}`);
+      chips.push(labeledValue(
+        context,
+        t(context, "filters.chip.manual", {}, "人工"),
+        contextualOptionLabel(context, "manual", options.manualStatusOptions, manualStatus, manualStatusText(manualStatus, context)),
+      ));
     }
     if (colorLabel !== "all") {
-      chips.push(`${t(context, "filters.chip.color", {}, "色标")}：${contextualOptionLabel(context, "color", options.colorLabelOptions, colorLabel, colorLabelText(colorLabel, context))}`);
+      chips.push(labeledValue(
+        context,
+        t(context, "filters.chip.color", {}, "色标"),
+        contextualOptionLabel(context, "color", options.colorLabelOptions, colorLabel, colorLabelText(colorLabel, context)),
+      ));
     }
     if (agreement !== "all") {
-      chips.push(`${t(context, "filters.chip.review", {}, "评审")}：${contextualOptionLabel(context, "agreement", options.modelAgreementOptions, agreement, agreement)}`);
+      chips.push(labeledValue(
+        context,
+        t(context, "filters.chip.review", {}, "评审"),
+        contextualOptionLabel(context, "agreement", options.modelAgreementOptions, agreement, agreement),
+      ));
     }
     THRESHOLD_LABELS.forEach(([key, label]) => {
       const value = Number(filters[key] || 0);
@@ -70,11 +88,19 @@
       if (value > 0) chips.push(`${localizedLabel} ≥ ${value.toFixed(1)}`);
     });
     if (sortField !== "recommendation_0_10") {
-      chips.push(`${t(context, "filters.chip.sort", {}, "排序")}：${contextualOptionLabel(context, "sort", options.sortOptions, sortField, t(context, "common.custom", {}, "自定义"))}`);
+      chips.push(labeledValue(
+        context,
+        t(context, "filters.chip.sort", {}, "排序"),
+        contextualOptionLabel(context, "sort", options.sortOptions, sortField, t(context, "common.custom", {}, "自定义")),
+      ));
     }
     if (limit !== 80) chips.push(`${t(context, "filters.chip.limit", {}, "最多")} ${t(context, "common.photoCount", { count: limit }, `${limit} 张`)}`);
     if (weightPreset !== "balanced") {
-      chips.push(`${t(context, "filters.chip.weight", {}, "权重")}：${contextualOptionLabel(context, "weight", options.weightPresets, weightPreset, t(context, "common.custom", {}, "自定义"))}`);
+      chips.push(labeledValue(
+        context,
+        t(context, "filters.chip.weight", {}, "权重"),
+        contextualOptionLabel(context, "weight", options.weightPresets, weightPreset, t(context, "common.custom", {}, "自定义")),
+      ));
     }
     return chips;
   }
@@ -86,7 +112,15 @@
 
   function summary(filters = {}, context = {}) {
     const chips = activeFilterChips(filters, context);
-    return chips.length ? chips.slice(0, 3).join(" · ") : t(context, "common.defaultRange", {}, "默认范围");
+    if (!chips.length) return t(context, "common.defaultRange", {}, "默认范围");
+    const visibleChips = chips.slice(0, 3);
+    if (chips.length > visibleChips.length) visibleChips.push("…");
+    return visibleChips.join(" · ");
+  }
+
+  function fullSummary(filters = {}, context = {}) {
+    const chips = activeFilterChips(filters, context);
+    return chips.length ? chips.join(" · ") : t(context, "common.defaultRange", {}, "默认范围");
   }
 
   function updatedText(updatedAt, now = Date.now(), context = {}) {
@@ -113,6 +147,7 @@
     activeFilterChips,
     suggestedName,
     summary,
+    fullSummary,
     updatedText,
     metaText,
   };

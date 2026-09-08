@@ -122,6 +122,10 @@ window.CulviaFilterPanel = (() => {
       return filterPresetView.summary(filters, filterPresetContext());
     }
 
+    function filterPresetFullSummary(filters = {}) {
+      return filterPresetView.fullSummary(filters, filterPresetContext());
+    }
+
     function filterPresetMetaText(preset) {
       return filterPresetView.metaText(preset, filterPresetContext());
     }
@@ -147,7 +151,12 @@ window.CulviaFilterPanel = (() => {
       saveButton.setAttribute("aria-label", saveLabel);
       saveButton.disabled = Boolean(appState()?.job?.running) || commandLoading();
       if (hint) {
-        hint.textContent = renamingFilterPresetId ? t("filters.renaming") : t("filters.currentRange", { summary: filterPresetSummary(currentFilters) });
+        const renamingText = t("filters.renaming");
+        const visibleText = renamingFilterPresetId ? renamingText : t("filters.currentRange", { summary: filterPresetSummary(currentFilters) });
+        const accessibleText = renamingFilterPresetId ? renamingText : t("filters.currentRange", { summary: filterPresetFullSummary(currentFilters) });
+        hint.textContent = visibleText;
+        hint.dataset.uiTooltip = accessibleText;
+        hint.setAttribute("aria-label", accessibleText);
       }
       if (!filterPresets.length) {
         list.innerHTML = `<div class="saved-filter-empty">${escapeHtml(t("filters.noViews"))}</div>`;
@@ -157,11 +166,11 @@ window.CulviaFilterPanel = (() => {
         .map((preset) => {
           const active = filterPayloadEquals(preset.filters, currentFilters);
           const renaming = preset.id === renamingFilterPresetId;
-          const summary = filterPresetSummary(preset.filters);
+          const fullSummary = filterPresetFullSummary(preset.filters);
           const meta = filterPresetMetaText(preset);
           return `
             <div class="saved-filter-item ${active ? "is-active" : ""} ${renaming ? "is-renaming" : ""}">
-              <button class="saved-filter-apply" type="button" data-filter-preset="${escapeHtml(preset.id)}" aria-label="${escapeHtml(`${preset.name} · ${summary}`)}" data-ui-tooltip="${escapeHtml(summary)}">
+              <button class="saved-filter-apply" type="button" data-filter-preset="${escapeHtml(preset.id)}" aria-label="${escapeHtml(`${preset.name} · ${fullSummary}`)}" data-ui-tooltip="${escapeHtml(fullSummary)}">
                 <span>${escapeHtml(preset.name)}</span>
                 <small>${escapeHtml(meta)}</small>
               </button>

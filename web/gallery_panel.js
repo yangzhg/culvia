@@ -64,6 +64,9 @@ window.CulviaGalleryPanel = (() => {
     let gallerySuppressNextCardClick = false;
     let galleryRatingTooltipHideTimer = null;
     let galleryRatingTooltipBridgeTarget = null;
+    let galleryRatingTooltipObserver = null;
+    let galleryRatingTooltipPlacementFrame = null;
+    let galleryRatingTooltipTarget = null;
 
     function visibleGallerySelection(photos = getAppState()?.photos || []) {
       const selectedIds = CulviaBatchActions.visibleSelectedIds(photos, [...selectedGalleryIds]);
@@ -552,6 +555,7 @@ window.CulviaGalleryPanel = (() => {
           text: t("source.previewScanningDetail"),
           title: t("source.previewScanningTitle"),
         })));
+        closeGalleryRatingTooltipWhenUnavailable();
         renderGalleryThumbnailProgress();
         return;
       }
@@ -560,6 +564,7 @@ window.CulviaGalleryPanel = (() => {
           text: t("gallery.emptyText"),
           title: t("gallery.emptyTitle"),
         })));
+        closeGalleryRatingTooltipWhenUnavailable();
         renderGalleryThumbnailProgress();
         return;
       }
@@ -576,6 +581,7 @@ window.CulviaGalleryPanel = (() => {
           }
           updateGalleryCardSelectionState(card, photo, index, selected);
         });
+        closeGalleryRatingTooltipWhenUnavailable();
         scheduleGalleryThumbnailSync();
         return;
       }
@@ -595,6 +601,7 @@ window.CulviaGalleryPanel = (() => {
         fragment.appendChild(card);
       });
       grid.replaceChildren(fragment);
+      closeGalleryRatingTooltipWhenUnavailable();
       scheduleGalleryThumbnailSync();
     }
 
@@ -673,6 +680,64 @@ window.CulviaGalleryPanel = (() => {
       }) || null;
     }
 
+    function stopGalleryRatingTooltipTracking(rating = null) {
+      if (rating && galleryRatingTooltipTarget !== rating) return;
+      if (galleryRatingTooltipTarget) {
+        window.removeEventListener("resize", scheduleGalleryRatingTooltipPlacement);
+        window.removeEventListener("scroll", scheduleGalleryRatingTooltipPlacement, true);
+      }
+      galleryRatingTooltipObserver?.disconnect();
+      galleryRatingTooltipObserver = null;
+      if (galleryRatingTooltipPlacementFrame !== null) {
+        window.cancelAnimationFrame(galleryRatingTooltipPlacementFrame);
+        galleryRatingTooltipPlacementFrame = null;
+      }
+      galleryRatingTooltipTarget = null;
+    }
+
+    function scheduleGalleryRatingTooltipPlacement(event) {
+      const rating = galleryRatingTooltipTarget;
+      if (!rating || galleryRatingTooltipPlacementFrame !== null) return;
+      if (event?.type === "scroll" && event.target === rating.querySelector(".rating-tooltip")) return;
+      galleryRatingTooltipPlacementFrame = window.requestAnimationFrame(() => {
+        galleryRatingTooltipPlacementFrame = null;
+        const currentRating = galleryRatingTooltipTarget;
+        if (getActiveView() !== "gallery" || !currentRating?.isConnected || !currentRating.querySelector(".rating-tooltip")) {
+          stopGalleryRatingTooltipTracking(currentRating);
+          return;
+        }
+        if (!placeGalleryRatingTooltip(currentRating)) {
+          stopGalleryRatingTooltipTracking(currentRating);
+        }
+      });
+    }
+
+    function startGalleryRatingTooltipTracking(rating) {
+      if (galleryRatingTooltipTarget === rating) return;
+      stopGalleryRatingTooltipTracking();
+      galleryRatingTooltipTarget = rating;
+      window.addEventListener("resize", scheduleGalleryRatingTooltipPlacement);
+      window.addEventListener("scroll", scheduleGalleryRatingTooltipPlacement, { capture: true, passive: true });
+      const GalleryMutationObserver = window.MutationObserver;
+      const view = $("#galleryView");
+      const grid = $("#galleryGrid");
+      if (typeof GalleryMutationObserver === "function" && (view || grid)) {
+        galleryRatingTooltipObserver = new GalleryMutationObserver(closeGalleryRatingTooltipWhenUnavailable);
+        if (view) {
+          galleryRatingTooltipObserver.observe(view, { attributes: true, attributeFilter: ["class"] });
+        }
+        if (grid) {
+          galleryRatingTooltipObserver.observe(grid, { childList: true, subtree: true });
+        }
+      }
+    }
+
+    function closeGalleryRatingTooltipWhenUnavailable() {
+      if (galleryRatingTooltipTarget && (getActiveView() !== "gallery" || !galleryRatingTooltipTarget.isConnected)) {
+        hideGalleryRatingTooltip(galleryRatingTooltipTarget);
+      }
+    }
+
     function ensureGalleryRatingTooltip(rating) {
       const card = rating?.closest?.("#galleryGrid .photo-card");
       if (!card) return null;
@@ -689,6 +754,11 @@ window.CulviaGalleryPanel = (() => {
 
     function hideGalleryRatingTooltip(rating) {
       if (!rating) return;
+      if (galleryRatingTooltipHideTimer) {
+        window.clearTimeout(galleryRatingTooltipHideTimer);
+        galleryRatingTooltipHideTimer = null;
+      }
+      stopGalleryRatingTooltipTracking(rating);
       rating.classList.remove("is-tooltip-bridging");
       rating.closest(".photo-card")?.classList.remove("is-tooltip-open");
       rating.querySelector(".rating-tooltip")?.remove();
@@ -699,7 +769,7 @@ window.CulviaGalleryPanel = (() => {
 
     function placeGalleryRatingTooltip(rating) {
       const tooltip = ensureGalleryRatingTooltip(rating);
-      if (!tooltip) return;
+      if (!tooltip) return false;
       tooltip.classList.remove("is-placement-below");
       tooltip.style.removeProperty("max-height");
       tooltip.style.removeProperty("--rating-tooltip-arrow-right");
@@ -719,6 +789,7 @@ window.CulviaGalleryPanel = (() => {
       tooltip.style.maxHeight = `${Math.floor(placement.maxHeight)}px`;
       tooltip.style.setProperty("--rating-tooltip-arrow-right", `${Math.floor(placement.arrowRight)}px`);
       tooltip.style.setProperty("--rating-tooltip-shift-x", `${Math.round(placement.shiftX)}px`);
+      return true;
     }
 
     function handleGalleryTooltipIntent(event) {
@@ -733,7 +804,11 @@ window.CulviaGalleryPanel = (() => {
       }
       rating.classList.remove("is-tooltip-bridging");
       galleryRatingTooltipBridgeTarget = null;
-      placeGalleryRatingTooltip(rating);
+      if (!placeGalleryRatingTooltip(rating)) {
+        stopGalleryRatingTooltipTracking(rating);
+        return;
+      }
+      startGalleryRatingTooltipTracking(rating);
     }
 
     function clearGalleryTooltipPlacement(event) {

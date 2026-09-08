@@ -59,8 +59,11 @@ class FrontendFilterStateTests(unittest.TestCase):
             if (view.suggestedName(filters, contextPayload) !== "人工：入选 · 色标：绿色") {
               throw new Error("suggested name should use first two chips");
             }
-            if (view.summary(filters, contextPayload) !== "人工：入选 · 色标：绿色 · 评审：分歧") {
-              throw new Error("summary should use first three chips");
+            if (view.summary(filters, contextPayload) !== "人工：入选 · 色标：绿色 · 评审：分歧 · …") {
+              throw new Error("summary should mark omitted filter chips");
+            }
+            if (!view.fullSummary(filters, contextPayload).endsWith("权重：审美优先")) {
+              throw new Error("full summary should include the last filter chip");
             }
             if (view.summary({}, contextPayload) !== "默认范围") throw new Error("default summary missing");
             if (view.suggestedName({}, contextPayload) !== "全量照片") throw new Error("default name missing");
@@ -71,6 +74,173 @@ class FrontendFilterStateTests(unittest.TestCase):
             if (!view.metaText({ name: "待定", filters, updatedAt: now }, contextPayload).startsWith("人工：入选")) {
               throw new Error("meta text should include filter summary when name differs");
             }
+
+            const englishMessages = {
+              "filters.chip.manual": "Manual",
+              "filters.chip.color": "Color",
+              "filters.chip.review": "Review",
+              "filters.chip.sort": "Sort",
+              "filters.chip.limit": "Up to",
+              "filters.chip.weight": "Weight",
+              "filters.recommendation": "Recommendation",
+              "filters.technicalReview": "Technical review",
+              "common.custom": "Custom",
+            };
+            const englishContext = {
+              ...contextPayload,
+              options: {
+                manualStatusOptions: [{ value: "pick", label: "Pick" }],
+                colorLabelOptions: [{ value: "green", label: "Green" }],
+                modelAgreementOptions: [{ value: "disagreement", label: "Disagreement" }],
+                sortOptions: [{ value: "technical_overall_0_10", label: "Technical review" }],
+                weightPresets: [{ value: "aesthetic", label: "Aesthetic first" }],
+              },
+              language() {
+                return "en";
+              },
+              t(key, params = {}) {
+                if (key === "common.photoCount") return `${params.count} photos`;
+                return englishMessages[key] || key;
+              },
+            };
+            const englishChips = view.activeFilterChips(filters, englishContext);
+            if (englishChips[0] !== "Manual: Pick") throw new Error("English manual chip should use an ASCII colon");
+            if (!englishChips.includes("Color: Green")) throw new Error("English color chip should use an ASCII colon");
+            if (!englishChips.includes("Review: Disagreement")) throw new Error("English review chip should use an ASCII colon");
+            if (!englishChips.includes("Sort: Technical review")) throw new Error("English sort chip should use an ASCII colon");
+            if (!englishChips.includes("Weight: Aesthetic first")) throw new Error("English weight chip should use an ASCII colon");
+            if (englishChips.some((chip) => chip.includes("："))) throw new Error("English filter chips should not use fullwidth colons");
+            if (!view.summary(filters, englishContext).endsWith(" · …")) throw new Error("visible English summary should mark omitted filters");
+            if (!view.fullSummary(filters, englishContext).endsWith("Weight: Aesthetic first")) {
+              throw new Error("full English summary should include the last filter chip");
+            }
+            """
+        )
+        result = subprocess.run(["node", "-e", script], cwd=ROOT, text=True, capture_output=True, check=False)
+
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_saved_filter_hint_exposes_full_text(self) -> None:
+        script = textwrap.dedent(
+            """
+            const fs = require("fs");
+            const vm = require("vm");
+            const elements = {
+              "#filterPresetList": {
+                innerHTML: "",
+                querySelectorAll() {
+                  return [];
+                },
+              },
+              "#filterPresetNameInput": { placeholder: "" },
+              "#saveFilterPresetBtn": {
+                innerHTML: "",
+                dataset: {},
+                attributes: {},
+                removeAttribute(name) {
+                  delete this.attributes[name];
+                },
+                setAttribute(name, value) {
+                  this.attributes[name] = String(value);
+                },
+              },
+              "#filterPresetHint": {
+                textContent: "",
+                dataset: {},
+                attributes: {},
+                setAttribute(name, value) {
+                  this.attributes[name] = String(value);
+                },
+              },
+            };
+            const messages = {
+              "filters.chip.manual": "Manual",
+              "filters.chip.review": "Review",
+              "filters.chip.limit": "Up to",
+              "filters.recommendation": "Recommendation",
+              "filters.currentRange": "Current range: {summary}",
+              "filters.saveView": "Save current view",
+              "filters.noViews": "No views yet",
+              "manual.filter.pending": "Pending",
+              "agreement.disagreement": "Disagreement",
+              "common.localView": "Local view",
+            };
+            const translate = (key, params = {}) => {
+              if (key === "common.photoCount") return `${params.count} photos`;
+              let value = messages[key] || key;
+              Object.entries(params).forEach(([name, replacement]) => {
+                value = value.replaceAll(`{${name}}`, String(replacement));
+              });
+              return value;
+            };
+            const context = { console };
+            const filters = {
+              manualStatus: "pending",
+              modelAgreement: "disagreement",
+              minScore: 7.5,
+              limit: 120,
+            };
+            const preset = {
+              id: "review-later",
+              name: "Review later",
+              filters,
+              updatedAt: 0,
+            };
+            context.window = context;
+            context.window.CulviaFilterState = {
+              FILTER_STORAGE_KEY: "filters",
+              filterPayloadEquals: () => true,
+              filtersAreDefault: () => true,
+              normalizeFilterPayload: (filters) => ({ ...filters }),
+              savedFilterPayload: () => null,
+              persistFilterPayload() {},
+              savedFilterPresets: () => [preset],
+              saveFilterPreset: () => [],
+              deleteFilterPreset: () => [],
+              renameFilterPreset: () => [],
+              updateFilterPreset: () => [],
+            };
+            vm.createContext(context);
+            vm.runInContext(fs.readFileSync("web/filter_presets.js", "utf8"), context);
+            vm.runInContext(fs.readFileSync("web/filter_panel.js", "utf8"), context);
+
+            const panel = context.window.CulviaFilterPanel.create({
+              $: (selector) => elements[selector],
+              t: translate,
+              tr: translate,
+              i18n: { language: () => "en" },
+              escapeHtml: (value) => String(value),
+              iconMarkup: () => "",
+              percentValue: String,
+              setText() {},
+              colorLabelDot: () => "",
+              colorLabelMeta: (value) => ({ label: value }),
+              manualStatusLabel: (value) => value,
+              postJson: async () => ({}),
+              errorMessage: String,
+              showCommandNotice() {},
+              render() {},
+              getAppState: () => ({
+                filters,
+                manualStatusOptions: [{ value: "pending", label: "Pending" }],
+                modelAgreementOptions: [{ value: "disagreement", label: "Disagreement" }],
+              }),
+              setAppState() {},
+              getCommandNotice: () => null,
+              resetSelectedIndex() {},
+            });
+
+            panel.renderPresets();
+            const hint = elements["#filterPresetHint"];
+            const visibleSummary = "Manual: Pending · Review: Disagreement · Recommendation ≥ 7.5 · …";
+            const fullSummary = "Manual: Pending · Review: Disagreement · Recommendation ≥ 7.5 · Up to 120 photos";
+            if (hint.textContent !== `Current range: ${visibleSummary}`) throw new Error(`visible hint mismatch: ${hint.textContent}`);
+            if (hint.dataset.uiTooltip !== `Current range: ${fullSummary}`) throw new Error("hint tooltip should expose every filter");
+            if (hint.attributes["aria-label"] !== `Current range: ${fullSummary}`) throw new Error("hint accessible label should expose every filter");
+            const presetMarkup = elements["#filterPresetList"].innerHTML;
+            if (!presetMarkup.includes(`data-ui-tooltip="${fullSummary}"`)) throw new Error("preset tooltip should expose every filter");
+            if (!presetMarkup.includes(`aria-label="Review later · ${fullSummary}"`)) throw new Error("preset accessible label should expose every filter");
+            if (!presetMarkup.includes(`${visibleSummary} · Local view`)) throw new Error("visible preset summary should mark omitted filters");
             """
         )
         result = subprocess.run(["node", "-e", script], cwd=ROOT, text=True, capture_output=True, check=False)
