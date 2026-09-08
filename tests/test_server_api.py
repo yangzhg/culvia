@@ -147,13 +147,18 @@ class ServerApiTests(unittest.TestCase):
 
             dependencies = replace(
                 culvia_app.STATE_PAYLOAD_DEPENDENCIES,
-                refresh_persisted_llm_config=persistent_access,
                 load_photo_marks=persistent_access,
-                load_latest_matching_analysis_insight_results=persistent_access,
                 load_analysis_insights=persistent_access,
                 model_payload=persistent_access,
             )
-            with patch.object(culvia_app, "STATE_PAYLOAD_DEPENDENCIES", dependencies):
+            with (
+                patch.object(culvia_app, "STATE_PAYLOAD_DEPENDENCIES", dependencies),
+                patch(
+                    "culvia_app.load_latest_matching_analysis_insight_results",
+                    side_effect=persistent_access,
+                ),
+                patch("culvia_app.load_llm_config_from_sqlite", side_effect=persistent_access),
+            ):
                 client = TestClient(culvia_app.create_app(store))
                 response = client.get("/api/state")
                 with patch(

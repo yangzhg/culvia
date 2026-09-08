@@ -3,25 +3,19 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from culvia.app_state import AppStateStore
-from culvia.cache_schema import SQLITE_CACHE_EXTENSIONS
-from culvia.insight_store import AnalysisInsightMatch
-from culvia.llm_provenance import resolve_llm_score_dataframe
-from culvia.local_score_provenance import resolve_local_score_dataframe
+from culvia.score_view import CurrentScoreView
 
 
 @dataclass(frozen=True)
 class StatePayloadDependencies:
     app_name: str
     app_subtitle: str
-    default_cache_path: str | Path
     heif_available: bool
-    model_llm_review: str
     sort_fields: Sequence[str]
     sort_field_labels: Mapping[str, str]
     model_agreement_options: Sequence[Mapping[str, Any]]
@@ -33,23 +27,15 @@ class StatePayloadDependencies:
     model_quality_labels: Mapping[str, str]
     aesthetic_reference_labels: Mapping[str, str]
     llm_review_labels: Mapping[str, str]
-    normalize_score_dataframe: Callable[[Any], pd.DataFrame]
-    refresh_persisted_llm_config: Callable[[str], None]
+    current_score_view: Callable[..., CurrentScoreView]
     frame_file_ids: Callable[[pd.DataFrame], list[str]]
     load_photo_marks: Callable[[str, Sequence[str]], Mapping[str, Any]]
     dataframe_for_display: Callable[
         [pd.DataFrame, Mapping[str, Any], Mapping[str, Any]], tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
     ]
     selected_preview_for_display: Callable[..., pd.DataFrame]
-    load_latest_matching_analysis_insight_results: Callable[..., Mapping[str, AnalysisInsightMatch]]
     load_analysis_insights: Callable[..., Iterable[Any]]
     llm_review_score_columns: Sequence[str]
-    llm_review_generation_column: str
-    llm_review_provider: Callable[[], str]
-    llm_review_model_name: Callable[[], str]
-    llm_review_prompt_version: Callable[[], str]
-    llm_review_result_prompt_version: Callable[..., str]
-    llm_review_input_mode: Callable[[], str]
     serialize_photo: Callable[[pd.Series, Mapping[str, Any], Mapping[str, Any]], dict[str, Any]]
     curation_summary: Callable[[Mapping[str, Any], Sequence[str]], dict[str, Any]]
     application_info: Callable[[], Mapping[str, Any]]
@@ -70,7 +56,7 @@ def _json_clone(value: Any) -> Any:
 def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependencies) -> dict[str, Any]:
     with state_store.lock:
         state = state_store.data
-        source_df = deps.normalize_score_dataframe(state["scores_df"]).copy()
+        source_df = state["scores_df"].copy()
         filters = dict(state["filters"])
         source = _json_clone(state["source"])
         source_preview = _json_clone(state.get("sourcePreview") or {})
@@ -78,102 +64,27 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         models = _json_clone(state["models"])
         job = _json_clone(state["job"])
 
-    local_score_resolution = resolve_local_score_dataframe(source_df)
-    source_df = local_score_resolution.dataframe
-
     maintenance_running = bool(job.get("running")) and str(job.get("kind") or "") == "maintenance"
-    if not maintenance_running:
-        deps.refresh_persisted_llm_config(str(source.get("cachePath") or deps.default_cache_path))
     cache_path = str(source.get("cachePath") or "")
-    source_file_ids = deps.frame_file_ids(source_df)
-    llm_candidate_df = source_df[
-        pd.to_numeric(
-            source_df.get(
-                deps.llm_review_generation_column,
-                pd.Series(pd.NA, index=source_df.index, dtype="object"),
-            ),
-            errors="coerce",
-        ).notna()
-    ]
-    llm_candidate_file_ids = deps.frame_file_ids(llm_candidate_df)
-    current_llm_provider = deps.llm_review_provider()
-    current_llm_model = deps.llm_review_model_name()
-    current_llm_prompt_version = deps.llm_review_prompt_version()
-    current_llm_input_mode = deps.llm_review_input_mode()
-    prompt_versions_by_file_id = None
-    if current_llm_input_mode == "text":
-        prompt_versions_by_file_id = {
-            str(record.get("file_id") or ""): deps.llm_review_result_prompt_version(
-                record,
-                prompt_version=current_llm_prompt_version,
-                input_mode=current_llm_input_mode,
-            )
-            for record in llm_candidate_df.to_dict(orient="records")
-            if str(record.get("file_id") or "")
-        }
-    is_sqlite_cache = bool(
-        not maintenance_running
-        and cache_path
-        and Path(cache_path).expanduser().suffix.lower() in SQLITE_CACHE_EXTENSIONS
-    )
-    current_llm_results: dict[str, AnalysisInsightMatch] = {}
-    if is_sqlite_cache:
-        current_llm_results = dict(
-            deps.load_latest_matching_analysis_insight_results(
-                cache_path,
-                file_ids=llm_candidate_file_ids,
-                analyzer_key=deps.model_llm_review,
-                provider=current_llm_provider,
-                model=current_llm_model,
-                model_version=current_llm_model,
-                prompt_version=current_llm_prompt_version,
-                prompt_versions_by_file_id=prompt_versions_by_file_id,
-            )
-        )
-    resolution = resolve_llm_score_dataframe(
+    score_view = deps.current_score_view(
         source_df,
-        generation_column=deps.llm_review_generation_column,
-        matches=current_llm_results,
-        score_columns=deps.llm_review_score_columns,
+        cache_path,
+        allow_persistent_cache=not maintenance_running,
     )
-    current_llm_file_ids = resolution.current_file_ids
-    display_source_df = resolution.dataframe
+    source_df = score_view.dataframe
+    source_file_ids = deps.frame_file_ids(source_df)
     mark_by_file_id: Mapping[str, Any] = (
         deps.load_photo_marks(cache_path, source_file_ids) if cache_path and not maintenance_running else {}
     )
-    working, filtered, errors = deps.dataframe_for_display(display_source_df, filters, mark_by_file_id)
+    working, filtered, errors = deps.dataframe_for_display(source_df, filters, mark_by_file_id)
     display_limit = max(int(filters.get("limit", 80) or 80), 1)
     displayed = filtered.head(display_limit)
     filtered_file_ids = deps.frame_file_ids(filtered)
     displayed_file_ids = deps.frame_file_ids(displayed)
     selected_preview = deps.selected_preview_for_display(working, mark_by_file_id, limit=80)
     selected_preview_file_ids = deps.frame_file_ids(selected_preview)
-    visible_file_ids = [
-        file_id
-        for file_id in dict.fromkeys([*displayed_file_ids, *selected_preview_file_ids])
-        if file_id in current_llm_file_ids
-    ]
-    insight_by_file_id: dict[str, Any] = {}
-    if is_sqlite_cache and visible_file_ids:
-        for insight in deps.load_analysis_insights(cache_path, file_ids=visible_file_ids):
-            if not _is_current_llm_insight(
-                insight,
-                analyzer_key=deps.model_llm_review,
-                provider=current_llm_provider,
-                model=current_llm_model,
-                prompt_version=(
-                    current_llm_prompt_version
-                    if prompt_versions_by_file_id is None
-                    else prompt_versions_by_file_id.get(insight.file_id, current_llm_prompt_version)
-                ),
-            ):
-                continue
-            match = current_llm_results.get(insight.file_id)
-            if match is None or float(insight.created_at) != match.generation:
-                continue
-            previous = insight_by_file_id.get(insight.file_id)
-            if previous is None or insight.created_at >= previous.created_at:
-                insight_by_file_id[insight.file_id] = insight
+    visible_file_ids = list(dict.fromkeys([*displayed_file_ids, *selected_preview_file_ids]))
+    insight_by_file_id = score_view.load_current_insights(visible_file_ids, deps.load_analysis_insights)
     photos = [deps.serialize_photo(row, insight_by_file_id, mark_by_file_id) for _, row in displayed.iterrows()]
     selected_photos = [
         deps.serialize_photo(row, insight_by_file_id, mark_by_file_id) for _, row in selected_preview.iterrows()
@@ -188,7 +99,7 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
             filtered_llm_reviewed_count = int(
                 pd.to_numeric(filtered[overall_llm_column], errors="coerce").notna().sum()
             )
-    summary = dict(deps.summarize_scores(display_source_df, filtered, errors, filters))
+    summary = dict(deps.summarize_scores(source_df, filtered, errors, filters))
     summary["matched"] = int(len(filtered))
     summary["showing"] = int(len(displayed))
     app_payload = {
@@ -207,7 +118,7 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
     model_options = []
     for raw_option in model_payload.get("options") or []:
         option = dict(raw_option)
-        cache_summary = local_score_resolution.summary.get(str(option.get("key") or ""))
+        cache_summary = score_view.local_summary.get(str(option.get("key") or ""))
         if cache_summary is not None:
             option["scoreCache"] = {
                 **cache_summary,
@@ -236,7 +147,7 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         "llm": deps.llm_config_payload(),
         "models": models,
         "model": model_payload,
-        "scoreProvenance": {"summary": local_score_resolution.summary},
+        "scoreProvenance": {"summary": score_view.local_summary},
         "job": job,
         "summary": summary,
         "curation": {
@@ -250,20 +161,3 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
         "selectedPhotos": selected_photos,
         "errors": int(len(errors)),
     }
-
-
-def _is_current_llm_insight(
-    insight: Any,
-    *,
-    analyzer_key: str,
-    provider: str,
-    model: str,
-    prompt_version: str,
-) -> bool:
-    return (
-        insight.analyzer_key == analyzer_key
-        and insight.provider == provider
-        and insight.model == model
-        and insight.model_version == model
-        and insight.prompt_version == prompt_version
-    )

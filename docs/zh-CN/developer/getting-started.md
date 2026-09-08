@@ -55,16 +55,13 @@ make cli CLI_ARGS="--help"
 
 ```bash
 make pre-commit-install
-make pre-commit
-make test
-make js-check
 make lint
+make test
 make format
-make gate
 make desktop-ready
 ```
 
-`make pre-commit` 是默认本地质量门禁，覆盖 Python 格式/lint、JS 语法、配置文件校验、Shell 语法、Makefile dry-run、Rust 格式以及密钥扫描。底层命令保留在 [发布检查清单](release-checklist.md)，用于 CI 和可复现打包流程。
+`make lint` 和 `make pre-commit` 共用 `.pre-commit-config.yaml`，检查 Python 格式/lint、JavaScript 与 Shell 语法、配置文件、Rust 格式及密钥。`make js-check` 只运行 JavaScript 语法检查。发布包与运行时验证命令见 [发布检查清单](release-checklist.md)。
 
 ## 桌面开发
 

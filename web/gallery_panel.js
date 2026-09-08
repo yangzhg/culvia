@@ -64,7 +64,6 @@ window.CulviaGalleryPanel = (() => {
     let gallerySuppressNextCardClick = false;
     let galleryRatingTooltipHideTimer = null;
     let galleryRatingTooltipBridgeTarget = null;
-    let galleryRatingTooltipObserver = null;
     let galleryRatingTooltipPlacementFrame = null;
     let galleryRatingTooltipTarget = null;
 
@@ -555,54 +554,39 @@ window.CulviaGalleryPanel = (() => {
           text: t("source.previewScanningDetail"),
           title: t("source.previewScanningTitle"),
         })));
-        closeGalleryRatingTooltipWhenUnavailable();
         renderGalleryThumbnailProgress();
-        return;
-      }
-      if (!photos.length) {
+      } else if (!photos.length) {
         grid.replaceChildren(createGalleryCard(galleryView.emptyStateMarkup({
           text: t("gallery.emptyText"),
           title: t("gallery.emptyTitle"),
         })));
-        closeGalleryRatingTooltipWhenUnavailable();
         renderGalleryThumbnailProgress();
-        return;
-      }
-      const orderedCards = Array.from(grid.querySelectorAll(".photo-card[data-file-id]"));
-      const orderMatches = orderedCards.length === photos.length && orderedCards.every((card, index) => card.dataset.fileId === photos[index]?.fileId);
-      if (orderMatches) {
-        photos.forEach((photo, index) => {
+      } else {
+        const orderedCards = Array.from(grid.querySelectorAll(".photo-card[data-file-id]"));
+        const orderMatches = orderedCards.length === photos.length && orderedCards.every((card, index) => card.dataset.fileId === photos[index]?.fileId);
+        const cardsById = orderMatches ? null : new Map(orderedCards.map((card) => [card.dataset.fileId, card]));
+        const nextCards = photos.map((photo, index) => {
           const selected = selectedGalleryIds.has(photo.fileId);
           const signature = galleryCardSignature(photo);
-          const card = orderedCards[index];
-          if (card.dataset.gallerySignature !== signature) {
-            card.replaceWith(createGalleryCard(galleryCardMarkup(photo, index, selected, signature)));
-            return;
+          const card = orderMatches ? orderedCards[index] : cardsById.get(photo.fileId);
+          if (!card || card.dataset.gallerySignature !== signature) {
+            return createGalleryCard(galleryCardMarkup(photo, index, selected, signature));
           }
           updateGalleryCardSelectionState(card, photo, index, selected);
+          return card;
         });
-        closeGalleryRatingTooltipWhenUnavailable();
-        scheduleGalleryThumbnailSync();
-        return;
-      }
-      const existingCards = new Map(
-        Array.from(grid.querySelectorAll(".photo-card[data-file-id]")).map((card) => [card.dataset.fileId, card]),
-      );
-      const fragment = document.createDocumentFragment();
-      photos.forEach((photo, index) => {
-        const selected = selectedGalleryIds.has(photo.fileId);
-        const signature = galleryCardSignature(photo);
-        let card = existingCards.get(photo.fileId);
-        if (!card || card.dataset.gallerySignature !== signature) {
-          card = createGalleryCard(galleryCardMarkup(photo, index, selected, signature));
+        if (orderMatches) {
+          nextCards.forEach((card, index) => {
+            if (card !== orderedCards[index]) orderedCards[index].replaceWith(card);
+          });
         } else {
-          updateGalleryCardSelectionState(card, photo, index, selected);
+          const fragment = document.createDocumentFragment();
+          nextCards.forEach((card) => fragment.appendChild(card));
+          grid.replaceChildren(fragment);
         }
-        fragment.appendChild(card);
-      });
-      grid.replaceChildren(fragment);
-      closeGalleryRatingTooltipWhenUnavailable();
-      scheduleGalleryThumbnailSync();
+        scheduleGalleryThumbnailSync();
+      }
+      closeDetachedGalleryRatingTooltip();
     }
 
     function updateGalleryThumbState(image, failed) {
@@ -686,8 +670,6 @@ window.CulviaGalleryPanel = (() => {
         window.removeEventListener("resize", scheduleGalleryRatingTooltipPlacement);
         window.removeEventListener("scroll", scheduleGalleryRatingTooltipPlacement, true);
       }
-      galleryRatingTooltipObserver?.disconnect();
-      galleryRatingTooltipObserver = null;
       if (galleryRatingTooltipPlacementFrame !== null) {
         window.cancelAnimationFrame(galleryRatingTooltipPlacementFrame);
         galleryRatingTooltipPlacementFrame = null;
@@ -703,11 +685,11 @@ window.CulviaGalleryPanel = (() => {
         galleryRatingTooltipPlacementFrame = null;
         const currentRating = galleryRatingTooltipTarget;
         if (getActiveView() !== "gallery" || !currentRating?.isConnected || !currentRating.querySelector(".rating-tooltip")) {
-          stopGalleryRatingTooltipTracking(currentRating);
+          closeGalleryRatingTooltip(currentRating);
           return;
         }
         if (!placeGalleryRatingTooltip(currentRating)) {
-          stopGalleryRatingTooltipTracking(currentRating);
+          closeGalleryRatingTooltip(currentRating);
         }
       });
     }
@@ -718,41 +700,30 @@ window.CulviaGalleryPanel = (() => {
       galleryRatingTooltipTarget = rating;
       window.addEventListener("resize", scheduleGalleryRatingTooltipPlacement);
       window.addEventListener("scroll", scheduleGalleryRatingTooltipPlacement, { capture: true, passive: true });
-      const GalleryMutationObserver = window.MutationObserver;
-      const view = $("#galleryView");
-      const grid = $("#galleryGrid");
-      if (typeof GalleryMutationObserver === "function" && (view || grid)) {
-        galleryRatingTooltipObserver = new GalleryMutationObserver(closeGalleryRatingTooltipWhenUnavailable);
-        if (view) {
-          galleryRatingTooltipObserver.observe(view, { attributes: true, attributeFilter: ["class"] });
-        }
-        if (grid) {
-          galleryRatingTooltipObserver.observe(grid, { childList: true, subtree: true });
-        }
-      }
     }
 
-    function closeGalleryRatingTooltipWhenUnavailable() {
-      if (galleryRatingTooltipTarget && (getActiveView() !== "gallery" || !galleryRatingTooltipTarget.isConnected)) {
-        hideGalleryRatingTooltip(galleryRatingTooltipTarget);
+    function closeDetachedGalleryRatingTooltip() {
+      if (galleryRatingTooltipTarget && !galleryRatingTooltipTarget.isConnected) {
+        closeGalleryRatingTooltip(galleryRatingTooltipTarget);
       }
     }
 
     function ensureGalleryRatingTooltip(rating) {
       const card = rating?.closest?.("#galleryGrid .photo-card");
       if (!card) return null;
-      card.classList.add("is-tooltip-open");
       let tooltip = rating.querySelector(".rating-tooltip");
-      if (tooltip) return tooltip;
-      const index = Number(card.dataset.index);
-      const photo = getAppState()?.photos?.[index];
-      if (!photo) return null;
-      const tooltipNode = createGalleryCard(galleryTooltipMarkup(photo));
-      rating.appendChild(tooltipNode);
-      return tooltipNode;
+      if (!tooltip) {
+        const index = Number(card.dataset.index);
+        const photo = getAppState()?.photos?.[index];
+        if (!photo) return null;
+        tooltip = createGalleryCard(galleryTooltipMarkup(photo));
+        rating.appendChild(tooltip);
+      }
+      card.classList.add("is-tooltip-open");
+      return tooltip;
     }
 
-    function hideGalleryRatingTooltip(rating) {
+    function closeGalleryRatingTooltip(rating = galleryRatingTooltipTarget) {
       if (!rating) return;
       if (galleryRatingTooltipHideTimer) {
         window.clearTimeout(galleryRatingTooltipHideTimer);
@@ -800,12 +771,12 @@ window.CulviaGalleryPanel = (() => {
         galleryRatingTooltipHideTimer = null;
       }
       if (galleryRatingTooltipBridgeTarget && galleryRatingTooltipBridgeTarget !== rating) {
-        hideGalleryRatingTooltip(galleryRatingTooltipBridgeTarget);
+        closeGalleryRatingTooltip(galleryRatingTooltipBridgeTarget);
       }
       rating.classList.remove("is-tooltip-bridging");
       galleryRatingTooltipBridgeTarget = null;
       if (!placeGalleryRatingTooltip(rating)) {
-        stopGalleryRatingTooltipTracking(rating);
+        closeGalleryRatingTooltip(rating);
         return;
       }
       startGalleryRatingTooltipTracking(rating);
@@ -820,13 +791,13 @@ window.CulviaGalleryPanel = (() => {
         window.clearTimeout(galleryRatingTooltipHideTimer);
       }
       if (event.type !== "pointerout") {
-        hideGalleryRatingTooltip(rating);
+        closeGalleryRatingTooltip(rating);
         return;
       }
       rating.classList.add("is-tooltip-bridging");
       galleryRatingTooltipBridgeTarget = rating;
       galleryRatingTooltipHideTimer = window.setTimeout(() => {
-        hideGalleryRatingTooltip(rating);
+        closeGalleryRatingTooltip(rating);
         galleryRatingTooltipHideTimer = null;
       }, 320);
     }
@@ -867,6 +838,7 @@ window.CulviaGalleryPanel = (() => {
       handleGalleryGridClick,
       handleGalleryTooltipIntent,
       clearGalleryTooltipPlacement,
+      closeRatingTooltip: closeGalleryRatingTooltip,
       handleGalleryShortcut,
       selectedGalleryIds: () => selectedGalleryIds,
       setGallerySelectionAnchorId: (value) => {

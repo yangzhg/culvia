@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -9,6 +8,7 @@ import pandas as pd
 
 from culvia.app_state import AppStateStore
 from culvia.insight_store import AnalysisInsightMatch
+from culvia.score_view import CurrentScoreViewDependencies, load_current_score_view
 from culvia.state_payload import StatePayloadDependencies, build_state_payload
 
 
@@ -48,7 +48,6 @@ class StatePayloadBuilderTests(unittest.TestCase):
             }
         )
         calls: dict[str, Any] = {
-            "refreshed": [],
             "matchingInsightFileIds": [],
             "insightFileIds": [],
         }
@@ -127,6 +126,27 @@ class StatePayloadBuilderTests(unittest.TestCase):
                 "b": AnalysisInsightMatch(1.0),
             }
 
+        score_view_dependencies = CurrentScoreViewDependencies(
+            normalize_dataframe=lambda value: value.copy(),
+            load_matching_results=load_latest_matching_analysis_insight_results,
+            llm_review_provider=lambda: "current-provider",
+            llm_review_model_name=lambda: "current-model",
+            llm_review_prompt_version=lambda: "current-prompt",
+            llm_review_result_prompt_version=lambda _context, **_identity: self.fail(
+                "image-mode state must not build per-photo prompt identities"
+            ),
+            llm_review_input_mode=lambda: "image",
+        )
+
+        def current_score_view(
+            value: pd.DataFrame,
+            cache_path: str,
+            *,
+            allow_persistent_cache: bool,
+        ):
+            self.assertTrue(allow_persistent_cache)
+            return load_current_score_view(value, cache_path, score_view_dependencies)
+
         def serialize_photo(
             row: pd.Series, insight_by_file_id: dict[str, Any], mark_by_file_id: dict[str, Any]
         ) -> dict[str, Any]:
@@ -144,9 +164,7 @@ class StatePayloadBuilderTests(unittest.TestCase):
         deps = StatePayloadDependencies(
             app_name="Test Studio",
             app_subtitle="Test Workbench",
-            default_cache_path=Path("/tmp/default.sqlite"),
             heif_available=True,
-            model_llm_review="llm_review",
             sort_fields=("recommendation_0_10",),
             sort_field_labels={"recommendation_0_10": "推荐"},
             model_agreement_options=({"value": "all", "label": "全部"},),
@@ -158,23 +176,13 @@ class StatePayloadBuilderTests(unittest.TestCase):
             model_quality_labels={"clip_iqa_overall": "画质"},
             aesthetic_reference_labels={"clip_aesthetic": "参考审美"},
             llm_review_labels={"llm_review_overall": "大模型"},
-            normalize_score_dataframe=lambda value: value.copy(),
-            refresh_persisted_llm_config=lambda cache_path: calls["refreshed"].append(cache_path),
+            current_score_view=current_score_view,
             frame_file_ids=lambda df: [str(value) for value in df.get("file_id", [])],
             load_photo_marks=lambda cache_path, file_ids: marks,
             dataframe_for_display=dataframe_for_display,
             selected_preview_for_display=selected_preview_for_display,
-            load_latest_matching_analysis_insight_results=load_latest_matching_analysis_insight_results,
             load_analysis_insights=load_analysis_insights,
             llm_review_score_columns=("llm_review_overall_0_10",),
-            llm_review_generation_column="llm_review_generation",
-            llm_review_provider=lambda: "current-provider",
-            llm_review_model_name=lambda: "current-model",
-            llm_review_prompt_version=lambda: "current-prompt",
-            llm_review_result_prompt_version=lambda _context, **_identity: self.fail(
-                "image-mode state must not build per-photo prompt identities"
-            ),
-            llm_review_input_mode=lambda: "image",
             serialize_photo=serialize_photo,
             curation_summary=lambda mark_by_file_id, file_ids: {
                 "fileIds": list(file_ids),
@@ -205,7 +213,6 @@ class StatePayloadBuilderTests(unittest.TestCase):
 
         payload = build_state_payload(store, deps)
 
-        self.assertEqual(calls["refreshed"], ["/tmp/culvia_scores.sqlite"])
         self.assertEqual(calls["matchingInsightFileIds"], ["a", "b"])
         self.assertEqual(calls["insightFileIds"], ["b"])
         self.assertEqual(payload["app"]["name"], "Test Studio")

@@ -1843,7 +1843,11 @@ function applyActiveViewState() {
 }
 
 function switchView(view) {
-  activeView = normalizeViewName(view);
+  const nextView = normalizeViewName(view);
+  if (activeView === "gallery" && nextView !== "gallery") {
+    galleryPanel.closeRatingTooltip();
+  }
+  activeView = nextView;
   persistActiveView(activeView);
   applyActiveViewState();
   renderActiveView();

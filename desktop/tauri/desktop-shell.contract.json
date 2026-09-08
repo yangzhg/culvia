@@ -371,13 +371,12 @@
       "build the portable package",
       "run portable package artifact preflight",
       "extract the final package and smoke the packaged desktop launcher",
-      "run formal package gate with the verified archive",
       "write a SHA-256 checksum next to the verified archive",
       "write a release evidence manifest after every required step has passed"
     ],
     "checksumTool": "tools/write_release_checksum.py",
     "evidenceManifestTool": "tools/write_release_evidence_manifest.py",
-    "artifactUploadRule": "Upload only the final zip/tar.gz archive, its .sha256 checksum, and its .evidence.json manifest after artifact preflight, runtime verification, formal package gate, checksum, and evidence manifest pass; never upload target, dist directories, backend binaries, caches, runtime state, credentials, or user data.",
+    "artifactUploadRule": "Upload only the final zip/tar.gz archive, its .sha256 checksum, and its .evidence.json manifest after artifact preflight, runtime verification, checksum, and evidence manifest pass; never upload target, dist directories, backend binaries, caches, runtime state, credentials, or user data.",
     "credentialRule": "Windows/Linux portable package jobs use no secrets and only require read-only repository permissions."
   },
   "releaseStatusReport": {
@@ -398,10 +397,7 @@
       "summarize Windows zip and Linux tar.gz artifact status",
       "summarize release checksum and evidence manifest status for Windows/Linux artifacts",
       "summarize explicit system keychain smoke evidence",
-      "list formal release blockers and next commands",
-      "split blockerSummary into localActionable, externalRequired, and environment groups",
-      "split estimatedRemaining into localActionable and externalRelease so external release evidence is not counted as local development rounds",
-      "split nextCommandsByCategory so release owners can run local smoke before external runner work",
+      "group release blockers and next commands by execution environment",
       "write public-redacted JSON release status evidence for release archival",
       "return non-zero in strict mode when formalReady is false"
     ]

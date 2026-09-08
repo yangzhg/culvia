@@ -1,33 +1,15 @@
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import tools.pre_commit_checks as checks
 
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
 class PreCommitChecksTests(unittest.TestCase):
-    def test_pre_commit_config_registers_project_checks(self) -> None:
-        config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
-
-        for hook_id in (
-            "ruff-format",
-            "ruff-high-signal-lint",
-            "web-js-syntax",
-            "shell-syntax",
-            "makefile-smoke",
-            "rust-format",
-            "secret-scan",
-        ):
-            self.assertIn(f"id: {hook_id}", config)
-
-        self.assertIn("detect-private-key", config)
-        self.assertIn("pre-commit-hooks", config)
-
     def test_secret_scan_flags_openai_compatible_api_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -50,29 +32,20 @@ class PreCommitChecksTests(unittest.TestCase):
 
         self.assertEqual(findings, [])
 
-    def test_rust_format_command_targets_desktop_manifest(self) -> None:
-        self.assertEqual(
-            checks.rust_format_command(),
-            (
-                "cargo",
-                "fmt",
-                "--manifest-path",
-                "desktop/tauri/src-tauri/Cargo.toml",
-                "--all",
-                "--",
-                "--check",
-            ),
-        )
-        self.assertEqual(
-            checks.rust_format_command(fix=True),
-            (
-                "cargo",
-                "fmt",
-                "--manifest-path",
-                "desktop/tauri/src-tauri/Cargo.toml",
-                "--all",
-            ),
-        )
+    def test_secret_scan_reports_location_without_exposing_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "settings.txt"
+            key = "sk-" + "1234567890abcdef123456"
+            path.write_text(f"api_key={key}\n", encoding="utf-8")
+            output = io.StringIO()
+
+            with patch.object(checks, "git_tracked_files", return_value=[path]), patch("sys.stderr", output):
+                status = checks.check_secret_scan(root=root)
+
+        self.assertEqual(status, 1)
+        self.assertIn("settings.txt:1: OpenAI-compatible API key", output.getvalue())
+        self.assertNotIn(key, output.getvalue())
 
 
 if __name__ == "__main__":

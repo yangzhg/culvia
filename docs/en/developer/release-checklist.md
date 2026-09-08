@@ -9,44 +9,27 @@ Use this checklist before open-source release, desktop packaging, or large chang
 Preferred local entrypoints:
 
 ```bash
-make pre-commit
-make test
-make js-check
 make lint
-make gate
+make test
 ```
 
-Equivalent underlying commands:
+`make lint` uses the same pre-commit configuration as the commit hook. Run the behavior suite separately. Individual checks are available for focused work:
 
 ```bash
-python -c "import sys; assert sys.version_info >= (3, 11), sys.version"
-python -m unittest discover -s tests
-PYTHONPYCACHEPREFIX=/private/tmp/culvia-pycache python -m compileall -q culvia_app.py culvia tests tools
 python -m pre_commit run --all-files
 python -m ruff format --check culvia culvia_app.py tests tools desktop/tauri/scripts
 python -m ruff check culvia culvia_app.py tests tools desktop/tauri/scripts
 python tools/pre_commit_checks.py js-syntax
 python tools/pre_commit_checks.py shell-syntax
-python tools/pre_commit_checks.py makefile
 python tools/pre_commit_checks.py rust-format
 python tools/pre_commit_checks.py secret-scan
 git diff --check
-rg -n "sk-[A-Za-z0-9]{12,}" --glob '!model_cache/**' --glob '!thumbnail_cache/**' --glob '!upload_cache/**' --glob '!culvia_uploads/**' --glob '!__pycache__/**' .
-```
-
-Aggregated gate:
-
-```bash
-python tools/formal_gate.py
-python tools/formal_gate.py --skip-release-smoke
-python tools/formal_gate.py --build-sdist
-python tools/formal_gate.py --sdist-artifact dist/python/culvia-0.2.0.tar.gz
 ```
 
 For frontend changes, at least run:
 
 ```bash
-find web -name '*.js' -print0 | xargs -0 -n1 node --check
+make js-check
 python -m unittest tests.test_frontend_i18n tests.test_frontend_api_client tests.test_frontend_viewer_keyboard tests.test_frontend_manual_status
 ```
 
@@ -119,12 +102,13 @@ make release-status
 ```bash
 python tools/check_desktop_readiness.py --json
 python tools/check_desktop_readiness.py --strict-toolchain
-python tools/formal_gate.py --strict-desktop
+make backend-placeholder
+cargo test --locked --manifest-path desktop/tauri/src-tauri/Cargo.toml
 ```
 
-`--strict-desktop` runs Desktop release preflight, backend placeholder checks, `cargo check`, `cargo test`, `tauri:info`, and backend plan checks. The desktop shell must keep using the local-http frontend contract declared in `desktop/tauri/desktop-shell.contract.json`; the health path is `/health`, and the main entrypoint is `culvia-supervisor`.
+The desktop shell uses the local-http frontend contract declared in `desktop/tauri/desktop-shell.contract.json`; the health path is `/health`, and the main entrypoint is `culvia-supervisor`. The placeholder supports compile checks; release builds use the real backend.
 
-For Desktop Lite validation, use a disposable `CULVIA_RUNTIME_VENV` and run `python -m culvia.runtime_manager ensure --json --editable-source <repo>`. This is intentionally not part of the default gate because it can install dependencies.
+For Desktop Lite validation, use a disposable `CULVIA_RUNTIME_VENV` and run `python -m culvia.runtime_manager ensure --json --editable-source <repo>`. Run this explicitly because it can install dependencies.
 
 ## Backend Runtime Checks
 
@@ -134,8 +118,6 @@ python3 desktop/tauri/scripts/build-backend.py --ensure-placeholder --json
 python3 desktop/tauri/scripts/build-backend.py --build --json
 python tools/check_backend_smoke.py --binary <backend> --timeout 90 --json
 python tools/check_backend_workflow_smoke.py --binary <backend> --timeout 120 --json
-python tools/formal_gate.py --strict-desktop --backend-smoke --backend-binary <backend>
-python tools/formal_gate.py --strict-desktop --backend-workflow-smoke --backend-binary <backend>
 ```
 
 `tools/check_backend_smoke.py` verifies ready events, `/health`, and process cleanup. `tools/check_backend_workflow_smoke.py` uses a synthetic fixture to verify curation, filters, export preflight, selected-photo export, curation history, and non-secret LLM configuration writes.
@@ -171,11 +153,9 @@ npm --prefix desktop/tauri run tauri:build:headless
 python tools/check_macos_artifact_preflight.py --json
 python tools/check_macos_artifact_preflight.py --strict --json
 python tools/check_macos_app_launch_smoke.py --json
-python tools/formal_gate.py --macos-artifacts --skip-release-smoke
-python tools/formal_gate.py --macos-artifacts --strict-macos-artifacts --macos-app-launch-smoke --skip-release-smoke
 ```
 
-`--macos-artifacts` checks already-built `.app` / `.dmg` artifacts. Do not treat local ad-hoc or Apple Development signing as Developer ID/notarized release signing.
+Artifact preflight checks already-built `.app` / `.dmg` packages. Local ad-hoc or Apple Development signing does not provide Developer ID signing or notarization.
 
 The macOS release runner stages final artifacts under `dist/macos/`; `desktop/tauri/src-tauri/target/` is an intermediate build directory.
 
@@ -202,7 +182,6 @@ python tools/build_windows_zip.py --runtime-profile lite --build --target x86_64
 python tools/check_portable_package_preflight.py --windows-zip dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip --json
 python tools/check_portable_package_preflight.py --windows-lite-zip dist/windows-lite/culvia-0.2.0-windows-lite-x86_64-pc-windows-msvc.zip --json
 python tools/check_portable_package_runtime.py --windows-zip dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip --exit-after-ms 20000 --json
-python tools/formal_gate.py --windows-zip-artifact dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip --skip-release-smoke
 ```
 
 Linux:
@@ -223,7 +202,6 @@ python tools/build_linux_tgz.py --runtime-profile lite --build --target x86_64-u
 python tools/check_portable_package_preflight.py --linux-tgz dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz --json
 python tools/check_portable_package_preflight.py --linux-lite-tgz dist/linux-lite/culvia-0.2.0-linux-lite-x86_64-unknown-linux-gnu.tar.gz --json
 python tools/check_portable_package_runtime.py --linux-tgz dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz --exit-after-ms 20000 --json
-python tools/formal_gate.py --linux-tgz-artifact dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz --skip-release-smoke
 ```
 
 Full packages must contain their own Python runtime and web data; users should not need to install system Python. Lite packages intentionally do not bundle the backend or web data; they default to the app-managed virtualenv runtime and require Python 3.11+ on first launch. `tools/check_portable_package_preflight.py` verifies archive structure, path safety, manifest data, executable file types, and forbidden runtime artifacts. `tools/check_portable_package_runtime.py` must run on the target OS runner to verify full package launcher, bundled backend, and fixture workflow.

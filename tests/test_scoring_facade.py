@@ -367,6 +367,22 @@ class CacheSchemaTests(unittest.TestCase):
             self.assertEqual(scoring.llm_config_source("api_key"), "系统钥匙串")
             self.assertEqual(scoring.llm_review_model_name(), "mock-vlm")
 
+    def test_current_score_view_refreshes_config_from_default_cache_for_empty_source(self) -> None:
+        original_layers = scoring.llm_config_layers()
+        self.addCleanup(restore_llm_config_layers, original_layers)
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "default.sqlite"
+            scoring.save_llm_config_to_sqlite({"model": "fallback-vlm"}, cache_path)
+            scoring.clear_session_llm_config()
+            scoring.clear_secure_llm_config()
+            scoring.set_persisted_llm_config({})
+
+            with patch.object(culvia_app, "DEFAULT_CACHE_PATH", cache_path):
+                view = culvia_app.current_score_view(pd.DataFrame(), "")
+
+        self.assertTrue(view.dataframe.empty)
+        self.assertEqual(scoring.llm_config_layers()["sqlite"]["model"], "fallback-vlm")
+
     def test_refresh_persisted_llm_config_times_out_blocked_keychain(self) -> None:
         original_layers = scoring.llm_config_layers()
         self.addCleanup(restore_llm_config_layers, original_layers)
@@ -763,10 +779,10 @@ class ModelPlanningTests(unittest.TestCase):
                     cache_path,
                 )
 
-                current = culvia_app.current_llm_score_dataframe(source, cache_path)
+                current = culvia_app.current_score_view(source, cache_path).dataframe
                 changed_source = source.copy()
                 changed_source.loc[0, "overall_0_10"] = 7.5
-                changed = culvia_app.current_llm_score_dataframe(changed_source, cache_path)
+                changed = culvia_app.current_score_view(changed_source, cache_path).dataframe
 
             self.assertEqual(float(current.loc[0, "llm_review_overall_0_10"]), 8.0)
             self.assertTrue(pd.isna(changed.loc[0, "llm_review_overall_0_10"]))

@@ -87,7 +87,7 @@ For Chinese user-facing docs, see `README.zh-CN.md` and `docs/zh-CN/`.
 - Prefer service modules for behavior:
   - source handling: `culvia.source_requests`, `culvia.source_service`, `culvia.source_preview`, `culvia.photo_scan`
   - scoring jobs: `culvia.scoring_service`, `culvia.scoring_runner`, `culvia.job_service`
-  - payloads and display rows: `culvia.payloads`, `culvia.state_payload`, `culvia.gallery_display`
+  - payloads and display rows: `culvia.payloads`, `culvia.state_payload`, `culvia.score_view`, `culvia.gallery_display`
   - runtime/desktop: `culvia.server`, `culvia.supervisor`, `culvia.runtime_manager`, `culvia.desktop_files`
 - Keep SQLite and cache path handling explicit. Never hide API keys or credentials in SQLite, fixtures, logs, docs, or Git.
 - Keep errors stable with machine-readable `errorCode` values and localized frontend messages.
@@ -120,7 +120,6 @@ make test
 make js-check
 make lint
 make pre-commit
-make gate
 make desktop-ready
 make runtime-doctor
 make lite-release-plan

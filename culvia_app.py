@@ -68,8 +68,7 @@ from culvia.llm_review_runner import (
     LlmReviewRunnerDependencies,
     run_llm_review_job as run_llm_review_job_with_dependencies,
 )
-from culvia.llm_provenance import resolve_llm_score_dataframe
-from culvia.local_score_provenance import preserve_local_result_states, resolve_local_score_dataframe
+from culvia.local_score_provenance import preserve_local_result_states
 from culvia.llm_config_requests import llm_config_from_payload as _llm_config_from_payload
 from culvia.llm_config_service import (
     LLMConfigServiceDependencies,
@@ -169,6 +168,7 @@ from culvia.scoring_runner import (
     run_scoring_job as run_scoring_job_with_dependencies,
 )
 from culvia.scoring_service import ScoringStartError, start_llm_review_job_action, start_scoring_job_action
+from culvia.score_view import CurrentScoreView, CurrentScoreViewDependencies, load_current_score_view
 from culvia.score_records import make_empty_score_record
 from culvia.source_preview import (
     SourcePreviewDependencies,
@@ -571,52 +571,32 @@ def refresh_persisted_llm_config_for_state(cache_path: str | Path) -> None:
         set_persisted_llm_config({})
 
 
-def current_llm_score_dataframe(source_df: pd.DataFrame, cache_path: str | Path) -> pd.DataFrame:
-    normalized = normalize_score_dataframe(source_df)
-    local_resolution = resolve_local_score_dataframe(normalized)
-    refresh_persisted_llm_config_for_state(cache_path)
-    matches = {}
-    path = Path(cache_path).expanduser()
-    if path.suffix.lower() in SQLITE_CACHE_EXTENSIONS:
-        model = llm_review_model_name()
-        prompt_version = llm_review_prompt_version()
-        input_mode = llm_review_input_mode()
-        llm_candidate_df = local_resolution.dataframe[
-            pd.to_numeric(
-                local_resolution.dataframe.get(
-                    LLM_REVIEW_GENERATION_COLUMN,
-                    pd.Series(pd.NA, index=local_resolution.dataframe.index, dtype="object"),
-                ),
-                errors="coerce",
-            ).notna()
-        ]
-        prompt_versions_by_file_id = None
-        if input_mode == "text":
-            prompt_versions_by_file_id = {
-                str(record.get("file_id") or ""): llm_review_result_prompt_version(
-                    record,
-                    prompt_version=prompt_version,
-                    input_mode=input_mode,
-                )
-                for record in llm_candidate_df.to_dict(orient="records")
-                if str(record.get("file_id") or "")
-            }
-        matches = load_latest_matching_analysis_insight_results(
-            path,
-            file_ids=frame_file_ids(llm_candidate_df),
-            analyzer_key=MODEL_LLM_REVIEW,
-            provider=llm_review_provider(),
-            model=model,
-            model_version=model,
-            prompt_version=prompt_version,
-            prompt_versions_by_file_id=prompt_versions_by_file_id,
-        )
-    return resolve_llm_score_dataframe(
-        local_resolution.dataframe,
-        matches,
-        generation_column=LLM_REVIEW_GENERATION_COLUMN,
-        score_columns=tuple(f"{field}_0_10" for field in LLM_REVIEW_FIELDS),
-    ).dataframe
+def current_score_view_dependencies() -> CurrentScoreViewDependencies:
+    return CurrentScoreViewDependencies(
+        normalize_dataframe=normalize_score_dataframe,
+        load_matching_results=load_latest_matching_analysis_insight_results,
+        llm_review_provider=llm_review_provider,
+        llm_review_model_name=llm_review_model_name,
+        llm_review_prompt_version=llm_review_prompt_version,
+        llm_review_result_prompt_version=llm_review_result_prompt_version,
+        llm_review_input_mode=llm_review_input_mode,
+    )
+
+
+def current_score_view(
+    source_df: pd.DataFrame,
+    cache_path: str | Path,
+    *,
+    allow_persistent_cache: bool = True,
+) -> CurrentScoreView:
+    if allow_persistent_cache:
+        refresh_persisted_llm_config_for_state(cache_path or DEFAULT_CACHE_PATH)
+    return load_current_score_view(
+        source_df,
+        cache_path,
+        current_score_view_dependencies(),
+        allow_persistent_cache=allow_persistent_cache,
+    )
 
 
 def apply_llm_config(payload: dict[str, Any], cache_path: str | Path) -> None:
@@ -855,9 +835,7 @@ def request_job_service(request: Request) -> ScoringJobService:
 STATE_PAYLOAD_DEPENDENCIES = StatePayloadDependencies(
     app_name="Culvia",
     app_subtitle="为作品建立秩序",
-    default_cache_path=DEFAULT_CACHE_PATH,
     heif_available=HEIF_AVAILABLE,
-    model_llm_review=MODEL_LLM_REVIEW,
     sort_fields=SORT_FIELDS,
     sort_field_labels=SORT_FIELD_LABELS,
     model_agreement_options=MODEL_AGREEMENT_OPTIONS,
@@ -869,21 +847,13 @@ STATE_PAYLOAD_DEPENDENCIES = StatePayloadDependencies(
     model_quality_labels=MODEL_QUALITY_LABELS,
     aesthetic_reference_labels=AESTHETIC_REFERENCE_LABELS,
     llm_review_labels=LLM_REVIEW_LABELS,
-    normalize_score_dataframe=normalize_score_dataframe,
-    refresh_persisted_llm_config=refresh_persisted_llm_config_for_state,
+    current_score_view=current_score_view,
     frame_file_ids=frame_file_ids,
     load_photo_marks=load_photo_marks,
     dataframe_for_display=dataframe_for_display,
     selected_preview_for_display=selected_preview_for_display,
-    load_latest_matching_analysis_insight_results=load_latest_matching_analysis_insight_results,
     load_analysis_insights=load_analysis_insights,
     llm_review_score_columns=tuple(f"{field}_0_10" for field in LLM_REVIEW_FIELDS),
-    llm_review_generation_column=LLM_REVIEW_GENERATION_COLUMN,
-    llm_review_provider=llm_review_provider,
-    llm_review_model_name=llm_review_model_name,
-    llm_review_prompt_version=llm_review_prompt_version,
-    llm_review_result_prompt_version=llm_review_result_prompt_version,
-    llm_review_input_mode=llm_review_input_mode,
     serialize_photo=serialize_photo,
     curation_summary=curation_summary,
     application_info=application_info,
@@ -1643,7 +1613,7 @@ async def api_mark_color(request: Request) -> JSONResponse:
                 source_df = normalize_score_dataframe(state["scores_df"]).copy()
                 filters = dict(state["filters"])
                 cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
-            source_df = current_llm_score_dataframe(source_df, cache_path)
+            source_df = current_score_view(source_df, cache_path).dataframe
             action = color_targets_action(cache_path, source_df, filters, payload, dataframe_for_display)
     except MutationJobUnavailable:
         return job_running_operation_response()
@@ -1664,7 +1634,7 @@ async def api_mark_status(request: Request) -> JSONResponse:
                 source_df = normalize_score_dataframe(state["scores_df"]).copy()
                 filters = dict(state["filters"])
                 cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
-            source_df = current_llm_score_dataframe(source_df, cache_path)
+            source_df = current_score_view(source_df, cache_path).dataframe
             action = status_targets_action(cache_path, source_df, filters, payload, dataframe_for_display)
     except MutationJobUnavailable:
         return job_running_operation_response()
@@ -1704,7 +1674,7 @@ async def api_accept_marks(request: Request) -> JSONResponse:
                 source_df = normalize_score_dataframe(state["scores_df"]).copy()
                 filters = dict(state["filters"])
                 cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
-            source_df = current_llm_score_dataframe(source_df, cache_path)
+            source_df = current_score_view(source_df, cache_path).dataframe
             action = accept_targets_action(cache_path, source_df, filters, payload, dataframe_for_display)
     except MutationJobUnavailable:
         return job_running_operation_response()
@@ -1804,7 +1774,7 @@ async def api_export(request: Request) -> Response:
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
         filters = dict(state["filters"])
         cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
-    source_df = current_llm_score_dataframe(source_df, cache_path)
+    source_df = current_score_view(source_df, cache_path).dataframe
     csv_bytes = filtered_export_csv_action(
         source_df,
         filters,
@@ -1825,7 +1795,7 @@ async def api_export_selected_csv(request: Request) -> Response:
         source_df = normalize_score_dataframe(state["scores_df"]).copy()
         filters = dict(state["filters"])
         cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
-    source_df = enrich_scores_for_display(current_llm_score_dataframe(source_df, cache_path), filters)
+    source_df = enrich_scores_for_display(current_score_view(source_df, cache_path).dataframe, filters)
     csv_bytes = selected_export_csv_action(source_df, cache_path, normalize_dataframe=normalize_score_dataframe)
     headers = {"Content-Disposition": 'attachment; filename="culvia_scores_selected.csv"'}
     return Response(csv_bytes, media_type="text/csv; charset=utf-8", headers=headers)

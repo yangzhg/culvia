@@ -9,44 +9,27 @@
 推荐的本地统一入口：
 
 ```bash
-make pre-commit
-make test
-make js-check
 make lint
-make gate
+make test
 ```
 
-等价底层命令：
+`make lint` 与提交钩子共用 pre-commit 配置，行为测试单独运行。排查局部问题时，也可以直接运行各项检查：
 
 ```bash
-python -c "import sys; assert sys.version_info >= (3, 11), sys.version"
-python -m unittest discover -s tests
-PYTHONPYCACHEPREFIX=/private/tmp/culvia-pycache python -m compileall -q culvia_app.py culvia tests tools
 python -m pre_commit run --all-files
 python -m ruff format --check culvia culvia_app.py tests tools desktop/tauri/scripts
 python -m ruff check culvia culvia_app.py tests tools desktop/tauri/scripts
 python tools/pre_commit_checks.py js-syntax
 python tools/pre_commit_checks.py shell-syntax
-python tools/pre_commit_checks.py makefile
 python tools/pre_commit_checks.py rust-format
 python tools/pre_commit_checks.py secret-scan
 git diff --check
-rg -n "sk-[A-Za-z0-9]{12,}" --glob '!model_cache/**' --glob '!thumbnail_cache/**' --glob '!upload_cache/**' --glob '!culvia_uploads/**' --glob '!__pycache__/**' .
-```
-
-聚合 gate：
-
-```bash
-python tools/formal_gate.py
-python tools/formal_gate.py --skip-release-smoke
-python tools/formal_gate.py --build-sdist
-python tools/formal_gate.py --sdist-artifact dist/python/culvia-0.2.0.tar.gz
 ```
 
 前端改动至少运行：
 
 ```bash
-find web -name '*.js' -print0 | xargs -0 -n1 node --check
+make js-check
 python -m unittest tests.test_frontend_i18n tests.test_frontend_api_client tests.test_frontend_viewer_keyboard tests.test_frontend_manual_status
 ```
 
@@ -119,12 +102,13 @@ make release-status
 ```bash
 python tools/check_desktop_readiness.py --json
 python tools/check_desktop_readiness.py --strict-toolchain
-python tools/formal_gate.py --strict-desktop
+make backend-placeholder
+cargo test --locked --manifest-path desktop/tauri/src-tauri/Cargo.toml
 ```
 
-`--strict-desktop` 会运行 Desktop release preflight、backend placeholder、`cargo check`、`cargo test`、`tauri:info` 和 backend plan。桌面壳必须继续使用 `desktop/tauri/desktop-shell.contract.json` 中声明的 local-http frontend contract，健康检查路径是 `/health`，主入口是 `culvia-supervisor`。
+桌面壳使用 `desktop/tauri/desktop-shell.contract.json` 中声明的 local-http frontend contract，健康检查路径是 `/health`，主入口是 `culvia-supervisor`。占位 backend 用于编译检查；发布构建使用真实 backend。
 
-验证 Desktop Lite 时，应使用一次性的 `CULVIA_RUNTIME_VENV`，运行 `python -m culvia.runtime_manager ensure --json --editable-source <repo>`。这不会放入默认 gate，因为它可能安装依赖。
+验证 Desktop Lite 时，使用一次性的 `CULVIA_RUNTIME_VENV`，运行 `python -m culvia.runtime_manager ensure --json --editable-source <repo>`。此命令可能安装依赖，需要显式运行。
 
 ## Backend 运行时检查
 
@@ -134,8 +118,6 @@ python3 desktop/tauri/scripts/build-backend.py --ensure-placeholder --json
 python3 desktop/tauri/scripts/build-backend.py --build --json
 python tools/check_backend_smoke.py --binary <backend> --timeout 90 --json
 python tools/check_backend_workflow_smoke.py --binary <backend> --timeout 120 --json
-python tools/formal_gate.py --strict-desktop --backend-smoke --backend-binary <backend>
-python tools/formal_gate.py --strict-desktop --backend-workflow-smoke --backend-binary <backend>
 ```
 
 `tools/check_backend_smoke.py` 验证 ready event、`/health` 和进程退出清理。`tools/check_backend_workflow_smoke.py` 使用合成 fixture 验证选片、筛选、导出预检、导出入选、curation history 和非密钥 LLM 配置写入。
@@ -171,11 +153,9 @@ npm --prefix desktop/tauri run tauri:build:headless
 python tools/check_macos_artifact_preflight.py --json
 python tools/check_macos_artifact_preflight.py --strict --json
 python tools/check_macos_app_launch_smoke.py --json
-python tools/formal_gate.py --macos-artifacts --skip-release-smoke
-python tools/formal_gate.py --macos-artifacts --strict-macos-artifacts --macos-app-launch-smoke --skip-release-smoke
 ```
 
-`--macos-artifacts` 只检查已构建 `.app` / `.dmg`。不要把本机 ad-hoc 或 Apple Development 签名误认为 Developer ID/公证发布签名。
+产物预检检查已构建的 `.app` / `.dmg`。本机 ad-hoc 或 Apple Development 签名不等同于 Developer ID 签名或公证。
 
 macOS 发布入口会把最终产物放到 `dist/macos/`；`desktop/tauri/src-tauri/target/` 只是中间构建目录。
 
@@ -202,7 +182,6 @@ python tools/build_windows_zip.py --runtime-profile lite --build --target x86_64
 python tools/check_portable_package_preflight.py --windows-zip dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip --json
 python tools/check_portable_package_preflight.py --windows-lite-zip dist/windows-lite/culvia-0.2.0-windows-lite-x86_64-pc-windows-msvc.zip --json
 python tools/check_portable_package_runtime.py --windows-zip dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip --exit-after-ms 20000 --json
-python tools/formal_gate.py --windows-zip-artifact dist/windows/culvia-0.2.0-windows-x86_64-pc-windows-msvc.zip --skip-release-smoke
 ```
 
 Linux：
@@ -223,7 +202,6 @@ python tools/build_linux_tgz.py --runtime-profile lite --build --target x86_64-u
 python tools/check_portable_package_preflight.py --linux-tgz dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz --json
 python tools/check_portable_package_preflight.py --linux-lite-tgz dist/linux-lite/culvia-0.2.0-linux-lite-x86_64-unknown-linux-gnu.tar.gz --json
 python tools/check_portable_package_runtime.py --linux-tgz dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz --exit-after-ms 20000 --json
-python tools/formal_gate.py --linux-tgz-artifact dist/linux/culvia-0.2.0-linux-x86_64-unknown-linux-gnu.tar.gz --skip-release-smoke
 ```
 
 Full 包必须自包含 Python runtime 和 web data，不要求用户安装系统 Python。Lite 包有意不内置 backend 和 web data，默认使用应用自己管理的 virtualenv runtime，并在首次启动时需要 Python 3.11+。`tools/check_portable_package_preflight.py` 验证压缩包结构、路径安全、manifest、可执行文件类型和 forbidden runtime artifacts。`tools/check_portable_package_runtime.py` 必须在目标 OS runner 上验证 full 包 launcher、bundled backend 和 fixture workflow。

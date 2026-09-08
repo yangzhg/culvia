@@ -278,4 +278,4 @@ python tools/build_linux_tgz.py --runtime-profile lite --check-plan --target x86
 
 包工具是更底层的辅助入口。除非正在调试某个打包阶段，否则优先使用原生 release contract。
 
-完整发布 gate 见 [发布检查清单](release-checklist.md)。
+完整发布检查见 [发布检查清单](release-checklist.md)。

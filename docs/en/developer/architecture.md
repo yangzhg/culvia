@@ -8,7 +8,7 @@ Culvia is designed around one Python core, one Web frontend, and a thin desktop 
 
 - Local first: photos, thumbnails, SQLite, model caches, manual labels, and exports stay on the user's machine by default.
 - Shared Web/App core: the desktop shell reuses the Starlette API, static frontend, scoring orchestration, and data layer.
-- Desktop shell boundary: the current desktop shell implementation uses Tauri for the window, backend lifecycle, and native capabilities. Pywebview is only a lightweight fallback candidate, and Electron is not the default desktop route.
+- Desktop shell boundary: the current shell uses Tauri for the window, backend lifecycle, and native capabilities. The Python core and local HTTP contract are independent of the shell framework.
 - Business logic belongs in Python modules: keep `culvia_app.py` as the app factory and route handler layer; new business behavior should live in `culvia/`.
 - Testable boundaries: core services should use pure functions or injectable dependencies. Tests should cover behavior, data contracts, and packaging boundaries instead of fragile static page strings.
 
@@ -57,6 +57,7 @@ flowchart LR
 - `culvia.scoring_runner`: orchestrates source resolution, model preparation, progress reporting, scoring, and result refresh.
 - `culvia.scoring`: owns local model scoring, LLM scoring, SQLite read/write, and batch scoring facade behavior. Completed model stages are checkpointed per photo before progress is reported, so cancellation or a worker failure can resume from durable work.
 - `culvia.recommendation`: owns recommendation scores, filter decisions, and weighting presets.
+- `culvia.score_view`: resolves current local model versions and LLM identity/generation once for state payloads, curation actions, and CSV export. Insight details use the same captured LLM identity as the score rows.
 - `culvia.gallery_display` / `culvia.payloads`: convert DataFrames, manual labels, LLM insights, and file metadata into UI payloads.
 - `culvia.curation_*`: owns manual pick/review/reject decisions, star ratings, color labels, history, and undo.
 - `culvia.export_service`: exports CSV files, copies selected photos, and runs export preflight checks.
@@ -68,13 +69,15 @@ flowchart LR
 
 `web/index.html` owns page structure and static asset order. `web/*.js` modules are split by feature, `web/styles/` owns CSS slices, and `web/locales/` owns translated strings. `web/app_config.js` owns shared frontend field lists and static label maps; `web/distribution_model.js` owns distribution data transforms; `web/distribution_view.js` owns distribution markup; `web/viewer_inspector.js` owns viewer score, signal, and insight markup; `web/gallery_view.js` owns gallery card and tooltip markup; `web/icons.js` owns SVG path data; `web/ui_helpers.js` owns small stateless rendering helpers. New user-facing UI text must go into the locale files; `web/i18n_messages.js` is only the aggregation entrypoint. Modules should not embed bilingual fallback copy. Icon-only controls need `data-ui-tooltip` or an equivalent accessible label. Truncated text must expose the full value through copy behavior, `title`, or a tooltip.
 
+`web/gallery_panel.js` owns gallery selection, card updates, and rating tooltip placement. `web/app.js` owns view transitions and closes the gallery tooltip when leaving the gallery; rendering closes it when its anchor is removed. Resize and scroll listeners are active only while the tooltip is open.
+
 Frontend tests should prioritize:
 
 - i18n keys and HTML support attributes.
 - Pure JavaScript behavior for filters, exports, shortcuts, manual decisions, and LLM configuration.
 - Consistency between `pyproject.toml` package data and static references in `web/index.html`.
 
-Do not add tests that only lock static version strings, CSS selector existence, or screenshot wrapper wiring.
+Keep assertions focused on observable behavior and public contracts.
 
 ## Desktop and Release Boundary
 
@@ -133,9 +136,9 @@ These tools produce release-package and runtime evidence; they do not replace hu
 ## Test Strategy
 
 - Behavior tests: `python -m unittest discover -s tests`
-- Python syntax: `python -m compileall -q culvia_app.py culvia tests tools`
-- Frontend syntax: `find web -name '*.js' -print0 | xargs -0 -n1 node --check`
-- Release gate: `python tools/formal_gate.py`
+- Format, syntax, and privacy checks: `make lint` (shared pre-commit configuration)
+- Frontend syntax: `make js-check`
+- Distribution verification: `make python-release` and the platform release commands
 - Desktop readiness: `python tools/check_desktop_readiness.py --json`
 
 New tests should prove real behavior or release risk. They should not only preserve implementation artifacts.

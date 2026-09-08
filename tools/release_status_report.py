@@ -225,35 +225,6 @@ def release_environment(root: Path = ROOT) -> dict[str, Any]:
     }
 
 
-def estimated_remaining_payload(*, formal_ready: bool, blocker_summary: dict[str, list[str]]) -> dict[str, str]:
-    if formal_ready:
-        return {
-            "beta": "0",
-            "formal": "0",
-            "localActionable": "0",
-            "externalRelease": "0",
-        }
-
-    local_pending = bool(blocker_summary.get("localActionable"))
-    external_pending = bool(blocker_summary.get("externalRequired") or blocker_summary.get("environment"))
-    local = "1-2 local passes" if local_pending else "0"
-    external = "1-2 release runs" if external_pending else "0"
-    if local_pending and external_pending:
-        formal = "local checks plus external release evidence"
-    elif local_pending:
-        formal = "local checks only"
-    elif external_pending:
-        formal = "external release evidence only"
-    else:
-        formal = "unknown"
-    return {
-        "beta": "0",
-        "formal": formal,
-        "localActionable": local,
-        "externalRelease": external,
-    }
-
-
 def portable_package_runtime_tool() -> Any:
     from tools import check_portable_package_runtime
 
@@ -1059,13 +1030,8 @@ def collect_report(
     return {
         "ok": True,
         "focus": focus,
-        "betaReady": True,
         "formalReady": formal_ready,
         "focusedReady": focused_ready,
-        "estimatedRemaining": estimated_remaining_payload(
-            formal_ready=focused_ready,
-            blocker_summary=blocker_summary,
-        ),
         "environment": environment,
         "gates": {
             "desktopReadiness": {
@@ -1107,20 +1073,11 @@ def collect_report(
 
 
 def print_text_report(payload: dict[str, Any]) -> None:
-    estimate = payload.get("estimatedRemaining") or {}
     focus = str(payload.get("focus") or "all")
     print(f"Focus: {focus}")
-    print(f"Beta ready: {payload['betaReady']}")
     print(f"Formal ready: {payload['formalReady']}")
     if focus != "all":
         print(f"Focused ready: {payload.get('focusedReady')}")
-    print(
-        "Estimated remaining: "
-        f"beta {estimate.get('beta', 'unknown')}, "
-        f"local {estimate.get('localActionable', 'unknown')}, "
-        f"external {estimate.get('externalRelease', 'unknown')}, "
-        f"formal {estimate.get('formal', 'unknown')}"
-    )
     for key, item in payload["platforms"].items():
         print(f"- {key}: {item['status']} ({'ready' if item['ready'] else 'not ready'})")
         for blocker in item["blockers"]:
@@ -1155,7 +1112,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--focus",
         choices=("all", "macos"),
         default="all",
-        help="Scope readiness estimates to all platforms or the current macOS app release lane.",
+        help="Scope release readiness checks to all platforms or the current macOS app release lane.",
     )
     parser.add_argument(
         "--launch-runtime",

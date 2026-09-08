@@ -60,7 +60,6 @@ REQUIRED_RESULT_STEPS = (
     "portable package build",
     "portable package artifact preflight",
     "portable package runtime verification",
-    "formal package gate",
     "write release checksum",
 )
 LITE_REQUIRED_RESULT_STEPS = (

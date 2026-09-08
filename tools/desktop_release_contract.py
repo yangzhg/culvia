@@ -41,7 +41,6 @@ class PlatformContract:
     artifact_name: str
     desktop_binary: Path
     backend_binary: Path
-    artifact_flag: str
     preflight_arg: str
     package_build_tool: Path
     runner_dependencies: tuple[str, ...]
@@ -85,7 +84,6 @@ def platform_contract(key: str, *, root: Path = ROOT, profile: str = "full") -> 
             backend_binary=Path("")
             if profile == "lite"
             else build_windows_zip.default_backend_binary(WINDOWS_TARGET, root=root),
-            artifact_flag="--windows-lite-zip-artifact" if profile == "lite" else "--windows-zip-artifact",
             preflight_arg="--windows-lite-zip" if profile == "lite" else "--windows-zip",
             package_build_tool=root / "tools" / "build_windows_zip.py",
             runner_dependencies=(
@@ -118,7 +116,6 @@ def platform_contract(key: str, *, root: Path = ROOT, profile: str = "full") -> 
             backend_binary=Path("")
             if profile == "lite"
             else build_linux_tgz.default_backend_binary(LINUX_TARGET, root=root),
-            artifact_flag="--linux-lite-tgz-artifact" if profile == "lite" else "--linux-tgz-artifact",
             preflight_arg="--linux-lite-tgz" if profile == "lite" else "--linux-tgz",
             package_build_tool=root / "tools" / "build_linux_tgz.py",
             runner_dependencies=(
@@ -299,17 +296,6 @@ def collect_steps(
                 "--exit-after-ms",
                 "20000",
                 "--json",
-            ),
-        ),
-        ReleaseStep(
-            "formal package gate",
-            (
-                str(python),
-                str(root / "tools" / "formal_gate.py"),
-                contract.artifact_flag,
-                str(contract.archive),
-                "--skip-release-smoke",
-                "--skip-unit-tests",
             ),
         ),
         ReleaseStep(

@@ -213,7 +213,6 @@ class ReleaseEvidenceManifestTests(unittest.TestCase):
                 artifact_name="culvia-linux-x64",
                 desktop_binary=root / "culvia-desktop",
                 backend_binary=root / "culvia-server",
-                artifact_flag="--linux-tgz-artifact",
                 preflight_arg="--linux-tgz",
                 package_build_tool=root / "tools" / "build_linux_tgz.py",
                 runner_dependencies=(),

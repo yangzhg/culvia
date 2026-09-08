@@ -13,14 +13,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def copy_workflow_fixture(target: Path) -> None:
-    for relative in (
-        ".github/workflows/desktop-release.yml",
-        "tools/desktop_release_contract.py",
-    ):
-        source = ROOT / relative
-        destination = target / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    relative = Path(".github/workflows/desktop-release.yml")
+    destination = target / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text((ROOT / relative).read_text(encoding="utf-8"), encoding="utf-8")
 
 
 class DesktopReleaseContractTests(unittest.TestCase):
@@ -42,7 +38,6 @@ class DesktopReleaseContractTests(unittest.TestCase):
         self.assertIn("portable package build", names)
         self.assertIn("portable package artifact preflight", names)
         self.assertIn("portable package runtime verification", names)
-        self.assertIn("formal package gate", names)
         self.assertIn("write release checksum", names)
         self.assertIn("cargo build --release --locked --manifest-path", commands)
         self.assertIn("desktop/tauri/src-tauri/Cargo.toml", commands)
@@ -51,8 +46,6 @@ class DesktopReleaseContractTests(unittest.TestCase):
         self.assertIn("tools/check_portable_package_preflight.py --windows-zip", commands)
         self.assertIn("tools/check_portable_package_runtime.py --windows-zip", commands)
         self.assertIn("--exit-after-ms 20000", commands)
-        self.assertIn("tools/formal_gate.py --windows-zip-artifact", commands)
-        self.assertIn("--skip-unit-tests", commands)
         self.assertIn("tools/write_release_checksum.py", commands)
         self.assertIn(".zip.sha256", commands)
         self.assertNotIn("--ensure-placeholder", commands)
@@ -76,8 +69,6 @@ class DesktopReleaseContractTests(unittest.TestCase):
         self.assertIn("tools/check_portable_package_preflight.py --linux-tgz", commands)
         self.assertIn("tools/check_portable_package_runtime.py --linux-tgz", commands)
         self.assertIn("--exit-after-ms 20000", commands)
-        self.assertIn("tools/formal_gate.py --linux-tgz-artifact", commands)
-        self.assertIn("--skip-unit-tests", commands)
         self.assertIn("tools/write_release_checksum.py", commands)
         self.assertIn(".tar.gz.sha256", commands)
         self.assertNotIn("--ensure-placeholder", commands)
@@ -127,23 +118,26 @@ class DesktopReleaseContractTests(unittest.TestCase):
         self.assertEqual(payload["results"], [])
         self.assertIn("must run on Windows", payload["issues"][0])
 
-    def test_run_prints_step_progress_to_stderr(self) -> None:
+    def test_run_stops_on_failure_before_writing_release_evidence(self) -> None:
         contract = desktop_release_contract.platform_contract("linux")
 
         def fake_run_step(step: desktop_release_contract.ReleaseStep, *, root: Path = ROOT) -> dict[str, object]:
             return {"name": step.name, "command": list(step.command), "returncode": 1, "seconds": 0.25, "ok": False}
 
-        stderr = io.StringIO()
         with (
             patch("tools.desktop_release_contract.native_platform_key", return_value="linux"),
-            patch("tools.desktop_release_contract.run_step", side_effect=fake_run_step),
-            patch("sys.stderr", stderr),
+            patch("tools.desktop_release_contract.run_step", side_effect=fake_run_step) as run_step,
+            patch.object(
+                desktop_release_contract.write_release_evidence_manifest, "write_manifest_from_contract_payload"
+            ) as write_manifest,
         ):
-            payload = desktop_release_contract.run_contract(contract, python=Path("/python"), progress=True)
+            payload = desktop_release_contract.run_contract(contract, python=Path("/python"))
 
         self.assertFalse(payload["ok"])
-        self.assertIn("[linux-release] 1/12 install python desktop extras ...", stderr.getvalue())
-        self.assertIn("[linux-release] 1/12 FAIL install python desktop extras (0.25s)", stderr.getvalue())
+        self.assertEqual(payload["failed"], ["install python desktop extras"])
+        self.assertEqual(len(payload["results"]), 1)
+        run_step.assert_called_once()
+        write_manifest.assert_not_called()
 
     def test_text_output_summarizes_run_result_and_failure_logs(self) -> None:
         contract = desktop_release_contract.platform_contract("linux")

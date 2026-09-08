@@ -39,8 +39,6 @@ Commands:
   format               Format Python and Rust source files
   pre-commit-install   Install Git pre-commit hooks
   pre-commit           Run all pre-commit hooks against the repository
-  gate                 Run formal gate without release smoke
-  gate-full            Run the full formal gate
   desktop-ready          Run Desktop readiness checks
   desktop-dev          Install desktop npm deps and run the dev shell
   app-icons            Sync web favicon, desktop icons, and splash mark from assets/brand/culvia-icon.svg
@@ -187,23 +185,12 @@ switch ($CommandName) {
         finally { Remove-Item Env:CULVIA_DISABLE_KEYCHAIN -ErrorAction SilentlyContinue }
     }
     "js-check" { Invoke-Tool @("tools/pre_commit_checks.py", "js-syntax") }
-    "lint" {
-        Invoke-Tool @("-m", "ruff", "format", "--check", "culvia", "culvia_app.py", "tests", "tools", "desktop/tauri/scripts")
-        Invoke-Tool @("-m", "ruff", "check", "culvia", "culvia_app.py", "tests", "tools", "desktop/tauri/scripts")
-        Invoke-Tool @("tools/pre_commit_checks.py", "js-syntax")
-        Invoke-Tool @("tools/pre_commit_checks.py", "shell-syntax")
-        Invoke-Tool @("tools/pre_commit_checks.py", "makefile")
-        Invoke-Tool @("tools/pre_commit_checks.py", "rust-format")
-        Invoke-Tool @("tools/pre_commit_checks.py", "secret-scan")
-    }
     "format" {
         Invoke-Tool @("-m", "ruff", "format", "culvia", "culvia_app.py", "tests", "tools", "desktop/tauri/scripts")
         Invoke-Tool @("tools/pre_commit_checks.py", "rust-format", "--fix")
     }
     "pre-commit-install" { Invoke-Tool @("-m", "pre_commit", "install") }
-    "pre-commit" { Invoke-Tool @("-m", "pre_commit", "run", "--all-files") }
-    "gate" { Invoke-Tool @("tools/formal_gate.py", "--skip-release-smoke") }
-    "gate-full" { Invoke-Tool @("tools/formal_gate.py") }
+    { $_ -in @("lint", "pre-commit") } { Invoke-Tool @("-m", "pre_commit", "run", "--all-files") }
     "desktop-ready" { Invoke-Tool @("tools/check_desktop_readiness.py") }
     "desktop-dev" {
         Push-Location $RepoRoot

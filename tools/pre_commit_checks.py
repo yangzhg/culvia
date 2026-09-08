@@ -79,7 +79,6 @@ class SecretFinding:
     path: Path
     line_number: int
     label: str
-    match: str
 
 
 def command_text(command: Sequence[str]) -> str:
@@ -119,12 +118,6 @@ def check_shell_syntax() -> int:
     for path in POSIX_SHELL_FILES:
         status = run(("sh", "-n", str(path.relative_to(ROOT)))) or status
     return status
-
-
-def check_makefile() -> int:
-    if not require_executable("make"):
-        return 1
-    return run(("make", "-n", "help"))
 
 
 def rust_format_command(*, fix: bool = False) -> tuple[str, ...]:
@@ -175,10 +168,8 @@ def iter_secret_findings(paths: Iterable[Path], *, root: Path = ROOT) -> list[Se
         text = data.decode("utf-8", errors="ignore")
         for line_number, line in enumerate(text.splitlines(), start=1):
             for label, pattern in SECRET_PATTERNS:
-                for match in pattern.finditer(line):
-                    findings.append(
-                        SecretFinding(path=path, line_number=line_number, label=label, match=match.group(0))
-                    )
+                if pattern.search(line):
+                    findings.append(SecretFinding(path=path, line_number=line_number, label=label))
     return findings
 
 
@@ -186,7 +177,7 @@ def check_secret_scan(*, root: Path = ROOT) -> int:
     findings = iter_secret_findings(git_tracked_files(root), root=root)
     for finding in findings:
         relative = finding.path.relative_to(root).as_posix()
-        print(f"{relative}:{finding.line_number}: {finding.label}: {finding.match}", file=sys.stderr)
+        print(f"{relative}:{finding.line_number}: {finding.label}", file=sys.stderr)
     return 1 if findings else 0
 
 
@@ -195,7 +186,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("js-syntax")
     subparsers.add_parser("shell-syntax")
-    subparsers.add_parser("makefile")
     rust_parser = subparsers.add_parser("rust-format")
     rust_parser.add_argument("--fix", action="store_true", help="Apply cargo fmt instead of checking only.")
     subparsers.add_parser("secret-scan")
@@ -208,8 +198,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return check_js_syntax()
     if args.command == "shell-syntax":
         return check_shell_syntax()
-    if args.command == "makefile":
-        return check_makefile()
     if args.command == "rust-format":
         return check_rust_format(fix=args.fix)
     if args.command == "secret-scan":

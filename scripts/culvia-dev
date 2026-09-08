@@ -36,8 +36,6 @@ Commands:
   format               Format Python and Rust source files
   pre-commit-install   Install Git pre-commit hooks
   pre-commit           Run all pre-commit hooks against the repository
-  gate                 Run formal gate without release smoke
-  gate-full            Run the full formal gate
   desktop-ready          Run Desktop readiness checks
   desktop-dev          Install desktop npm deps and run the dev shell
   app-icons            Sync web favicon, desktop icons, and splash mark from assets/brand/culvia-icon.svg
@@ -168,15 +166,6 @@ case "$command" in
   js-check)
     run_tool tools/pre_commit_checks.py js-syntax
     ;;
-  lint)
-    run_tool -m ruff format --check culvia culvia_app.py tests tools desktop/tauri/scripts
-    run_tool -m ruff check culvia culvia_app.py tests tools desktop/tauri/scripts
-    run_tool tools/pre_commit_checks.py js-syntax
-    run_tool tools/pre_commit_checks.py shell-syntax
-    run_tool tools/pre_commit_checks.py makefile
-    run_tool tools/pre_commit_checks.py rust-format
-    run_tool tools/pre_commit_checks.py secret-scan
-    ;;
   format)
     run_tool -m ruff format culvia culvia_app.py tests tools desktop/tauri/scripts
     run_tool tools/pre_commit_checks.py rust-format --fix
@@ -184,14 +173,8 @@ case "$command" in
   pre-commit-install)
     run_tool -m pre_commit install
     ;;
-  pre-commit)
+  lint|pre-commit)
     run_tool -m pre_commit run --all-files
-    ;;
-  gate)
-    run_tool tools/formal_gate.py --skip-release-smoke
-    ;;
-  gate-full)
-    run_tool tools/formal_gate.py
     ;;
   desktop-ready)
     run_tool tools/check_desktop_readiness.py

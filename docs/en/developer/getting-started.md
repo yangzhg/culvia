@@ -55,16 +55,13 @@ make cli CLI_ARGS="--help"
 
 ```bash
 make pre-commit-install
-make pre-commit
-make test
-make js-check
 make lint
+make test
 make format
-make gate
 make desktop-ready
 ```
 
-`make pre-commit` is the default local quality gate for Python format/lint, JS syntax, config validation, shell syntax, Makefile dry-run checks, Rust formatting, and secret scanning. Underlying commands are preserved in [Release Checklist](release-checklist.md) for reproducibility and CI.
+`make lint` and `make pre-commit` run the same checks from `.pre-commit-config.yaml`: Python format/lint, JavaScript and shell syntax, configuration validation, Rust formatting, and secret scanning. `make js-check` runs just the JavaScript syntax check. Package and runtime verification commands are in the [Release Checklist](release-checklist.md).
 
 ## Desktop Development
 

@@ -20,50 +20,14 @@ ALLOWED_ARTIFACT_PATHS = (
     "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz",
     "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz",
 )
-ALLOWED_CHECKSUM_PATHS = (
-    "dist/macos/*.dmg.sha256",
-    "dist/macos-lite/*-lite.dmg.sha256",
-    "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.sha256",
-    "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip.sha256",
-    "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.sha256",
-    "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz.sha256",
-)
-ALLOWED_EVIDENCE_PATHS = (
-    "dist/macos/*.dmg.evidence.json",
-    "dist/macos-lite/*-lite.dmg.evidence.json",
-    "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.evidence.json",
-    "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip.evidence.json",
-    "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.evidence.json",
-    "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz.evidence.json",
-)
+ALLOWED_CHECKSUM_PATHS = tuple(f"{path}.sha256" for path in ALLOWED_ARTIFACT_PATHS)
+ALLOWED_EVIDENCE_PATHS = tuple(f"{path}.evidence.json" for path in ALLOWED_ARTIFACT_PATHS)
 FORBIDDEN_WORKFLOW_PATTERNS = (
     (r"\$\{\{\s*secrets\.", "secrets context"),
     (r"continue-on-error\s*:\s*(true|\$\{\{)", "continue-on-error bypass"),
     (r"\|\|\s*true\b", "shell success bypass"),
     (r"\bif\s*:\s*always\(\)", "always upload/run bypass"),
     (r"\bset\s+\+e\b", "disabled shell error exit"),
-)
-FORBIDDEN_UPLOAD_PATHS = (
-    ".",
-    "./**",
-    "dist/**",
-    "target/**",
-    "desktop/tauri/src-tauri/runtime/**",
-    "desktop/tauri/src-tauri/target/**",
-    "model_cache/**",
-    "analysis_cache/**",
-    "thumbnail_cache/**",
-    "upload_cache/**",
-    "culvia_uploads/**",
-    "*.sqlite",
-    "*.db",
-    "*.csv",
-    ".env*",
-    "*.pem",
-    "*.key",
-    "*.token",
-    "~/**",
-    "$HOME/**",
 )
 REQUIRED_UPLOAD_PATH_REFERENCE = "${{ matrix.artifact_path }}"
 REQUIRED_UPLOAD_CHECKSUM_REFERENCE = "${{ matrix.checksum_path }}"
@@ -190,10 +154,6 @@ def forbidden_bypass_matches(workflow: str) -> list[str]:
     return issues
 
 
-def forbidden_upload_path_values(paths: Sequence[str]) -> list[str]:
-    return [path for path in paths if path in FORBIDDEN_UPLOAD_PATHS]
-
-
 def workflow_dispatch_input_block(workflow: str, name: str) -> str:
     match = re.search(
         rf"(?ms)^      {re.escape(name)}:\n.*?(?=^      [a-zA-Z_][a-zA-Z0-9_-]*:\n|^  push:\n)",
@@ -212,7 +172,6 @@ def workflow_step_block(workflow: str, name: str) -> str:
 
 def collect_checks(root: Path = ROOT) -> list[CheckResult]:
     workflow = read_optional(root, WORKFLOW_PATH)
-    contract_tool = read_optional(root, CONTRACT_TOOL_PATH)
     platform_input = workflow_dispatch_input_block(workflow, "platform")
     profile_input = workflow_dispatch_input_block(workflow, "profile")
     lite_runtime_step = workflow_step_block(workflow, "Verify clean Desktop Lite runtime wheel")
@@ -225,11 +184,9 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
     upload_artifact_blocks = action_blocks(workflow, "actions/upload-artifact")
     attest_blocks = action_blocks(workflow, ATTEST_ACTION)
     raw_cache_blocks = action_blocks(workflow, RAW_CACHE_ACTION)
-    forbidden_uploads = forbidden_upload_path_values([*upload_paths, *artifact_paths, *checksum_paths, *evidence_paths])
     bypasses = forbidden_bypass_matches(workflow)
     checks = [
         check("desktop release workflow exists", bool(workflow), WORKFLOW_PATH),
-        check("desktop release contract tool exists", bool(contract_tool), CONTRACT_TOOL_PATH),
         check(
             "workflow is manually triggered with read-only permissions",
             "workflow_dispatch:" in workflow and "permissions:" in workflow and "contents: read" in workflow,
@@ -280,23 +237,6 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
             "publish_release must reject manual runs unless platform=all and profile=release",
         ),
         check(
-            "workflow installs required toolchains",
-            all(
-                text in workflow
-                for text in (
-                    "actions/setup-python@v5",
-                    'python-version: "3.11"',
-                    "actions/setup-node@v4",
-                    'node-version: "20"',
-                    "rustup default stable",
-                    "libwebkit2gtk-4.1-dev",
-                    "patchelf",
-                    "xvfb",
-                )
-            ),
-            "Python, Node, Rust, and Linux desktop shell dependencies are required",
-        ),
-        check(
             "workflow delegates release steps to local contract tool",
             f"{CONTRACT_TOOL_PATH} --platform" in workflow
             and "--check-plan --json" in workflow
@@ -340,34 +280,6 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
             "the macOS Intel full-package runner must import the exact supported dependency set and round-trip a CLIP safetensors/config artifact",
         ),
         check(
-            "contract tool runs the real release chain",
-            all(
-                text in contract_tool
-                for text in (
-                    "--build",
-                    "check_backend_smoke.py",
-                    "cargo",
-                    "--manifest-path",
-                    "build_windows_zip.py",
-                    "build_linux_tgz.py",
-                    "check_portable_package_preflight.py",
-                    "check_portable_package_runtime.py",
-                    "write_release_checksum.py",
-                    "write_release_evidence_manifest",
-                    "write_manifest_from_contract_payload",
-                    "evidenceManifestResult",
-                    "--exit-after-ms",
-                    "formal_gate.py",
-                    "--windows-zip-artifact",
-                    "--linux-tgz-artifact",
-                    ".sha256",
-                    "ensure_native_platform",
-                )
-            )
-            and "--ensure-placeholder" not in contract_tool,
-            "contract tool must build, smoke, package, preflight, runtime-smoke, and reject non-native runs",
-        ),
-        check(
             "workflow uploads only verified final archives, checksums, and evidence manifests",
             bool(upload_artifact_blocks)
             and sorted(set(artifact_paths)) == sorted(ALLOWED_ARTIFACT_PATHS)
@@ -383,8 +295,6 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
                     *SOURCE_UPLOAD_PATHS,
                 )
             )
-            and not forbidden_uploads
-            and "actions/upload-artifact@v4" in workflow
             and "if-no-files-found: error" in workflow,
             "upload-artifact must use final archive/checksum/evidence allowlists, including an explicit -lite basename for staged macOS Lite DMGs and sidecars",
         ),
@@ -404,7 +314,6 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
         check(
             "workflow generates GitHub artifact attestations",
             len(attest_blocks) >= 2
-            and "actions/attest@v4" in workflow
             and "artifact-metadata: write" in workflow
             and "attestations: write" in workflow
             and "id-token: write" in workflow

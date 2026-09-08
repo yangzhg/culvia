@@ -1164,18 +1164,13 @@ body.is-gallery-marquee-selecting * {
   opacity: 0;
   isolation: isolate;
   pointer-events: none;
-  transform: translate(var(--rating-tooltip-shift-x), 6px) scale(0.98);
-  transform-origin: bottom right;
-  transition:
-    opacity 160ms ease,
-    transform 160ms ease;
+  transform: translateX(var(--rating-tooltip-shift-x));
+  transition: opacity 160ms ease;
 }
 
 .rating-tooltip.is-placement-below {
   top: calc(100% + 12px);
   bottom: auto;
-  transform: translate(var(--rating-tooltip-shift-x), -6px) scale(0.98);
-  transform-origin: top right;
 }
 
 .gallery-rating:hover .rating-tooltip,
@@ -1185,7 +1180,6 @@ body.is-gallery-marquee-selecting * {
   z-index: 170;
   opacity: 1;
   pointer-events: auto;
-  transform: translate(var(--rating-tooltip-shift-x), 0) scale(1);
 }
 
 .rating-tooltip::before {

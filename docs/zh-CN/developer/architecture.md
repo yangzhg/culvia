@@ -8,7 +8,7 @@ Culvia 的架构目标是：一个 Python 核心、一个 Web 前端、一层轻
 
 - 本地优先：照片、缩略图、SQLite、模型缓存、人工标记和导出默认都在本机。
 - Web/App 同源：桌面壳复用 Starlette API、静态前端、评分编排和数据层。
-- 桌面壳边界：当前桌面壳实现使用 Tauri，负责窗口、backend 生命周期和原生能力；pywebview 只作为轻量备选，Electron 暂不作为默认路线。
+- 桌面壳边界：当前使用 Tauri 负责窗口、backend 生命周期和原生能力；Python 核心与本地 HTTP 契约独立于桌面壳框架。
 - 业务下沉：`culvia_app.py` 保持为 app factory 和路由 handler，新业务优先进入 `culvia/`。
 - 可测试：核心服务使用纯函数或可注入依赖，测试覆盖行为、数据契约和发布包边界，避免依赖脆弱的页面静态字符串检查。
 
@@ -57,6 +57,7 @@ flowchart LR
 - `culvia.scoring_runner`：编排来源解析、模型准备、评分进度和结果刷新。
 - `culvia.scoring`：本地模型、大模型评分、SQLite 读写和批处理评分统一入口。每张照片完成的模型阶段会先写入 checkpoint 再上报进度，因此取消或 worker 异常后可以复用已持久化的结果。
 - `culvia.recommendation`：推荐分数、筛选判断和权重预设。
+- `culvia.score_view`：统一按本地模型版本和 LLM 身份、生成批次解析当前有效分数，供状态响应、选片操作和 CSV 导出复用；洞察详情与分数行使用同一次捕获的 LLM 身份。
 - `culvia.gallery_display` / `culvia.payloads`：把 DataFrame、人工标记、LLM insight 和文件信息转换为 UI payload。
 - `culvia.curation_*`：人工入选/待复核/淘汰、星级、颜色标签、历史和撤销。
 - `culvia.export_service`：导出 CSV、入选照片复制和导出预检。
@@ -68,13 +69,15 @@ flowchart LR
 
 `web/index.html` 负责页面结构和静态资源顺序，`web/*.js` 按功能拆分，`web/styles/` 管理 CSS 切片，`web/locales/` 管理翻译文案。`web/app_config.js` 管理前端共享字段列表和静态标签映射，`web/distribution_model.js` 管理分布图数据转换，`web/distribution_view.js` 管理分布图 markup，`web/viewer_inspector.js` 管理选片台评分、信号和洞察 markup，`web/gallery_view.js` 管理照片墙卡片和 tooltip markup，`web/icons.js` 管理 SVG path 数据，`web/ui_helpers.js` 管理无状态渲染 helper。新增 UI 文案必须进入 locale 文件；`web/i18n_messages.js` 只作为聚合入口。不要在模块里嵌入中英文 fallback。图标按钮应提供 `data-ui-tooltip` 或等价可访问说明；被省略文本必须可复制或有完整 title/tooltip。
 
+`web/gallery_panel.js` 管理照片墙选择、卡片更新和评分提示框定位。`web/app.js` 管理视图切换，离开照片墙时关闭评分提示框；卡片渲染移除提示框锚点时也会关闭。窗口缩放和滚动监听只在提示框打开期间启用。
+
 前端测试优先覆盖：
 
 - i18n key 和 HTML 支持属性。
 - 筛选、导出、快捷键、人工判断和 LLM 配置的纯 JS 行为。
 - `pyproject.toml` package data 与 HTML 静态引用一致。
 
-不再维护只检查页面静态版本号、CSS 选择器存在性或截图工具包装层的测试。
+测试断言应聚焦可观察行为与公开契约。
 
 ## 桌面与发布边界
 
@@ -129,9 +132,9 @@ flowchart LR
 ## 测试策略
 
 - 行为单测：`python -m unittest discover -s tests`
-- Python 语法：`python -m compileall -q culvia_app.py culvia tests tools`
-- 前端语法：`find web -name '*.js' -print0 | xargs -0 -n1 node --check`
-- 发布 gate：`python tools/formal_gate.py`
+- 格式、语法与隐私检查：`make lint`（共用 pre-commit 配置）
+- 前端语法：`make js-check`
+- 发布包验证：`make python-release` 及各平台发布命令
 - 桌面 readiness：`python tools/check_desktop_readiness.py --json`
 
 新增测试应证明真实行为或发布风险，不应只锁定实现痕迹。
