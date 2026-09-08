@@ -22,6 +22,7 @@ from culvia.curation import save_photo_mark
 from culvia.insight_store import AnalysisInsight
 from culvia.llm_runtime import llm_prompt_signature
 from culvia.photo_scan import build_file_id
+from culvia.schema import VERSIONED_LOCAL_MODEL_KEYS, stamp_model_result_version
 
 
 DEFAULT_COUNT = 12
@@ -145,6 +146,7 @@ def score_record(path: Path, *, index: int) -> dict[str, object]:
             "error": "",
             "recommendation_0_10": score_value(index, 1.1),
             "overall_0_10": score_value(index, 0.4),
+            "quality_0_10": score_value(index, 2.6),
             "composition_0_10": score_value(index, 0.2),
             "lighting_0_10": score_value(index, 0.8),
             "color_0_10": score_value(index, 1.3),
@@ -157,11 +159,16 @@ def score_record(path: Path, *, index: int) -> dict[str, object]:
             "cleanliness_0_10": score_value(index, 2.4),
             "clip_aesthetic_0_10": score_value(index, 1.2),
             "clip_iqa_overall_0_10": score_value(index, 1.7),
+            "clip_iqa_sharpness_0_10": score_value(index, 2.2),
+            "clip_iqa_exposure_0_10": score_value(index, 1.0),
+            "clip_iqa_cleanliness_0_10": score_value(index, 2.5),
             "llm_review_overall_0_10": score_value(index, 2.0),
             "llm_aesthetic_overall_0_10": score_value(index, 2.3),
             "llm_technical_overall_0_10": score_value(index, 1.4),
         }
     )
+    for model_key in VERSIONED_LOCAL_MODEL_KEYS:
+        record = stamp_model_result_version(record, model_key)
     return record
 
 
