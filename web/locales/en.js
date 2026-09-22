@@ -566,6 +566,7 @@
   "viewer.revealSupported": "Reveal in file manager",
   "viewer.revealUnsupported": "File reveal is unavailable in this environment",
   "viewer.thumbAlt": "Thumbnail",
+  "viewer.photoPosition": "{name}, photo {index} of {total}",
   "viewer.beforeCount": "{count} before",
   "viewer.afterCount": "{count} after",
   "score.notCalculated": "Not calculated",

@@ -488,7 +488,6 @@ window.CulviaSourcePanel = (() => {
       const folderAddInput = $("#folderAddInput");
       if (folderAddInput) folderAddInput.disabled = busy;
       $("#folderAddBtn").disabled = busy;
-      $("#clearFoldersBtn").disabled = busy || !foldersFromInput().length;
       const cacheInput = $("#cacheInput");
       if (cacheInput) cacheInput.disabled = busy;
       ["#pickFilesBtn", "#pickFolderBtn", "#fileInput", "#folderPicker"].forEach((selector) => {
@@ -504,6 +503,7 @@ window.CulviaSourcePanel = (() => {
       } else {
         renderSourceFolderList(foldersFromInput(), busy);
       }
+      $("#clearFoldersBtn").disabled = busy || !foldersFromInput().length;
       if (!sourceInputsDirty && document.activeElement !== $("#cacheInput")) {
         $("#cacheInput").value = state.source.cachePath || "";
       }

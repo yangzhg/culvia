@@ -566,6 +566,7 @@
   "viewer.revealSupported": "在文件管理器中定位",
   "viewer.revealUnsupported": "当前环境不支持定位文件",
   "viewer.thumbAlt": "缩略图",
+  "viewer.photoPosition": "{name}，第 {index} / {total} 张",
   "viewer.beforeCount": "{count} 张之前",
   "viewer.afterCount": "{count} 张之后",
   "score.notCalculated": "未计算",

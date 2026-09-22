@@ -54,6 +54,7 @@ flowchart LR
 - `culvia.web_context`：把 Starlette request 适配成 runtime config、state store、job service 和授权媒体路径。
 - `culvia.app_state`：保存当前结果、来源、筛选、网络、模型和任务状态。
 - `culvia.job_service`：管理评分任务、暂停/继续和并发保护。
+- `culvia.web_app` / `culvia.source_preview`：服务接收请求前恢复来源，将初始缓存行限制在当前目录，并通过共享任务服务预约异步预览。持久化目录选择（包括空列表）优先于运行时默认值。启动扫描复用评分和人工判断，不持久化默认目录或临时上传会话；已有任务和已就绪来源保持不变。
 - `culvia.scoring_runner`：编排来源解析、模型准备、评分进度和结果刷新。
 - `culvia.scoring`：本地模型、大模型评分、SQLite 读写和批处理评分统一入口。每张照片完成的模型阶段会先写入 checkpoint 再上报进度。取消或异常时，在任务结束前将已持久化的阶段发布回当前来源；尚未处理的照片保留缓存或未评分行。重试复用已保存的结果，写入失败的阶段不会显示为已完成。
 - `culvia.llm_review_runner`：检查评审身份和构造本地评分上下文前，先从 SQLite 更新当前来源的评分行。每次仅写入当前完成评审的照片，保留其他已保存的阶段及来源外的行；分数与匹配的评审详情均保存成功后，才发布该评审结果。

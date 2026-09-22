@@ -134,7 +134,7 @@ class FrontendViewerRenderTests(unittest.TestCase):
             """
         )
 
-    def test_viewer_renders_filmstrip_signals_and_score_details(self) -> None:
+    def assert_viewer_script_passes(self, body: str = "") -> None:
         state = {
             "app": {},
             "capabilities": {"revealInFileManager": True},
@@ -211,9 +211,20 @@ class FrontendViewerRenderTests(unittest.TestCase):
                 this.scrollWidth = 1000;
                 this.offsetLeft = 0;
                 this.offsetWidth = 100;
+                this.children = [];
+                this.listeners = {{}};
                 this._html = "";
               }}
-              set innerHTML(value) {{ this._html = String(value || ""); }}
+              set innerHTML(value) {{
+                if (this.children.includes(document.activeElement)) document.activeElement = document.body;
+                this._html = String(value || "");
+                this.children = [...this._html.matchAll(/<button class="(thumb[^\"]*)"([^>]+)>/g)].map((match) => {{
+                  const button = new FakeElement(".thumb");
+                  button.classList.add(...match[1].split(" ").filter(Boolean));
+                  button.dataset.index = match[2].match(/data-index="([^\"]+)"/)[1];
+                  return button;
+                }});
+              }}
               get innerHTML() {{ return this._html; }}
               set textContent(value) {{ this._text = String(value || ""); }}
               get textContent() {{ return this._text || ""; }}
@@ -227,17 +238,22 @@ class FrontendViewerRenderTests(unittest.TestCase):
               get value() {{ return this._value || ""; }}
               setAttribute(key, value) {{ this.attributes[key] = String(value); }}
               removeAttribute(key) {{ delete this.attributes[key]; }}
-              addEventListener() {{}}
+              addEventListener(type, callback) {{ this.listeners[type] = callback; }}
               appendChild() {{}}
               remove() {{}}
               scrollTo() {{}}
-              focus() {{}}
+              focus() {{ document.activeElement = this; }}
+              click() {{ this.listeners.click?.(); }}
+              contains(element) {{ return this.children.includes(element); }}
               getBoundingClientRect() {{ return {{ left: 0, top: 0, right: 100, bottom: 30, width: 100, height: 30 }}; }}
               querySelectorAll(selector) {{
-                if (selector === ".thumb" && this._html.includes('class="thumb')) return [new FakeElement(".thumb")];
+                if (selector === ".thumb") return this.children;
                 return [];
               }}
-              querySelector() {{ return null; }}
+              querySelector(selector) {{
+                if (selector === ".thumb.is-active") return this.children.find(child => child.classList.contains("is-active")) || null;
+                return null;
+              }}
             }}
             const elements = new Map();
             [
@@ -312,12 +328,90 @@ class FrontendViewerRenderTests(unittest.TestCase):
             if (!result.signalChips.includes("signal-chip")) throw new Error("score signals were not rendered");
             if (!result.scoreRows.includes("score-detail-panel")) throw new Error("score details were not rendered");
             if (!result.manualClass) throw new Error("manual status class was not applied");
+            {textwrap.dedent(body)}
             """
         )
 
         result = subprocess.run(["node", "-e", script], cwd=ROOT, text=True, capture_output=True, check=False)
 
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_viewer_renders_filmstrip_signals_and_score_details(self) -> None:
+        self.assert_viewer_script_passes()
+
+    def test_filmstrip_identifies_same_score_photos_and_their_manual_decisions(self) -> None:
+        self.assert_viewer_script_passes(
+            """
+            const assert = require("node:assert/strict");
+            const i18n = context.CulviaI18n;
+            const escape = context.CulviaUiHelpers.escapeHtml;
+            const sample = state.photos[0];
+            state.photos = [
+              { ...sample, path: '/photos/first/photo "A" & B.jpg', manual: { status: "hold", rating: 1, colorLabel: "purple" } },
+              { ...sample, path: '/photos/second/photo "A" & B.jpg', manual: { status: "pick", rating: 5, colorLabel: "red" } },
+              { ...sample, path: "", recommendationText: "暂无", overallText: "暂无", level: "未评分", manual: {} },
+            ];
+            for (const language of ["en", "zh-CN"]) {
+              i18n.setLanguage(language);
+              vm.runInContext(`appState = ${JSON.stringify(state)}; viewerPanel.setSelectedIndex(1); renderViewer();`, context);
+              const html = document.querySelector("#filmstrip").innerHTML;
+              const buttons = [...html.matchAll(/<button class="thumb[^"]*"([^>]+)>/g)].map(match => match[1]);
+              assert.equal(buttons.length, 3);
+              const labels = buttons.map(attributes => attributes.match(/aria-label="([^"]+)"/)[1]);
+              assert.equal(new Set(labels).size, 3, "same-score photos need distinguishable accessible names");
+              for (const index of [0, 1]) {
+                const position = language === "en" ? `photo ${index + 1} of 3` : `第 ${index + 1} / 3 张`;
+                assert.ok(labels[index].includes(escape('photo "A" & B.jpg')), labels[index]);
+                assert.ok(labels[index].includes(position), labels[index]);
+                assert.ok(labels[index].includes(i18n.t(index ? "manual.status.pick" : "manual.status.hold")), labels[index]);
+                assert.ok(labels[index].includes(i18n.t("manual.ratingStars", { count: index ? 5 : 1 })), labels[index]);
+                assert.ok(labels[index].includes(i18n.t(index ? "color.red" : "color.purple")), labels[index]);
+                assert.equal(buttons[index].match(/data-ui-tooltip="([^"]+)"/)[1], labels[index]);
+                assert.equal(buttons[index].includes('aria-current="true"'), index === 1);
+              }
+              assert.ok(labels[2].includes(i18n.t("gallery.photoFallback")), labels[2]);
+              assert.ok(labels[2].includes(i18n.t("manual.status.unreviewed")), labels[2]);
+              assert.ok(labels[2].includes(i18n.t("score.noData")), labels[2]);
+              assert.equal((html.match(/aria-current="true"/g) || []).length, 1);
+            }
+            """
+        )
+
+    def test_windowed_filmstrip_retains_overall_position_and_current_photo(self) -> None:
+        self.assert_viewer_script_passes(
+            """
+            const assert = require("node:assert/strict");
+            state.photos = Array.from({ length: 120 }, (_, index) => ({ ...state.photos[0], path: `/photos/photo-${index}.jpg` }));
+            vm.runInContext(`appState = ${JSON.stringify(state)}; viewerPanel.setSelectedIndex(100); renderViewer();`, context);
+            const html = document.querySelector("#filmstrip").innerHTML;
+            const buttons = [...html.matchAll(/<button class="thumb[^"]*"([^>]+)>/g)].map(match => match[1]);
+            assert.equal(buttons.length, 84);
+            const active = buttons.filter(attributes => attributes.includes('aria-current="true"'));
+            assert.equal(active.length, 1);
+            assert.ok(active[0].includes("photo-100.jpg"));
+            assert.ok(active[0].includes("photo 101 of 120"));
+            """
+        )
+
+    def test_keyboard_filmstrip_navigation_retains_focus_without_stealing_it(self) -> None:
+        self.assert_viewer_script_passes(
+            """
+            const assert = require("node:assert/strict");
+            const strip = document.querySelector("#filmstrip");
+            const second = strip.querySelectorAll(".thumb")[1];
+            second.focus();
+            second.click();
+            assert.equal(document.activeElement, strip.querySelector(".thumb.is-active"));
+            assert.equal(document.activeElement.dataset.index, "1");
+            vm.runInContext("viewerPanel.moveSelection(-1)", context);
+            assert.equal(document.activeElement, strip.querySelector(".thumb.is-active"));
+            assert.equal(document.activeElement.dataset.index, "0");
+            const otherControl = document.querySelector("#nextBtn");
+            otherControl.focus();
+            vm.runInContext("viewerPanel.moveSelection(1)", context);
+            assert.equal(document.activeElement, otherControl, "navigation outside the filmstrip must not move focus into it");
+            """
+        )
 
 
 if __name__ == "__main__":

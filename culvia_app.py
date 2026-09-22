@@ -183,6 +183,7 @@ from culvia.source_preview import (
     SourcePreviewStartError,
     run_source_preview_job as run_source_preview_job_with_dependencies,
     start_source_preview_job_action,
+    start_source_preview_on_startup,
 )
 from culvia.source_service import (
     SourceCacheDependencies,
@@ -2140,6 +2141,12 @@ def create_app(state_store: AppStateStore | None = None, runtime_config: Runtime
         config=config,
         state_store=app_state_store,
         job_service=APP_JOB_SERVICE if app_state_store is APP_STATE else None,
+        restore_source=lambda store, service: start_source_preview_on_startup(
+            store,
+            service,
+            dependencies=source_preview_dependencies(),
+            thread_factory=threading.Thread,
+        ),
         debug=False,
     )
     web_app.state.thumbnail_coordinator = ThumbnailGenerationCoordinator(

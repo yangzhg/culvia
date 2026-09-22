@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
 
 import pandas as pd
 
-from culvia.app_state import AppStateStore
+from culvia.app_state import AppStateStore, empty_job
 from culvia.job_service import ScoringJobService
 from culvia.job_text import exception_text, text_ref
 from culvia.source_requests import SourceRequest, source_request_from_payload
@@ -67,6 +68,10 @@ class SourcePreviewStartError(Exception):
         self.error_code = error_code
         self.message = message
         self.status_code = status_code
+
+
+class SourcePreviewThreadStartError(RuntimeError):
+    """The worker failed to start; the job state contains the failure details."""
 
 
 @dataclass(frozen=True)
@@ -148,6 +153,19 @@ def start_source_preview_job_action(
             daemon=True,
         )
         thread.start()
+    except Exception as exc:
+        failed_job = empty_job()
+        failed_job.update(
+            jobId=job_id,
+            kind="source_preview",
+            phase="error",
+            titleText=text_ref("jobText.scanFailed"),
+            detailText=text_ref("jobText.checkSourceOrCache"),
+            error=repr(exc),
+            errorText=exception_text(exc),
+        )
+        job_service.finish(job_id, restore_job=failed_job)
+        raise SourcePreviewThreadStartError(str(exc)) from exc
     except BaseException:
         job_service.finish(job_id)
         raise
@@ -160,6 +178,8 @@ def run_source_preview_job(
     state_store: AppStateStore,
     job_service: ScoringJobService,
     dependencies: SourcePreviewDependencies,
+    *,
+    persist_source_config: bool = True,
 ) -> None:
     job_service.bind_thread_job(job_id)
     try:
@@ -202,7 +222,8 @@ def run_source_preview_job(
             expected_media_revision=media_revision,
             expected_job_id=job_id,
         )
-        persist_source_preview_config(result, dependencies)
+        if persist_source_config:
+            persist_source_preview_config(result, dependencies)
         total = len(result.paths)
         job_service.update(
             running=False,
@@ -262,3 +283,39 @@ def apply_source_preview_state(
 
 def persist_source_preview_config(result: SourcePreviewResult, dependencies: SourcePreviewDependencies) -> None:
     dependencies.save_source_config(result.source_payload(), result.request.cache_path)
+
+
+def start_source_preview_on_startup(
+    state_store: AppStateStore,
+    job_service: ScoringJobService,
+    *,
+    dependencies: SourcePreviewDependencies,
+    thread_factory: ThreadFactory,
+) -> None:
+    with state_store.lock:
+        source = dict(state_store.data["source"])
+        preview = dict(state_store.data.get("sourcePreview") or {})
+        if source.get("mode") != "folders" or state_store.data["job"].get("running") or preview.get("ready"):
+            return
+        if not source.get("folders"):
+            state_store.update_nonmedia_state({"sourcePreview": {**preview, "total": 0, "ready": True}})
+            return
+
+    try:
+        start_source_preview_job_action(
+            source,
+            state_store,
+            job_service,
+            default_cache_path=dependencies.default_cache_path,
+            run_source_preview_job=partial(
+                run_source_preview_job,
+                dependencies=dependencies,
+                persist_source_config=False,
+            ),
+            thread_factory=thread_factory,
+        )
+    except SourcePreviewStartError as exc:
+        if exc.error_code != "jobAlreadyRunning":
+            raise
+    except SourcePreviewThreadStartError:
+        pass

@@ -153,6 +153,63 @@ def render_summary_scenarios() -> dict[str, dict[str, object]]:
     return json.loads(result.stdout)
 
 
+def render_initial_controls_scenarios() -> dict[str, object]:
+    script = textwrap.dedent(
+        """
+        const fs = require("fs");
+        const vm = require("vm");
+        const nodes = new Map();
+        const element = () => ({
+          value: "", dataset: {}, disabled: false, folders: [],
+          classList: { toggle() {} },
+          setAttribute() {}, removeAttribute() {},
+          querySelectorAll() { return this.folders.map(value => ({ value })); },
+          set innerHTML(value) {
+            this.folders = [...value.matchAll(/value="([^"]*)"\\s+data-folder-path/g)].map(match => match[1]);
+          },
+        });
+        const $ = (selector) => {
+          if (!nodes.has(selector)) nodes.set(selector, element());
+          return nodes.get(selector);
+        };
+        const context = { console, document: { activeElement: null } };
+        context.window = context;
+        vm.createContext(context);
+        vm.runInContext(fs.readFileSync("web/source_panel.js", "utf8"), context);
+        const state = {
+          source: { mode: "folders", folders: ["/photos/current"], cachePath: "/state/scores.sqlite" },
+          sourcePreview: { ready: false }, job: { running: false },
+        };
+        const panel = context.CulviaSourcePanel.create({
+          $, $$: () => [], t: key => key, escapeHtml: String,
+          iconMarkup: () => "", pathName: value => value,
+          setText: (selector, value) => { $(selector).textContent = value; },
+          getAppState: () => state,
+        });
+        panel.renderControls();
+        const restored = {
+          clearDisabled: $("#clearFoldersBtn").disabled,
+          folders: panel.foldersFromInput(),
+        };
+        state.job.running = true;
+        panel.renderControls();
+        const busy = { clearDisabled: $("#clearFoldersBtn").disabled };
+        state.job.running = false;
+        state.source.folders = [];
+        panel.renderControls();
+        const empty = {
+          clearDisabled: $("#clearFoldersBtn").disabled,
+          folders: panel.foldersFromInput(),
+        };
+        console.log(JSON.stringify({ restored, busy, empty }));
+        """
+    )
+    result = subprocess.run(["node", "-e", script], cwd=ROOT, text=True, capture_output=True, check=False)
+    if result.returncode:
+        raise AssertionError(result.stderr or result.stdout)
+    return json.loads(result.stdout)
+
+
 class FrontendSourcePanelTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -220,6 +277,15 @@ class FrontendSourcePanelTests(unittest.TestCase):
         self.assertNotIn("tabindex", summary["attributes"])
         self.assertNotIn("uiTooltip", summary["dataset"])
         self.assertNotIn("title", summary["attributes"])
+
+    def test_first_render_uses_restored_folders_for_clear_button_state(self) -> None:
+        scenarios = render_initial_controls_scenarios()
+
+        self.assertEqual(scenarios["restored"]["folders"], ["/photos/current"])
+        self.assertFalse(scenarios["restored"]["clearDisabled"])
+        self.assertTrue(scenarios["busy"]["clearDisabled"])
+        self.assertEqual(scenarios["empty"]["folders"], [])
+        self.assertTrue(scenarios["empty"]["clearDisabled"])
 
 
 if __name__ == "__main__":

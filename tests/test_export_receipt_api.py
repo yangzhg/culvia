@@ -41,6 +41,7 @@ class ExportReceiptApiTests(unittest.TestCase):
                 default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
             )
         )
+        store.data["sourcePreview"].update({"ready": True, "total": len(rows)})
         config = culvia_app.current_runtime_config().with_paths(
             default_cache_path=cache_path,
             upload_cache_dir=root / "uploads",

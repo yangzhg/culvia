@@ -2,8 +2,8 @@
 // the import order below is the only place load order is declared.
 
 // Locale resources and i18n runtime.
-import "./locales/zh-CN.js?v=20260922-delivery-counts";
-import "./locales/en.js?v=20260922-delivery-counts";
+import "./locales/zh-CN.js?v=20260922-source-review";
+import "./locales/en.js?v=20260922-source-review";
 import "./i18n_messages.js";
 import "./i18n.js?v=20260922-delivery-counts";
 
@@ -39,8 +39,8 @@ import "./distribution_panel.js";
 import "./export_panel.js?v=20260922-delivery-counts";
 import "./llm_config_panel.js";
 import "./gallery_panel.js?v=20260922-mark-identity";
-import "./viewer_panel.js?v=20260922-mark-identity";
-import "./source_panel.js?v=20260908-responsive-readability";
+import "./viewer_panel.js?v=20260922-source-review";
+import "./source_panel.js?v=20260922-source-review";
 import "./filter_panel.js?v=20260908-responsive-readability";
 import "./viewer_inspector.js?v=20260922-review-readability";
 

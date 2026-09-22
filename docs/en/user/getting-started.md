@@ -44,6 +44,8 @@ In folder mode, the source editor is a list of folder rows. You can add paths on
 
 In drop mode, dropping a folder recursively imports supported images from that folder as temporary uploads. Folder source choices are restored on the next app start when the current score library is a SQLite file.
 
+On restart, Culvia limits the initial cached photos to the restored folders, then scans those folders in the background to include new and unscored photos. Existing scores and manual decisions are reused; cached photos from other folders stay in the library without entering the current source. An explicitly cleared folder list stays empty on restart. Refreshing the page keeps temporary uploads while the backend is running; restarting the backend restores the folder choice, not the temporary upload session.
+
 The source summary separates folder names from folder and photo counts. Hover over it or focus it with the keyboard to read the complete paths; use the source editor to copy a path.
 
 ## Manual Decisions
@@ -51,11 +53,13 @@ The source summary separates folder names from folder and photo counts. Hover ov
 Manual decisions are the final culling layer. Model and LLM scores help sort and explain, but they do not override your pick/hold/reject decisions.
 
 - `Pick`: selected for delivery or later editing.
-- `Hold`: worth another pass.
+- `Review`: worth another pass.
 - `Reject`: excluded from the final set.
 - Star ratings and color labels can be used for later Lightroom/Capture One style workflows.
 
 During rapid culling, ratings and marks stay attached to the photo you acted on. You can keep browsing while a decision is saved; finishing the save keeps your current place in the review.
+
+Hover over a filmstrip thumbnail or focus it with the keyboard to read its filename, position, score, and manual decision, including any star rating or color label. Assistive technology also identifies the current photo. Position numbers refer to the displayed photo list, even when only a window of thumbnails is rendered.
 
 On desktop-sized windows, manual decisions sit beside the photo. In compact layouts, they follow the photo, ahead of the filmstrip and detailed scores. Distribution views wrap into rows so every view remains available without horizontal scrolling.
 

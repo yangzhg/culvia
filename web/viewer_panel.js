@@ -250,9 +250,18 @@ window.CulviaViewerPanel = (() => {
               item.recommendationText || item.overallText,
               t("score.noData"),
             );
-            const thumbHint = `${itemLevel} · ${itemScoreText}`;
+            const name = item.path ? pathName(item.path) : t("gallery.photoFallback");
+            const rating = Number(item.manual?.rating || 0);
+            const thumbHint = [
+              t("viewer.photoPosition", { name, index: index + 1, total: photos.length }),
+              itemLevel,
+              itemScoreText,
+              manualStatusLabel(item.manual?.status),
+              rating > 0 ? t("manual.ratingStars", { count: rating }) : "",
+              item.manual?.colorLabel ? colorLabelMeta(item.manual.colorLabel).label : "",
+            ].filter(Boolean).join(" · ");
             return `
-              <button class="thumb ${index === activeIndex ? "is-active" : ""}" type="button" data-index="${index}" aria-label="${escapeHtml(thumbHint)}" data-ui-tooltip="${escapeHtml(thumbHint)}">
+              <button class="thumb ${index === activeIndex ? "is-active" : ""}" type="button" data-index="${index}" ${index === activeIndex ? 'aria-current="true"' : ""} aria-label="${escapeHtml(thumbHint)}" data-ui-tooltip="${escapeHtml(thumbHint)}">
                 <img src="${item.thumb}" alt="${escapeHtml(t("viewer.thumbAlt"))}" loading="lazy" />
                 <span>${escapeHtml(itemScoreText)}</span>
                 ${manualBadgeMarkup(item.manual, true)}
@@ -264,8 +273,7 @@ window.CulviaViewerPanel = (() => {
       `;
       filmstrip.querySelectorAll(".thumb").forEach((button) => {
         button.addEventListener("click", () => {
-          setSelectedIndex(Number(button.dataset.index));
-          render();
+          selectAndRender(Number(button.dataset.index));
         });
       });
       syncActiveThumbnail(filmstrip);
@@ -439,13 +447,20 @@ window.CulviaViewerPanel = (() => {
       renderViewerInspector(photo);
     }
 
+    function selectAndRender(index) {
+      const filmstrip = $("#filmstrip");
+      const restoreFilmstripFocus = filmstrip?.contains(document.activeElement);
+      setSelectedIndex(index);
+      render();
+      if (restoreFilmstripFocus) filmstrip.querySelector(".thumb.is-active")?.focus({ preventScroll: true });
+    }
+
     function moveSelection(delta) {
       const photos = getAppState()?.photos || [];
       if (!photos.length) return;
       const nextIndex = cullingFlow.nextIndexByDelta(photos, selectedIndex, delta);
       if (nextIndex === selectedIndex) return;
-      setSelectedIndex(nextIndex);
-      render();
+      selectAndRender(nextIndex);
     }
 
     function handleShortcut(event) {
