@@ -271,6 +271,64 @@ class LitePackageRuntimeTests(unittest.TestCase):
                         smoke.main([*args, "--output", str(path)])
             self.assertEqual(artifact.read_bytes(), b"package")
 
+    def test_json_stdout_is_lossless_on_cp1252_and_evidence_stays_utf8(self) -> None:
+        for ok in (True, False):
+            with self.subTest(ok=ok), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "验收📷.json"
+                payload = {"ok": ok, "checks": [{"name": "运行环境", "ok": ok, "detail": "当前会话 📷"}]}
+                buffer = io.BytesIO()
+                with io.TextIOWrapper(buffer, encoding="cp1252", errors="strict") as stdout:
+                    with patch.object(smoke, "verify_package", return_value=payload), redirect_stdout(stdout):
+                        returncode = smoke.main(
+                            [
+                                "--windows-zip",
+                                str(root / "candidate.zip"),
+                                "--wheel",
+                                str(root / "candidate.whl"),
+                                "--python",
+                                sys.executable,
+                                "--output",
+                                str(output),
+                                "--json",
+                            ]
+                        )
+                    stdout.flush()
+                    console = buffer.getvalue().decode("cp1252")
+                self.assertEqual(returncode, 0 if ok else 1)
+                self.assertEqual(json.loads(console), payload)
+                evidence = output.read_bytes()
+                self.assertIn("当前会话 📷".encode("utf-8"), evidence)
+                self.assertEqual(json.loads(evidence.decode("utf-8")), payload)
+
+    def test_summary_stdout_escapes_unrepresentable_report_path_on_cp1252(self) -> None:
+        for ok in (True, False):
+            with self.subTest(ok=ok), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "验收📷.json"
+                payload = {"ok": ok, "checks": [{"name": "运行环境", "ok": ok, "detail": "当前会话 📷"}]}
+                buffer = io.BytesIO()
+                with io.TextIOWrapper(buffer, encoding="cp1252", errors="strict") as stdout:
+                    with patch.object(smoke, "verify_package", return_value=payload), redirect_stdout(stdout):
+                        returncode = smoke.main(
+                            [
+                                "--windows-zip",
+                                str(root / "candidate.zip"),
+                                "--wheel",
+                                str(root / "candidate.whl"),
+                                "--python",
+                                sys.executable,
+                                "--output",
+                                str(output),
+                            ]
+                        )
+                    stdout.flush()
+                    console = buffer.getvalue().decode("cp1252")
+                self.assertEqual(returncode, 0 if ok else 1)
+                escaped_path = str(output).encode("cp1252", errors="backslashreplace").decode("cp1252")
+                self.assertEqual(console.strip(), f"{'OK' if ok else 'FAIL'} Lite package runtime: {escaped_path}")
+                self.assertEqual(json.loads(output.read_text(encoding="utf-8")), payload)
+
     def test_evidence_output_hardlink_cannot_truncate_wheel(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

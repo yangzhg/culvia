@@ -346,7 +346,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-    print(text if args.json else f"{'OK' if payload['ok'] else 'FAIL'} Lite package runtime: {output}")
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=True, indent=2))
+    else:
+        summary = f"{'OK' if payload['ok'] else 'FAIL'} Lite package runtime: {output}"
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        print(summary.encode(encoding, errors="backslashreplace").decode(encoding))
     return 0 if payload["ok"] else 1
 
 

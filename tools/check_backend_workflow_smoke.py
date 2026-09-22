@@ -10,6 +10,7 @@ import tempfile
 import time
 import urllib.request
 from collections import deque
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -147,7 +148,7 @@ def llm_config_smoke_payload(cache_path: str) -> dict[str, Any]:
 
 
 def read_persisted_llm_rows(cache_path: Path) -> dict[str, str]:
-    with sqlite3.connect(cache_path) as conn:
+    with closing(sqlite3.connect(cache_path)) as conn:
         rows = conn.execute('SELECT "key", "value" FROM photo_app_config WHERE "key" LIKE "llm_%"').fetchall()
     return {str(key): str(value) for key, value in rows}
 
@@ -282,7 +283,7 @@ def sqlite_basic_technical_row(cache_path: Path) -> dict[str, Any]:
         "contrast_0_10",
         "cleanliness_0_10",
     )
-    with sqlite3.connect(cache_path) as conn:
+    with closing(sqlite3.connect(cache_path)) as conn:
         quoted_columns = ", ".join(f'"{column}"' for column in columns)
         row = conn.execute(f"SELECT {quoted_columns} FROM culvia_scores LIMIT 1").fetchone()
         count = conn.execute("SELECT COUNT(*) FROM culvia_scores").fetchone()[0]
