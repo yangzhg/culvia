@@ -16,6 +16,7 @@ const context = {
   navigator: { language: "zh-CN" },
   localStorage: { getItem: () => "zh-CN", setItem: () => {} },
   CustomEvent: function CustomEvent(name, init) { return { name, detail: init.detail }; },
+  dispatchEvent: () => {},
   document: {
     title: "",
     readyState: "loading",
@@ -239,6 +240,182 @@ class FrontendCommandViewTests(unittest.TestCase):
               job: { kind: "llm_review", running: true, title: "旧版纯文本标题" },
             });
             if (legacy.title !== "旧版纯文本标题") throw new Error("legacy plain title should pass through");
+            """
+        )
+
+    def test_mutation_and_maintenance_phases_have_localized_task_semantics(self) -> None:
+        self.assert_js_passes(
+            """
+            const cases = [
+              ["mutation", "exporting_photos", "正在导出", "正在导出入选照片", "Exporting", "Exporting picked photos"],
+              ["mutation", "checking_export", "正在检查导出", "正在检查导出文件与目标目录", "Checking export", "Checking export files and destination"],
+              ["mutation", "updating_curation", "正在保存人工判断", "正在更新照片判断", "Saving decisions", "Updating photo decisions"],
+              ["mutation", "loading_source", "正在载入来源", "正在载入照片来源", "Loading source", "Loading photo source"],
+              ["mutation", "uploading_photos", "正在导入", "正在导入上传照片", "Importing", "Importing uploaded photos"],
+              ["mutation", "updating_models", "正在更新模型选择", "正在保存评分模型选择", "Updating model selection", "Saving scoring model selection"],
+              ["mutation", "updating_network", "正在保存网络设置", "正在更新网络设置", "Saving network settings", "Updating network settings"],
+              ["mutation", "updating_llm_config", "正在保存评审设置", "正在更新大模型评审设置", "Saving review settings", "Updating LLM review settings"],
+              ["maintenance", "clearing_history", "正在清理评分记录", "正在清空本地评分记录", "Clearing score records", "Clearing local scoring records"],
+              ["maintenance", "clearing_models", "正在清理模型", "正在清理已下载模型", "Clearing models", "Clearing downloaded models"],
+              ["maintenance", "clearing_local_data", "正在重置本机数据", "正在清理本机记录与缓存", "Resetting local data", "Clearing local records and caches"],
+            ];
+            for (const language of ["zh-CN", "en"]) {
+              context.CulviaI18n.setLanguage(language);
+              for (const [kind, phase, zhState, zhTitle, enState, enTitle] of cases) {
+                const result = view.commandViewState({ job: {
+                  kind, phase, running: true, paused: true,
+                  titleText: { key: "jobText.startingBackgroundTask" },
+                  detailText: { key: "jobText.startingBackgroundTask" },
+                  modelProgress: { progress: 0.9, label: "old model task" },
+                  currentFile: "old-photo.jpg",
+                } });
+                const state = language === "en" ? enState : zhState;
+                const title = language === "en" ? enTitle : zhTitle;
+                if (result.state !== state || result.title !== title) {
+                  throw new Error(`${language} ${phase} used the wrong task: ${result.state} / ${result.title}`);
+                }
+                if (!result.detail || result.detail.startsWith("command.") || result.detail === context.CulviaI18n.t("jobText.startingBackgroundTask")) {
+                  throw new Error(`${phase} needs its own localized explanation`);
+                }
+                if (result.pause.visible || result.cancel.visible || !result.pause.disabled || !result.cancel.disabled) {
+                  throw new Error(`${phase} exposes unsupported task controls`);
+                }
+                if (result.currentPhoto.visible || result.progress) throw new Error(`${phase} reused scoring progress`);
+                const plan = view.commandDomPlan(result);
+                if (!plan.buttons.pause.hidden || !plan.buttons.cancel.hidden) throw new Error("the rendered controls must be hidden");
+              }
+            }
+            """
+        )
+
+    def test_export_progress_only_uses_a_running_receipt_for_the_export_phase(self) -> None:
+        self.assert_js_passes(
+            """
+            const job = { kind: "mutation", phase: "exporting_photos", running: true, progress: 0.9 };
+            const exportReceipt = { operationId: "current-export", status: "running", processed: 5, total: 20 };
+            const active = view.commandViewState({ job, exportReceipt });
+            if (active.state !== "正在导出" || active.progress?.width !== "25%" || active.progress?.detail !== "已处理 5 / 20 张") {
+              throw new Error(`export receipt progress was not used: ${JSON.stringify(active.progress)}`);
+            }
+            for (const status of ["completed", "failed", "interrupted", "unknown"]) {
+              if (view.commandViewState({ job, exportReceipt: { ...exportReceipt, status } }).progress) {
+                throw new Error(`a ${status} receipt cannot supply current export progress`);
+              }
+            }
+            for (const phase of ["checking_export", "updating_curation"]) {
+              if (view.commandViewState({ job: { ...job, phase }, exportReceipt }).progress) {
+                throw new Error("export progress leaked into another operation");
+              }
+            }
+            for (const invalid of [{ total: 0 }, { total: "bad" }, { processed: -1 }, { processed: 30 }]) {
+              if (view.commandViewState({ job, exportReceipt: { ...exportReceipt, ...invalid } }).progress) {
+                throw new Error("invalid counters must not invent progress");
+              }
+            }
+            context.CulviaI18n.setLanguage("en");
+            const english = view.commandViewState({ job, exportReceipt });
+            if (english.progress.detail !== "5 of 20 processed" || english.title !== "Exporting picked photos") {
+              throw new Error("export progress must update when the language changes");
+            }
+            """
+        )
+
+    def test_unknown_jobs_are_conservative_and_controls_follow_supported_kinds(self) -> None:
+        self.assert_js_passes(
+            """
+            for (const kind of ["future_task", "mutation", "maintenance"]) {
+              const unknown = view.commandViewState({ job: {
+                kind, running: true, phase: "cancelling", paused: true,
+                titleText: { key: "jobText.scoring" }, currentFile: "old-photo.jpg",
+                modelProgress: { progress: 0.5 },
+              } });
+              if (unknown.pause.visible || unknown.cancel.visible || unknown.currentPhoto.visible || unknown.progress) {
+                throw new Error(`${kind} acquired scoring controls or progress`);
+              }
+              if (unknown.title.includes("评分") || unknown.state.includes("取消") || unknown.state.includes("暂停")) {
+                throw new Error(`${kind} acquired unsupported task semantics`);
+              }
+              if (!unknown.mainScore.disabled || !unknown.llmReview.disabled) throw new Error("a running task must block new work");
+            }
+            for (const kind of [undefined, "", "scoring"]) {
+              const scoring = view.commandViewState({ job: { kind, running: true, phase: "scoring" } });
+              if (!scoring.pause.visible || !scoring.cancel.visible || scoring.state !== "正在评分") {
+                throw new Error("explicit and legacy scoring must retain controls");
+              }
+            }
+            const llm = view.commandViewState({ job: { kind: "llm_review", running: true, phase: "cancelling" } });
+            if (llm.pause.visible || !llm.cancel.visible || !llm.cancel.disabled || llm.title !== "正在取消大模型评审") {
+              throw new Error("LLM cancellation must not claim to cancel scoring or offer pause");
+            }
+            const preview = view.commandViewState({ job: { kind: "source_preview", running: true } });
+            if (preview.pause.visible || preview.cancel.visible) throw new Error("source preview has no cancellation controls");
+            """
+        )
+
+    def test_app_render_keeps_cancelling_controls_disabled_and_uses_current_receipt(self) -> None:
+        self.assert_js_passes(
+            """
+            const elements = new Map();
+            function element(selector) {
+              if (!elements.has(selector)) {
+                const classes = new Set();
+                elements.set(selector, {
+                  classList: {
+                    add: (name) => classes.add(name),
+                    toggle: (name, force) => force ? classes.add(name) : classes.delete(name),
+                    contains: (name) => classes.has(name),
+                  },
+                  style: {}, removeAttribute: () => {}, textContent: "", innerHTML: "",
+                });
+              }
+              return elements.get(selector);
+            }
+            Object.assign(context, {
+              $: element,
+              appState: { model: {}, summary: {}, llm: { configured: true } },
+              commandNotice: null,
+              commandView: view,
+              displayNetworkLabel: () => "",
+              escapeHtml: String,
+              hasSelectedSource: () => true,
+              llmConfigPanel: { llmModelsLoading: () => false },
+              setButtonLabel: (button, icon, label) => { button.textContent = label; },
+              setText: (selector, text) => { element(selector).textContent = text; },
+              setTextWithHint: (selector, text) => { element(selector).textContent = text; },
+            });
+            const appSource = fs.readFileSync("web/app.js", "utf8");
+            const jobHelpers = appSource.slice(appSource.indexOf("function isScoringJob("), appSource.indexOf("function matchingSourcePreview("));
+            const commandRenderers = appSource.slice(appSource.indexOf("function applyCommandButtonPlan("), appSource.indexOf("function renderStats("));
+            vm.runInContext(jobHelpers + commandRenderers, context);
+            function renderJob(job) {
+              context.appState.job = job;
+              vm.runInContext("renderCommand(appState.model, appState.job, appState.summary); renderProgress(appState.job);", context);
+            }
+            const pause = element("#pauseJobBtn");
+            const cancel = element("#cancelJobBtn");
+            renderJob({ kind: "scoring", running: true, phase: "cancelling" });
+            if (pause.classList.contains("is-hidden") || !pause.disabled || !cancel.disabled) {
+              throw new Error("the complete render chain re-enabled a cancelling scoring control");
+            }
+            renderJob({ kind: "scoring", running: true, phase: "scoring" });
+            if (pause.disabled || cancel.disabled) throw new Error("active scoring must keep supported controls");
+            renderJob({ kind: "llm_review", running: true, phase: "cancelling" });
+            if (!pause.classList.contains("is-hidden") || !pause.disabled || cancel.classList.contains("is-hidden") || !cancel.disabled) {
+              throw new Error("rendered LLM controls do not match its cancellation capabilities");
+            }
+            context.appState.exportReceipt = { status: "running", processed: 2, total: 8 };
+            renderJob({ kind: "mutation", running: true, phase: "exporting_photos" });
+            if (!pause.classList.contains("is-hidden") || !cancel.classList.contains("is-hidden") || !pause.disabled || !cancel.disabled) {
+              throw new Error("export exposes an unsupported rendered control");
+            }
+            if (element("#commandProgress").classList.contains("is-hidden") || element("#commandProgressBar").style.width !== "25%") {
+              throw new Error("renderCommand did not pass the running receipt through to export progress");
+            }
+            context.appState.exportReceiptError = { errorCode: "exportReceiptStorageFailed" };
+            renderJob({ kind: "mutation", running: true, phase: "exporting_photos" });
+            if (!element("#commandProgress").classList.contains("is-hidden")) {
+              throw new Error("a receipt read error must not display retained progress as current");
+            }
             """
         )
 

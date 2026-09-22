@@ -2,8 +2,8 @@
 // the import order below is the only place load order is declared.
 
 // Locale resources and i18n runtime.
-import "./locales/zh-CN.js?v=20260922-export-receipts";
-import "./locales/en.js?v=20260922-export-receipts";
+import "./locales/zh-CN.js?v=20260922-task-and-delivery";
+import "./locales/en.js?v=20260922-task-and-delivery";
 import "./i18n_messages.js";
 import "./i18n.js";
 
@@ -18,7 +18,7 @@ import "./manual_status.js";
 
 // View factories.
 import "./llm_config_view.js?v=20260812-responsive-nav";
-import "./command_view.js?v=20260904-full-filter-scope";
+import "./command_view.js?v=20260922-task-and-delivery";
 import "./export_preflight.js";
 import "./export_preflight_state.js";
 import "./export_result_data.js?v=20260922-export-receipts";
@@ -45,4 +45,4 @@ import "./filter_panel.js?v=20260908-responsive-readability";
 import "./viewer_inspector.js";
 
 // Orchestrator: wires state, rendering, and events together.
-import "./app.js?v=20260922-export-receipts";
+import "./app.js?v=20260922-task-and-delivery";

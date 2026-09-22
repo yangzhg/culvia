@@ -441,6 +441,12 @@
     justify-content: flex-start;
   }
 
+  .export-result-action {
+    min-height: 44px;
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
   .distribution-head {
     flex-direction: column;
     padding: 18px;

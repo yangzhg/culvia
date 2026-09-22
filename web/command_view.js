@@ -1,4 +1,22 @@
 window.CulviaCommandView = (() => {
+  const TASK_PHASES = {
+    mutation: {
+      exporting_photos: "export",
+      checking_export: "exportCheck",
+      updating_curation: "curation",
+      loading_source: "source",
+      uploading_photos: "upload",
+      updating_models: "models",
+      updating_network: "network",
+      updating_llm_config: "llmConfig",
+    },
+    maintenance: {
+      clearing_history: "clearScores",
+      clearing_models: "clearModels",
+      clearing_local_data: "resetData",
+    },
+  };
+
   function t(key, params = {}) {
     const api = window.CulviaI18n;
     return api?.t ? api.t(key, params) : key;
@@ -63,6 +81,28 @@ window.CulviaCommandView = (() => {
     };
   }
 
+  function backgroundTaskView(job) {
+    const fallback = job?.kind === "mutation" ? "mutation" : job?.kind === "maintenance" ? "maintenance" : "background";
+    const name = TASK_PHASES[job?.kind]?.[job?.phase] || fallback;
+    return {
+      state: t(`command.task.${name}.state`),
+      title: t(`command.task.${name}.title`),
+      detail: t(`command.task.${name}.detail`),
+    };
+  }
+
+  function exportProgress(job, receipt, title) {
+    if (job?.kind !== "mutation" || job?.phase !== "exporting_photos" || receipt?.status !== "running") return null;
+    const processed = Number(receipt.processed);
+    const total = Number(receipt.total);
+    if (!Number.isFinite(processed) || !Number.isFinite(total) || total <= 0 || processed < 0 || processed > total) return null;
+    return {
+      label: title,
+      detail: t("export.resultProgress", { processed, total }),
+      value: processed / total,
+    };
+  }
+
   function commandViewState({
     commandNotice = null,
     hasResults = false,
@@ -72,15 +112,18 @@ window.CulviaCommandView = (() => {
     sourceReady = false,
     summary = {},
     llmConfigured = false,
+    exportReceipt = null,
   } = {}) {
     const running = Boolean(job?.running);
     const sourcePreviewRunning = running && job?.kind === "source_preview";
     const llmReviewRunning = running && job?.kind === "llm_review";
-    const scoringRunning = running && !sourcePreviewRunning && !llmReviewRunning;
-    const modelProgress = job?.modelProgress;
-    const paused = isPaused(job);
-    const cancelling = job?.phase === "cancelling";
-    const loadingModel = !sourcePreviewRunning && job?.phase === "loading_model";
+    const scoringJob = !job?.kind || job.kind === "scoring";
+    const scoringRunning = running && scoringJob;
+    const cancellableRunning = scoringRunning || llmReviewRunning;
+    const modelProgress = scoringRunning ? job?.modelProgress : null;
+    const paused = scoringRunning && isPaused(job);
+    const cancelling = cancellableRunning && job?.phase === "cancelling";
+    const loadingModel = scoringRunning && job?.phase === "loading_model";
     const resolvedNetworkText = networkText || t("network.directConnection");
     let dotTone = model?.tone || "";
     let state = resolveTextRef(model?.labelText, String(model?.label || "")) || t("command.state");
@@ -94,13 +137,18 @@ window.CulviaCommandView = (() => {
 
     if (running) {
       dotTone = "partial";
-      if (sourcePreviewRunning) {
+      if (!scoringRunning && !llmReviewRunning && !sourcePreviewRunning) {
+        const task = backgroundTaskView(job);
+        state = task.state;
+        title = task.title;
+        detail = task.detail;
+      } else if (sourcePreviewRunning) {
         state = t("command.scanningSource");
         title = jobText(job, "title") || t("command.scanningSourceTitle");
         detail = jobText(job, "detail") || t("command.scanningSourceDetail");
       } else if (cancelling) {
         state = t("command.cancellingState");
-        title = t("command.cancellingTitle");
+        title = t(llmReviewRunning ? "command.cancellingLlmTitle" : "command.cancellingTitle");
         detail = jobText(job, "detail") || t("command.cancellingDetail");
       } else if (llmReviewRunning) {
         state = t("command.llmReview");
@@ -123,16 +171,18 @@ window.CulviaCommandView = (() => {
         title = t("command.scoringTitle");
         detail = jobText(job, "detail") || t("command.waitPlease");
       }
-      progress = {
-        detail: jobText(modelProgress, "detail") || jobText(job, "detail"),
-        label: jobText(modelProgress, "label") || jobText(job, "title") || t("command.processing"),
-        value: modelProgress?.progress ?? (loadingModel ? 0.96 : job.progress ?? 0),
-      };
+      progress = scoringRunning || llmReviewRunning || sourcePreviewRunning
+        ? {
+          detail: jobText(modelProgress, "detail") || jobText(job, "detail"),
+          label: jobText(modelProgress, "label") || jobText(job, "title") || t("command.processing"),
+          value: modelProgress?.progress ?? (loadingModel ? 0.96 : job.progress ?? 0),
+        }
+        : exportProgress(job, exportReceipt, title);
     } else if (job?.phase === "error") {
       dotTone = "danger";
       state = t("command.needsAction");
-      title = t("command.incomplete");
-      detail = jobText(job, "error") || jobText(job, "detail") || t("command.retryDetail");
+      title = t(scoringJob ? "command.incomplete" : "command.taskIncomplete");
+      detail = jobText(job, "error") || jobText(job, "detail") || t(scoringJob ? "command.retryDetail" : "command.taskRetryDetail");
     } else if ((summary?.scored || 0) > 0) {
       dotTone = "ready";
       state = t("command.resultsReady");
@@ -156,7 +206,7 @@ window.CulviaCommandView = (() => {
     const noticeAction = !running && !noticeLoading ? commandNotice?.action : null;
     return {
       compact: !running && Boolean(hasResults),
-      currentPhoto: currentPhotoView(job, { running, paused, modelProgress }),
+      currentPhoto: currentPhotoView(job, { running: scoringRunning || llmReviewRunning, paused, modelProgress }),
       detail,
       dotTone,
       mainScore: {
@@ -177,16 +227,16 @@ window.CulviaCommandView = (() => {
         visible: Boolean(noticeAction),
       },
       pause: {
-        disabled: noticeLoading || cancelling,
+        disabled: !scoringRunning || noticeLoading || cancelling,
         icon: paused ? "play" : "pause",
         label: paused ? t("command.continue") : t("command.pause"),
         visible: scoringRunning,
       },
       cancel: {
-        disabled: noticeLoading || cancelling,
+        disabled: !cancellableRunning || noticeLoading || cancelling,
         icon: "x",
         label: cancelling ? t("command.cancellingButton") : t("command.cancel"),
-        visible: running && !sourcePreviewRunning,
+        visible: cancellableRunning,
       },
       progress: progressView(progress),
       running,

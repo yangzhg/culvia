@@ -921,6 +921,7 @@ function renderCommand(model, job, summary) {
   const hasResults = (summary?.scored || 0) > 0 || (appState?.photos || []).length > 0;
   const viewState = commandView.commandViewState({
     commandNotice,
+    exportReceipt: appState?.exportReceiptError ? null : appState?.exportReceipt,
     hasResults,
     job,
     model,
@@ -953,7 +954,7 @@ function renderProgress(job) {
   $("#clearLocalDataBtn").disabled = running || Boolean(commandNotice?.loading);
   $("#clearHistoryBtn").disabled = running || Boolean(commandNotice?.loading);
   $("#clearModelBtn").disabled = running || Boolean(commandNotice?.loading);
-  $("#pauseJobBtn").disabled = !scoring || Boolean(commandNotice?.loading);
+  $("#pauseJobBtn").disabled = !scoring || job?.phase === "cancelling" || Boolean(commandNotice?.loading);
   $("#cancelJobBtn").disabled =
     !isCancellableJob(job) || appState.job?.phase === "cancelling" || Boolean(commandNotice?.loading);
   $("#editLlmConfigBtn").disabled = running || Boolean(commandNotice?.loading);
@@ -1534,11 +1535,11 @@ async function loadState(options = {}) {
   const pending = (async () => {
     const sourceSnapshot = sourcePanel.dirty() ? sourceInputSnapshot() : null;
     appState = await getJson("/api/state");
+    exportPanel.syncReceiptFromState({ expectedReceiptToken, stateLoaded: true });
     await filterPanel.restoreSavedFiltersIfNeeded();
     if (sourceSnapshot) applySourceInputSnapshot(sourceSnapshot);
     filterPanel.persistCurrentFilters();
     viewerPanel.ensureSelectedIndex();
-    exportPanel.syncReceiptFromState({ expectedReceiptToken, stateLoaded: true });
     render();
     sourcePanel.resumePendingPreviewIfReady();
     syncPollTimer();

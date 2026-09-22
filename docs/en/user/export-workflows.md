@@ -87,8 +87,8 @@ Current reason types:
 
 - Files are created exclusively. Existing files and symbolic links cause automatic renaming, including names taken by another process after preflight.
 - If a copy fails, Culvia attempts to remove its incomplete output after checking that the destination still refers to the file it created. Files replaced by another process are left alone.
-- During copying, the export button shows progress and prevents duplicate clicks. Destination changes and conflicting writes remain blocked, while the backend can still answer state and browsing requests.
-- Refreshing does not cancel an active copy while the backend remains alive. The export page restores the latest delivery receipt and its destination, including progress and confirmed per-file results. A destination chosen manually in the current page is not replaced by an older receipt.
+- During copying, the task bar identifies the export and shows how many files have been processed. The export button prevents duplicate clicks. Destination changes and conflicting writes remain blocked, while the backend can still answer state and browsing requests.
+- Refreshing does not cancel an active copy while the backend remains alive. The export page restores the latest delivery receipt and its destination, including progress and confirmed per-file results. This also works on the first page load after restarting the backend when saved filters are restored. A destination chosen manually in the current page is not replaced by an older receipt.
 
 This is not an all-or-nothing delivery transaction: successful files remain when other files fail. Forced termination or power loss can leave incomplete files; inspect the destination before retrying.
 
