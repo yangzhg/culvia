@@ -56,6 +56,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      lite_matrix: ${{ steps.matrix.outputs.lite_matrix }}
+      validate_lite: ${{ steps.matrix.outputs.validate_lite }}
       upload_artifacts: ${{ steps.matrix.outputs.upload_artifacts }}
       publish_release: ${{ steps.matrix.outputs.publish_release }}
       release_ref: ${{ steps.matrix.outputs.release_ref }}
@@ -136,6 +138,7 @@ jobs:
                   "platform": "windows",
                   "profile": "full",
                   "os": "windows-latest",
+                  "arch": "x64",
                   "artifact_name": "culvia-windows-x64",
                   "artifact_path": "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip",
                   "checksum_path": "dist/windows/culvia-*-windows-x86_64-pc-windows-msvc.zip.sha256",
@@ -146,6 +149,7 @@ jobs:
                   "platform": "windows",
                   "profile": "lite",
                   "os": "windows-latest",
+                  "arch": "x64",
                   "artifact_name": "culvia-windows-lite-x64",
                   "artifact_path": "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip",
                   "checksum_path": "dist/windows-lite/culvia-*-windows-lite-x86_64-pc-windows-msvc.zip.sha256",
@@ -156,6 +160,7 @@ jobs:
                   "platform": "linux",
                   "profile": "full",
                   "os": "ubuntu-latest",
+                  "arch": "x64",
                   "artifact_name": "culvia-linux-x64",
                   "artifact_path": "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz",
                   "checksum_path": "dist/linux/culvia-*-linux-x86_64-unknown-linux-gnu.tar.gz.sha256",
@@ -166,6 +171,7 @@ jobs:
                   "platform": "linux",
                   "profile": "lite",
                   "os": "ubuntu-latest",
+                  "arch": "x64",
                   "artifact_name": "culvia-linux-lite-x64",
                   "artifact_path": "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz",
                   "checksum_path": "dist/linux-lite/culvia-*-linux-lite-x86_64-unknown-linux-gnu.tar.gz.sha256",
@@ -199,11 +205,24 @@ jobs:
               if not release_ref:
                   print("publish_release requires running on a tag or passing release_tag.", file=sys.stderr)
                   sys.exit(1)
+              if not upload_artifacts:
+                  print("publish_release requires upload_artifacts=true.", file=sys.stderr)
+                  sys.exit(1)
               publish_release = True
-              upload_artifacts = True
+
+          lite_include = [job for job in include if job["profile"] == "lite"]
+          validate_lite = upload_artifacts and bool(lite_include)
+          if not validate_lite:
+              reason = "upload_artifacts=false" if not upload_artifacts else "no Lite targets selected"
+              message = f"Lite package first-launch checks skipped ({reason}); Lite packages are not validated."
+              print(message)
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                  summary.write(message + "\n")
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"matrix={json.dumps({'include': include}, separators=(',', ':'))}\n")
+              output.write(f"lite_matrix={json.dumps({'include': lite_include}, separators=(',', ':'))}\n")
+              output.write(f"validate_lite={'true' if validate_lite else 'false'}\n")
               output.write(f"upload_artifacts={'true' if upload_artifacts else 'false'}\n")
               output.write(f"publish_release={'true' if publish_release else 'false'}\n")
               output.write(f"release_ref={release_ref}\n")
@@ -226,7 +245,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.select.outputs.release_ref || github.ref }}
+          ref: ${{ needs.select.outputs.release_ref || github.sha }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -406,7 +425,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.select.outputs.release_ref || github.ref }}
+          ref: ${{ needs.select.outputs.release_ref || github.sha }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -502,29 +521,155 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  lite-runtime:
+    name: First launch ${{ matrix.name }}
+    needs:
+      - select
+      - package
+      - source
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.upload_artifacts == 'true' && needs.select.outputs.validate_lite == 'true' && needs.source.result == 'success' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.lite_matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.release_ref || github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: ${{ matrix.arch }}
+
+      - name: Download candidate Lite package
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: candidate-inputs/desktop
+
+      - name: Download candidate Python distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: culvia-python-source
+          path: candidate-inputs/python
+
+      - name: Install Linux native shell dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev xvfb
+
+      - name: Verify candidate Desktop Lite package runtime
+        shell: python
+        env:
+          PACKAGE_GLOB: ${{ matrix.artifact_path }}
+          PACKAGE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          packages = sorted(Path("candidate-inputs/desktop").glob(Path(os.environ["PACKAGE_GLOB"]).name))
+          wheels = sorted(Path("candidate-inputs/python").glob("culvia-*.whl"))
+          if len(packages) != 1 or not packages[0].is_file() or len(wheels) != 1 or not wheels[0].is_file():
+              raise SystemExit("Expected exactly one candidate Lite package and one same-run Culvia wheel.")
+          package, wheel = packages[0], wheels[0]
+          subprocess.run([sys.executable, "-m", "pip", "install", f"{wheel}[release]"], check=True)
+          subprocess.run([sys.executable, "-m", "pip", "check"], check=True)
+          report = Path("smoke-reports") / f"{package.name}.lite-runtime.json"
+          report.parent.mkdir(parents=True, exist_ok=True)
+          platform = os.environ["PACKAGE_PLATFORM"]
+          package_flag = {"macos": "--macos-dmg", "windows": "--windows-zip", "linux": "--linux-tgz"}[platform]
+          command = [
+              sys.executable, "tools/check_lite_package_runtime.py", package_flag, str(package),
+              "--wheel", str(wheel), "--python", sys.executable,
+              "--timeout", "900", "--exit-after-ms", "20000", "--output", str(report), "--json",
+          ]
+          if platform == "linux":
+              command = ["xvfb-run", "-a", *command]
+          subprocess.run(command, check=True)
+
+      - name: Generate Lite runtime evidence attestations
+        uses: actions/attest@v4
+        with:
+          subject-path: smoke-reports/*.lite-runtime.json
+
+      - name: Preserve Lite runtime failure report
+        if: failure()
+        shell: python
+        env:
+          PACKAGE_ARTIFACT: ${{ matrix.artifact_name }}
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          reports = Path("smoke-reports")
+          reports.mkdir(parents=True, exist_ok=True)
+          if not list(reports.glob("*.lite-runtime.json")):
+              report = reports / f"{os.environ['PACKAGE_ARTIFACT']}.lite-runtime.json"
+              report.write_text(json.dumps({
+                  "schema": "culvia-lite-runtime-evidence-v1",
+                  "ok": False,
+                  "error": "Candidate package validation did not produce runtime evidence; inspect the failed CI step.",
+              }, indent=2) + "\n", encoding="utf-8")
+
+      - name: Upload Lite runtime smoke report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-lite-runtime
+          path: smoke-reports/*.lite-runtime.json
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Publish GitHub Release
     needs:
       - select
       - package
       - source
-    if: needs.select.outputs.publish_release == 'true'
+      - lite-runtime
+    if: needs.select.outputs.publish_release == 'true' && needs.lite-runtime.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.release_ref || github.sha }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-assets
+          pattern: culvia-*
 
       - name: Publish assets to GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.select.outputs.release_ref }}
+          RELEASE_MATRIX: ${{ needs.select.outputs.matrix }}
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_TAG}" ]; then
@@ -535,7 +680,7 @@ jobs:
           cat > release-notes.md <<EOF
           Automated Culvia desktop and source release for ${RELEASE_TAG}.
 
-          Assets include verified desktop packages, SHA-256 checksum files, release evidence manifests, a Python wheel, and a Python source distribution.
+          Assets include verified desktop packages, SHA-256 checksum files, release evidence manifests, Lite first-launch runtime evidence, a Python wheel, and a Python source distribution.
 
           The Linux desktop asset uses the Lite runtime profile to stay within GitHub Release asset size limits. It does not bundle the Python/ML runtime; on first launch it uses Python 3.11+ to create an app-managed runtime environment.
 
@@ -553,13 +698,24 @@ jobs:
           fi
           python - "${assets[@]}" <<'PY'
           from collections import Counter
+          import json
+          import os
           from pathlib import Path
           import sys
+
+          from tools.check_desktop_release_workflow import release_asset_paths
 
           basenames = [Path(path).name for path in sys.argv[1:]]
           duplicates = sorted(name for name, count in Counter(basenames).items() if count > 1)
           if duplicates:
               raise SystemExit("Release asset basenames must be unique: " + ", ".join(duplicates))
+          verified = release_asset_paths(
+              Path("release-assets"),
+              matrix=json.loads(os.environ["RELEASE_MATRIX"]),
+              version=os.environ["RELEASE_TAG"].removeprefix("v"),
+          )
+          if set(verified) != {Path(path) for path in sys.argv[1:]}:
+              raise SystemExit("Downloaded assets differ from the verified release asset set.")
           PY
           release_version="${RELEASE_TAG#v}"
           expected_runtime_wheel="culvia-${release_version}-py3-none-any.whl"

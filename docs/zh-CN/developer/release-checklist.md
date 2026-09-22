@@ -79,7 +79,9 @@ python tools/check_version_sync.py --tag v<version>
 
 Lite 发布会从官方 GitHub Release 安装与桌面壳完全同版本的 Culvia wheel，第三方依赖仍由 pip 解析。因此 publish job 必须把对应的 `culvia-<version>-py3-none-any.whl` 与所有 Lite 桌面资产放进同一份 Release 草稿。source job 会把该 wheel 的 `desktop-runtime` extra 及全部解析依赖安装到全新 virtualenv，再检查服务版本、桌面壳 runtime contract、必需模块和 extra 依赖；这条自动门禁通过前不得发布 Release。
 
-需要手动验证时，可以在 GitHub Actions 手动运行同一 workflow，并关闭 `publish_release`。手动运行默认选择 `platform=all` 和 `profile=release`；未发布时可收窄任一输入。打开 `publish_release` 时必须保持 `platform=all` 和 `profile=release`，并且从 tag ref 运行或传入已存在的 `release_tag`；不完整的发布矩阵会被 workflow 拒绝。
+独立的 Lite runtime 矩阵会在 macOS arm64/x64、Windows x64、Linux x64 下载同次运行的桌面包及 wheel。每个包都必须由桌面程序自行创建全新 virtualenv、完成前端启动和合成照片工作流、核实已安装 wheel 的版本、位置及来源，再在禁止安装的条件下成功重启。检查使用隔离工作目录和运行时配置。全部 Lite 检查通过后才允许发布；发布时还会将各 `.lite-runtime.json` 中包和 wheel 的 SHA-256 与实际资产比对。构建成功或 source job 的 wheel 检查不能单独证明 Lite 桌面可启动；候选 wheel override 也不验证最终公开下载地址。
+
+需要手动验证时，可以在 GitHub Actions 手动运行同一 workflow，并关闭 `publish_release`。手动运行默认选择 `platform=all` 和 `profile=release`；未发布时可收窄任一输入。打开 `publish_release` 时必须设置 `upload_artifacts=true`，保持 `platform=all` 和 `profile=release`，并且从 tag ref 运行或传入已存在的 `release_tag`；不完整的发布矩阵会被 workflow 拒绝。
 
 默认 macOS CI 线使用普通非严格 app/dmg 发布路径，因此可能产出 ad-hoc 或 Apple Development 签名的包。Developer ID 签名、公证和严格 Gatekeeper 验证仍由发布负责人显式执行。
 
@@ -221,7 +223,9 @@ python tools/release_status_report.py --json --launch-runtime
 python tools/release_status_report.py --strict --json
 ```
 
-`.github/workflows/desktop-release.yml` 只上传已验证的最终包、`.sha256` 和 `.evidence.json`。不得上传 `dist/**`、`target/**`、backend binary 目录、运行时缓存、用户数据或凭据。
+`.github/workflows/desktop-release.yml` 中的桌面构建任务只上传已验证的最终包、`.sha256` 和 `.evidence.json`。不得上传 `dist/**`、`target/**`、backend binary 目录、运行时缓存、用户数据或凭据。
+
+Lite 启动检查另外为每个目标上传一份 `<package>.lite-runtime.json`，失败时也会尽可能保留诊断结果。失败或不完整的运行证据不得发布。Full 包的运行检查保持不变。
 
 校验和文件在所有构建平台上均使用 UTF-8 编码和 LF 换行。将下载的发布包与对应的 `.sha256` 文件放在同一目录，然后在该目录运行：
 

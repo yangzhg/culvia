@@ -173,6 +173,23 @@ dist/linux-lite/culvia-<version>-linux-lite-x86_64-unknown-linux-gnu.tar.gz
 
 `runtime.json` 的优先级仍是：环境变量 > 持久化 runtime 配置 > 包默认值。Lite release 包默认以 `lite` 模式启动，不要求用户手动设置环境变量。
 
+### Lite 包启动验证
+
+在包对应的原生系统和架构上，使用包的校验和文件及同次构建的 wheel 进行验证。例如：
+
+```bash
+python tools/check_lite_package_runtime.py \
+  --macos-dmg dist/macos-lite/Culvia_0.2.0_aarch64-lite.dmg \
+  --wheel dist/python/culvia-0.2.0-py3-none-any.whl \
+  --python /path/to/python3.11 --timeout 900 --json
+```
+
+Windows、Linux 绿色包分别使用 `--windows-zip`、`--linux-tgz`。Linux 需要显示服务或 `xvfb-run`。验证会由打包后的桌面程序自行创建一次性 virtualenv 并安装依赖，可能下载较大的第三方依赖；不会预先准备这个环境，也不会强制指定包的运行模式。本机已有运行时配置、Python 导入路径、应用数据和钥匙串凭据均与验证环境隔离。
+
+两次启动都必须打开真实前端，并通过合成照片的选片和导出流程。首次启动核对桌面壳与服务版本、目标架构、安装位置和 wheel 来源；第二次在禁用安装的条件下复用同一个 virtualenv。成功或失败结果均写入包旁的 `<package>.lite-runtime.json`，也可用 `--output` 指定位置。这份独立证据不替代包结构及签名证据。
+
+CI 为每个 Lite 包配对同次 workflow 的 wheel，四个原生 Lite 目标全部验证通过后才允许发布。手动运行若禁用 artifact 上传，会跳过这一跨任务检查，不能视为已验证启动。候选 wheel override 用于在 Release 创建前验证安装流程，不证明正式下载地址已可用，也不代表 macOS 签名或公证已就绪。
+
 只有在已配置 Developer ID 签名和公证输入时，才运行严格发布线：
 
 ```bash

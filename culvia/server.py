@@ -101,3 +101,7 @@ def run_server(config: ServerConfig) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     return run_server(parse_args(argv))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

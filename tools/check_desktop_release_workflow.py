@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+import hashlib
 import json
 import re
 import sys
@@ -33,6 +35,7 @@ REQUIRED_UPLOAD_PATH_REFERENCE = "${{ matrix.artifact_path }}"
 REQUIRED_UPLOAD_CHECKSUM_REFERENCE = "${{ matrix.checksum_path }}"
 REQUIRED_UPLOAD_EVIDENCE_REFERENCE = "${{ matrix.evidence_path }}"
 SOURCE_UPLOAD_PATHS = ("dist/python/culvia-*.whl", "dist/python/culvia-*.tar.gz")
+LITE_RUNTIME_REPORT_PATH = "smoke-reports/*.lite-runtime.json"
 RAW_CACHE_ACTION = "actions/cache"
 ATTEST_ACTION = "actions/attest"
 
@@ -63,7 +66,8 @@ def result_payload(checks: Sequence[CheckResult]) -> dict:
 
 
 def clean_yaml_value(value: str) -> str:
-    return value.strip().strip("'\"")
+    value = value.strip()
+    return value[1:-1] if len(value) >= 2 and value[0] in "'\"" and value[-1] == value[0] else value
 
 
 def step_blocks(workflow: str) -> list[str]:
@@ -170,6 +174,100 @@ def workflow_step_block(workflow: str, name: str) -> str:
     return match.group(0) if match else ""
 
 
+def workflow_job_block(workflow: str, name: str) -> str:
+    match = re.search(rf"(?ms)^  {re.escape(name)}:\n.*?(?=^  [a-zA-Z_][a-zA-Z0-9_-]*:\n|\Z)", workflow)
+    return match.group(0) if match else ""
+
+
+def release_asset_paths(root: Path, *, matrix: dict, version: str) -> list[Path]:
+    """Validate the exact release file set and bind Lite smoke evidence to its inputs."""
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){2}(?:[a-zA-Z0-9.+-]*)", version):
+        raise ValueError("Invalid release version for asset verification.")
+    jobs = matrix.get("include", [])
+    if not isinstance(jobs, list) or not jobs:
+        raise ValueError("Release asset verification requires a non-empty selected matrix.")
+    wheel = root / "culvia-python-source" / f"culvia-{version}-py3-none-any.whl"
+    expected = {wheel, wheel.parent / f"culvia-{version}.tar.gz"}
+    lite_reports: list[tuple[Path, Path, str, str]] = []
+    targets = {
+        ("macos", "arm64"): "aarch64-apple-darwin",
+        ("macos", "x64"): "x86_64-apple-darwin",
+        ("windows", "x64"): "x86_64-pc-windows-msvc",
+        ("linux", "x64"): "x86_64-unknown-linux-gnu",
+    }
+    seen_jobs: set[str] = set()
+    for job in jobs:
+        platform, arch, profile = job.get("platform"), job.get("arch"), job.get("profile")
+        target = targets.get((platform, arch))
+        if target is None or profile not in {"full", "lite"}:
+            raise ValueError("Unsupported release matrix target.")
+        profile_part = "-lite" if profile == "lite" else ""
+        artifact_name = f"culvia-{platform}{profile_part}-{arch}"
+        if job.get("artifact_name") != artifact_name or artifact_name in seen_jobs:
+            raise ValueError("Release matrix artifact names must be canonical and unique.")
+        seen_jobs.add(artifact_name)
+        if platform == "macos":
+            dmg_arch = "aarch64" if arch == "arm64" else "x64"
+            basename = f"Culvia_{version}_{dmg_arch}{profile_part}.dmg"
+        else:
+            extension = "zip" if platform == "windows" else "tar.gz"
+            basename = f"culvia-{version}-{platform}{profile_part}-{target}.{extension}"
+        archive = root / artifact_name / basename
+        expected.update(
+            {archive, archive.with_name(basename + ".sha256"), archive.with_name(basename + ".evidence.json")}
+        )
+        if profile == "lite":
+            report = root / f"{artifact_name}-lite-runtime" / f"{basename}.lite-runtime.json"
+            expected.add(report)
+            lite_reports.append((report, archive, platform, target))
+
+    entries = list(root.rglob("*"))
+    if any(path.is_symlink() for path in entries):
+        raise ValueError("Release assets must not contain symbolic links.")
+    files = {path for path in entries if path.is_file()}
+    duplicates = sorted(name for name, count in Counter(path.name for path in files).items() if count > 1)
+    if duplicates:
+        raise ValueError("Release asset basenames must be unique: " + ", ".join(duplicates))
+    unexpected_dirs = {path for path in entries if path.is_dir()} - {path.parent for path in expected}
+    if files != expected or unexpected_dirs:
+        missing = sorted(str(path.relative_to(root)) for path in expected - files)
+        unexpected = sorted(str(path.relative_to(root)) for path in (files - expected) | unexpected_dirs)
+        raise ValueError(f"Release asset set mismatch: missing={missing}; unexpected={unexpected}")
+
+    def identity(path: Path) -> dict:
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        return {"name": path.name, "sha256": digest, "sizeBytes": path.stat().st_size}
+
+    wheel_identity = identity(wheel)
+    for report, archive, platform, target in lite_reports:
+        try:
+            payload = json.loads(report.read_text(encoding="utf-8"))
+            required = {
+                "schema": "culvia-lite-runtime-evidence-v1",
+                "runtimeProfile": "lite",
+                "platform": platform,
+                "version": version,
+                "target": target,
+            }
+            valid = (
+                isinstance(payload, dict)
+                and payload.get("ok") is True
+                and all(payload.get(key) == value for key, value in required.items())
+                and all(
+                    isinstance(payload.get(key), dict) and payload[key].get("ok") is True
+                    for key in ("firstLaunch", "reuseLaunch")
+                )
+                and payload.get("artifact") == identity(archive)
+                and payload.get("wheel") == wheel_identity
+            )
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Lite runtime evidence could not be read: {report.name}") from exc
+        if not valid:
+            raise ValueError(f"Lite runtime evidence does not verify this release candidate: {report.name}")
+    return sorted(expected)
+
+
 def collect_checks(root: Path = ROOT) -> list[CheckResult]:
     workflow = read_optional(root, WORKFLOW_PATH)
     platform_input = workflow_dispatch_input_block(workflow, "platform")
@@ -177,6 +275,12 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
     lite_runtime_step = workflow_step_block(workflow, "Verify clean Desktop Lite runtime wheel")
     intel_model_runtime_step = workflow_step_block(workflow, "Verify macOS Intel model runtime contract")
     publish_step = workflow_step_block(workflow, "Publish assets to GitHub Release")
+    lite_job = workflow_job_block(workflow, "lite-runtime")
+    lite_condition = next(iter(yaml_key_values(lite_job, "if")), "")
+    publish_job = workflow_job_block(workflow, "publish")
+    lite_package_step = workflow_step_block(workflow, "Verify candidate Desktop Lite package runtime")
+    lite_report_step = workflow_step_block(workflow, "Upload Lite runtime smoke report")
+    checkouts = action_blocks(workflow, "actions/checkout")
     upload_paths = upload_artifact_paths(workflow)
     artifact_paths = matrix_artifact_paths(workflow)
     checksum_paths = matrix_checksum_paths(workflow)
@@ -244,6 +348,94 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
             "workflow must call the local desktop release contract plan and run modes",
         ),
         check(
+            "workflow pins checkout fallbacks to the triggering commit",
+            len(checkouts) >= 4
+            and all("ref: ${{ needs.select.outputs.release_ref || github.sha }}" in block for block in checkouts),
+            "package, source, Lite runtime, and publish checkouts must not drift with a branch ref",
+        ),
+        check(
+            "workflow selects native Lite validation without pretending skips are verified",
+            'lite_include = [job for job in include if job["profile"] == "lite"]' in workflow
+            and "validate_lite = upload_artifacts and bool(lite_include)" in workflow
+            and "Lite packages are not validated." in workflow
+            and "publish_release requires upload_artifacts=true." in workflow
+            and "fromJSON(needs.select.outputs.lite_matrix)" in lite_job
+            and "runs-on: ${{ matrix.os }}" in lite_job
+            and "architecture: ${{ matrix.arch }}" in lite_job
+            and "fail-fast: false" in lite_job,
+            "only selected Lite targets run on their native OS/architecture; disabled uploads or Full-only runs explicitly skip validation",
+        ),
+        check(
+            "workflow validates available Lite packages after unrelated Full failures",
+            "!cancelled()" in lite_condition
+            and "needs.select.result == 'success'" in lite_condition
+            and "needs.select.outputs.upload_artifacts == 'true'" in lite_condition
+            and "needs.select.outputs.validate_lite == 'true'" in lite_condition
+            and "needs.source.result == 'success'" in lite_condition
+            and "needs.package.result" not in lite_condition
+            and "      - package\n" in lite_job
+            and "      - source\n" in lite_job,
+            "Lite validation waits for package/source outputs but must not inherit the aggregate Full package failure gate",
+        ),
+        check(
+            "workflow smoke tests same-run Lite packages with the candidate wheel",
+            all(
+                text in lite_job
+                for text in (
+                    "name: ${{ matrix.artifact_name }}",
+                    "path: candidate-inputs/desktop",
+                    "name: culvia-python-source",
+                    "path: candidate-inputs/python",
+                    "libwebkit2gtk-4.1-dev",
+                    "libgtk-3-dev",
+                    "libayatana-appindicator3-dev",
+                    "librsvg2-dev",
+                    "xvfb",
+                )
+            )
+            and "run-id:" not in lite_job
+            and "repository:" not in lite_job
+            and all(
+                text in lite_package_step
+                for text in (
+                    "tools/check_lite_package_runtime.py",
+                    'f"{wheel}[release]"',
+                    '"--macos-dmg"',
+                    '"--windows-zip"',
+                    '"--linux-tgz"',
+                    '"--wheel", str(wheel)',
+                    '"--python", sys.executable',
+                    '"--timeout", "900"',
+                    '"--exit-after-ms", "20000"',
+                    '"--output", str(report)',
+                    '"xvfb-run", "-a"',
+                    "check=True",
+                )
+            ),
+            "native runners must download this run's exact Lite artifact with sidecars and candidate wheel, install fixture dependencies, and invoke the real first/reuse launch smoke tool",
+        ),
+        check(
+            "workflow preserves separate Lite runtime failure evidence",
+            "if: failure()" in workflow_step_block(workflow, "Preserve Lite runtime failure report")
+            and '"ok": False' in workflow_step_block(workflow, "Preserve Lite runtime failure report")
+            and "if: ${{ !cancelled() }}" in lite_report_step
+            and "name: ${{ matrix.artifact_name }}-lite-runtime" in lite_report_step
+            and f"path: {LITE_RUNTIME_REPORT_PATH}" in lite_report_step
+            and "if-no-files-found: error" in lite_report_step,
+            "failure reports remain available in distinct smoke artifacts and never overwrite structural package evidence",
+        ),
+        check(
+            "workflow publishes only after successful Lite runtime evidence verification",
+            "      - lite-runtime\n" in publish_job
+            and "needs.lite-runtime.result == 'success'" in publish_job
+            and "RELEASE_MATRIX: ${{ needs.select.outputs.matrix }}" in publish_step
+            and "from tools.check_desktop_release_workflow import release_asset_paths" in publish_step
+            and "verified = release_asset_paths(" in publish_step
+            and "if set(verified) != {Path(path) for path in sys.argv[1:]}:" in publish_step
+            and 0 <= publish_step.find("verified = release_asset_paths(") < publish_step.find("gh release upload"),
+            "publishing requires all Lite lanes to succeed and validates the exact asset set plus version, target, both launches, package and wheel hashes",
+        ),
+        check(
             "workflow verifies a clean dependency-resolved Desktop Lite runtime wheel",
             bool(lite_runtime_step)
             and "python -m venv" in lite_runtime_step
@@ -293,10 +485,11 @@ def collect_checks(root: Path = ROOT) -> list[CheckResult]:
                     REQUIRED_UPLOAD_CHECKSUM_REFERENCE,
                     REQUIRED_UPLOAD_EVIDENCE_REFERENCE,
                     *SOURCE_UPLOAD_PATHS,
+                    LITE_RUNTIME_REPORT_PATH,
                 )
             )
             and "if-no-files-found: error" in workflow,
-            "upload-artifact must use final archive/checksum/evidence allowlists, including an explicit -lite basename for staged macOS Lite DMGs and sidecars",
+            "upload-artifact must use final archive/checksum/evidence allowlists plus isolated Lite smoke reports, including explicit -lite macOS DMG basenames",
         ),
         check(
             "workflow rejects duplicate release asset basenames before upload",

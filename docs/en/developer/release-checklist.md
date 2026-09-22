@@ -79,7 +79,9 @@ Pushing a `v<version>` tag triggers `.github/workflows/desktop-release.yml`. Its
 
 A Lite release installs its exact same-version Culvia wheel from the official GitHub Release, while resolving third-party dependencies through pip. The publish job must therefore include the matching `culvia-<version>-py3-none-any.whl` in the same draft as every Lite desktop asset. The source job enforces this release blocker by installing that wheel's `desktop-runtime` extra and all resolved dependencies into a fresh virtualenv, then checking the service version, shell runtime contract, required modules, and extra dependency before any release can be published.
 
-For manual validation, run the same workflow from GitHub Actions with `publish_release` disabled. Manual runs default to `platform=all` and `profile=release`; while publishing is disabled, they may narrow either input. Enabling `publish_release` requires the unchanged `platform=all` and `profile=release` selection, plus either a tag ref or an existing `release_tag`. The workflow rejects an incomplete publish matrix.
+The separate Lite runtime matrix downloads that run's desktop artifacts and wheel on macOS arm64/x64, Windows x64, and Linux x64. Each packaged launcher must create its own fresh virtualenv, reach frontend readiness, pass the fixture workflow, prove the installed wheel's version/location/provenance, then restart with installation disabled. These checks use an isolated working directory and runtime configuration. Publication requires every Lite check to pass and verifies the package/wheel SHA-256 values in each `.lite-runtime.json` against the actual release assets. A successful build or source-job wheel check alone is not Lite desktop launch verification. The candidate override does not validate the eventual public download URL.
+
+For manual validation, run the same workflow from GitHub Actions with `publish_release` disabled. Manual runs default to `platform=all` and `profile=release`; while publishing is disabled, they may narrow either input. Enabling `publish_release` requires `upload_artifacts=true`, the unchanged `platform=all` and `profile=release` selection, plus either a tag ref or an existing `release_tag`. The workflow rejects an incomplete publish matrix.
 
 The default macOS CI lane uses the normal non-strict app/dmg release path, so it may produce ad-hoc signed or Apple Development signed artifacts. Developer ID signing, notarization, and strict Gatekeeper validation remain explicit release-operator concerns.
 
@@ -221,7 +223,9 @@ python tools/release_status_report.py --json --launch-runtime
 python tools/release_status_report.py --strict --json
 ```
 
-`.github/workflows/desktop-release.yml` uploads only verified final packages, `.sha256` files, and `.evidence.json` files. It must not upload `dist/**`, `target/**`, backend binary directories, runtime caches, user data, or credentials.
+The desktop build jobs in `.github/workflows/desktop-release.yml` upload only verified final packages, `.sha256` files, and `.evidence.json` files. They must not upload `dist/**`, `target/**`, backend binary directories, runtime caches, user data, or credentials.
+
+Lite launch checks additionally upload one `<package>.lite-runtime.json` per target, including diagnostic failure results when available. Failed or incomplete runtime evidence cannot be published. Full package runtime checks remain unchanged.
 
 Checksum sidecars use UTF-8 with LF line endings on every build platform. Keep the downloaded package and its `.sha256` file together, then verify from that directory:
 

@@ -230,9 +230,10 @@ def collect_checks(
     runtime_profile: str = "full",
     runner: Runner = run_default,
     system: str | None = None,
+    config: dict | None = None,
 ) -> list[CheckResult]:
     system = system or platform.system()
-    config = read_desktop_config()
+    config = read_desktop_config() if config is None else config
     app_discovery = resolve_app_path(bundle_dir, app)
     dmg_discovery = resolve_dmg_path(bundle_dir, dmg)
     app_path = app_discovery.path

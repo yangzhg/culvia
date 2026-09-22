@@ -175,6 +175,23 @@ dist/linux-lite/culvia-<version>-linux-lite-x86_64-unknown-linux-gnu.tar.gz
 
 The `runtime.json` priority remains: environment variables > persisted runtime config > package default. Lite release packages default to `lite` without requiring users to set an environment variable.
 
+### Lite Package Launch Verification
+
+Run the Lite launch check on the package's native OS and architecture, with its checksum sidecar and the wheel from the same build. For example:
+
+```bash
+python tools/check_lite_package_runtime.py \
+  --macos-dmg dist/macos-lite/Culvia_0.2.0_aarch64-lite.dmg \
+  --wheel dist/python/culvia-0.2.0-py3-none-any.whl \
+  --python /path/to/python3.11 --timeout 900 --json
+```
+
+Use `--windows-zip` or `--linux-tgz` for portable packages. Linux needs a display or `xvfb-run`. The command installs dependencies into a disposable virtualenv through the packaged desktop launcher; it can download substantial third-party dependencies. It never prepares that virtualenv beforehand and does not force the package's runtime mode. Existing runtime settings, Python imports, app data, and Keychain credentials are isolated.
+
+Both launches must reach the real frontend and pass the synthetic curation/export workflow. The first verifies the shell/service version, target architecture, installed package location, and wheel provenance. The second reuses the same virtualenv with installation disabled. Results, including failures, are written beside the package as `<package>.lite-runtime.json`, or to `--output`. This separate evidence does not replace the package's structure/signing evidence.
+
+CI pairs each Lite artifact with the wheel from the same workflow run and gates publication on all four native Lite targets. Manual runs without artifact upload skip this cross-job check and are not launch-verified. The candidate wheel override exercises installation before a Release exists; it does not prove that a public release URL is available or that macOS signing/notarization is ready.
+
 Use the strict lane only when Developer ID signing and notarization inputs are configured:
 
 ```bash
