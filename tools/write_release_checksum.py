@@ -47,7 +47,7 @@ def write_checksum(*, artifact: Path, output: Path | None = None) -> dict[str, A
 
     digest = sha256_file(artifact)
     checksum_path.parent.mkdir(parents=True, exist_ok=True)
-    checksum_path.write_text(checksum_text(digest=digest, artifact=artifact), encoding="utf-8")
+    checksum_path.write_text(checksum_text(digest=digest, artifact=artifact), encoding="utf-8", newline="\n")
     return {
         "ok": True,
         "issues": [],

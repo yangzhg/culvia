@@ -223,6 +223,13 @@ python tools/release_status_report.py --strict --json
 
 `.github/workflows/desktop-release.yml` uploads only verified final packages, `.sha256` files, and `.evidence.json` files. It must not upload `dist/**`, `target/**`, backend binary directories, runtime caches, user data, or credentials.
 
+Checksum sidecars use UTF-8 with LF line endings on every build platform. Keep the downloaded package and its `.sha256` file together, then verify from that directory:
+
+```bash
+shasum -a 256 -c <artifact>.sha256  # macOS
+sha256sum -c <artifact>.sha256      # Linux
+```
+
 ## Keychain Smoke
 
 ```bash

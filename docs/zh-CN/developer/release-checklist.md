@@ -223,6 +223,13 @@ python tools/release_status_report.py --strict --json
 
 `.github/workflows/desktop-release.yml` 只上传已验证的最终包、`.sha256` 和 `.evidence.json`。不得上传 `dist/**`、`target/**`、backend binary 目录、运行时缓存、用户数据或凭据。
 
+校验和文件在所有构建平台上均使用 UTF-8 编码和 LF 换行。将下载的发布包与对应的 `.sha256` 文件放在同一目录，然后在该目录运行：
+
+```bash
+shasum -a 256 -c <artifact>.sha256  # macOS
+sha256sum -c <artifact>.sha256      # Linux
+```
+
 ## Keychain 运行时检查
 
 ```bash
