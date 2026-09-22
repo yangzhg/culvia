@@ -57,6 +57,8 @@ Manual decisions are the final culling layer. Model and LLM scores help sort and
 
 On desktop-sized windows, manual decisions sit beside the photo. In compact layouts, they follow the photo, ahead of the filmstrip and detailed scores. Distribution views wrap into rows so every view remains available without horizontal scrolling.
 
+Detailed scores distinguish **Not calculated** and **Not reviewed** from a real zero score. Show missing metrics when you need to check coverage; only measured scores display stars. The **File** tab keeps the complete filename and folder path available through their hints. Distribution summary cards reflow and wrap their labels to keep the score, count, and context readable in narrow windows.
+
 ## LLM Review
 
 LLM review is optional. Configure an OpenAI-compatible endpoint and model only when you want image critique, detailed aesthetic/technical scores, retouching advice, and shooting advice. API keys should be stored through the app configuration/keychain flow, not in Git or documentation.

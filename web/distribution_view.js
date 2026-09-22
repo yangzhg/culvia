@@ -787,9 +787,9 @@ window.CulviaDistributionView = (() => {
       .map(
         ([label, value, meta]) => `
           <article class="decision-metric">
-            <span>${escapeHtml(label)}</span>
-            <strong>${escapeHtml(value)}</strong>
-            <small>${escapeHtml(meta)}</small>
+            <span${textHintAttributes(label)}>${escapeHtml(label)}</span>
+            <strong${textHintAttributes(value)}>${escapeHtml(value)}</strong>
+            <small${textHintAttributes(meta)}>${escapeHtml(meta)}</small>
           </article>
         `,
       )

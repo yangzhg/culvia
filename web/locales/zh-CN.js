@@ -587,7 +587,7 @@
   "score.technical.title": "技术质检",
   "score.technical.source": "本地规则 · 清晰、曝光、层次、洁净度",
   "score.file.title": "文件信息",
-  "score.file.source": "完整路径只在导出结果中保留",
+  "score.file.source": "文件名、目录与来源",
   "score.file.name": "文件名",
   "score.file.folder": "所在文件夹",
   "score.file.copyFolder": "复制完整文件夹路径",

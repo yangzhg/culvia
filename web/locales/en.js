@@ -587,7 +587,7 @@
   "score.technical.title": "Technical QC",
   "score.technical.source": "Local rules · sharpness, exposure, tonal range, cleanliness",
   "score.file.title": "File info",
-  "score.file.source": "Full paths are preserved in export results",
+  "score.file.source": "Filename, folder, and source",
   "score.file.name": "Filename",
   "score.file.folder": "Folder",
   "score.file.copyFolder": "Copy full folder path",

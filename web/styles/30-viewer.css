@@ -1130,6 +1130,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+.score-row.is-missing .score-num {
+  grid-column: 2 / -1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: break-word;
+}
+
 .insight-empty,
 .insight-card {
   margin-top: 12px;

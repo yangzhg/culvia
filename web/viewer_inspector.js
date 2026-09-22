@@ -55,7 +55,7 @@ window.CulviaViewerInspector = (() => {
   }
 
   function hasMetric(value) {
-    return Boolean(value && value !== "暂无");
+    return value === 0 || Boolean(value && value !== "暂无");
   }
 
   function hasAnyMetric(texts, fields) {
@@ -197,12 +197,13 @@ window.CulviaViewerInspector = (() => {
     };
     const missingNote = (message) => `<div class="score-missing-note">${escapeHtml(message)}</div>`;
     const scoreRow = (label, stars, text, missing = t("score.notCalculated")) => {
+      const hasValue = hasMetric(text);
       const displayText = metricText(text, missing);
       return `
-        <div class="score-row">
+        <div class="score-row${hasValue ? "" : " is-missing"}">
           <span class="score-name"${textHintAttributes(label)}>${escapeHtml(label)}</span>
-          <span class="score-stars">${stars || "☆☆☆☆☆"}</span>
-          <span class="score-num ${hasMetric(text) ? "" : "is-missing"}"${textHintAttributes(displayText)}>${escapeHtml(displayText)}</span>
+          ${hasValue ? `<span class="score-stars">${stars || "☆☆☆☆☆"}</span>` : ""}
+          <span class="score-num ${hasValue ? "" : "is-missing"}"${textHintAttributes(displayText)}>${escapeHtml(displayText)}</span>
         </div>
       `;
     };
@@ -331,7 +332,7 @@ window.CulviaViewerInspector = (() => {
       .join("");
     const fileGroup = `
       <div class="score-group">
-        ${sourceTitle(t("score.file.title"), t("score.file.source"), pathName(photo.path), t("score.unnamed"))}
+        ${sourceTitle(t("score.file.title"), t("score.file.source"), null, t("score.unnamed"), { hideMissingValue: true })}
         <div class="file-meta-list">${fileRows}</div>
       </div>
     `;
