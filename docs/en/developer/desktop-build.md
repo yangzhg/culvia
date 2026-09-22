@@ -55,7 +55,9 @@ Desktop startup supports four runtime modes. Desktop users should rely on automa
 
 In `full`, `lite`, and `auto`, the desktop shell starts the local backend on a random available localhost port and reads the final URL from the backend ready event. Only `dev` mode assumes port `8501`.
 
-For a production backend launch, the shell also sets `CULVIA_DESKTOP_APP=1`, `CULVIA_DESKTOP_SHELL_VERSION`, and `CULVIA_DESKTOP_RUNTIME_PROFILE`. The backend combines these values with the running Python package version for the About panel and manual update checks. Full packages and the default managed Lite runtime should report matching shell and service versions. An explicit Lite package override may report a different service version only when it implements the same runtime contract; the UI keeps both versions visible.
+For a production backend launch, the shell also sets `CULVIA_DESKTOP_APP=1`, `CULVIA_DESKTOP_SHELL_VERSION`, `CULVIA_DESKTOP_RUNTIME_PROFILE`, and `CULVIA_DESKTOP_BUILD_TARGET`. The backend combines these values with the running Python package version for the About panel and manual update checks. Full packages and the default managed Lite runtime should report matching shell and service versions. An explicit Lite package override may report a different service version only when it implements the same runtime contract; the UI keeps both versions visible.
+
+The desktop build script captures Cargo's actual `TARGET` at compile time, including direct `cargo build` and desktop CLI builds. Full and Lite launches replace any inherited `CULVIA_DESKTOP_BUILD_TARGET` with this compiled value. Update package matching uses the shell's platform and architecture rather than the Python process architecture, which may differ for a Lite runtime or under Rosetta. The same target selects the bundled backend directory.
 
 Lite mode never installs dependencies into a global Python environment. It creates or repairs a virtualenv under the user data directory by default:
 

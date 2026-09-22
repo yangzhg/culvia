@@ -458,6 +458,43 @@ body.is-mobile-tools-open {
   color: var(--danger);
 }
 
+.update-package-info {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  gap: 8px;
+  padding: 10px 11px;
+  border: 1px solid rgba(60, 60, 67, 0.09);
+  border-radius: 14px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.update-package-info p {
+  margin: 0;
+}
+
+.update-package-info.is-available {
+  border-color: rgba(var(--accent-rgb), 0.2);
+}
+
+.update-package-name-fact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
+  min-width: 0;
+}
+
+.update-package-name {
+  min-width: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  font-weight: 740;
+}
+
 .version-mismatch {
   padding: 9px 10px;
   border: 1px solid rgba(var(--reject-rgb), 0.18);

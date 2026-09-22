@@ -53,7 +53,9 @@ Backend 构建使用 PyInstaller onedir 模式，把 `web/` 作为 `share/culvia
 - `auto`：优先使用内置 backend；找不到内置 backend 时回落到 `lite`。
 - `dev`：使用已有开发服务 `http://127.0.0.1:8501`。
 
-生产环境启动 backend 时，桌面壳还会设置 `CULVIA_DESKTOP_APP=1`、`CULVIA_DESKTOP_SHELL_VERSION` 和 `CULVIA_DESKTOP_RUNTIME_PROFILE`。backend 会把这些值与当前运行的 Python package 版本合并，用于“关于”区域和手动检查更新。Full 包和默认托管 Lite runtime 的桌面壳与服务版本应一致；显式指定的 Lite package 只有满足同一 runtime contract 时才允许使用不同服务版本，界面会分别展示两个版本。
+生产环境启动 backend 时，桌面壳还会设置 `CULVIA_DESKTOP_APP=1`、`CULVIA_DESKTOP_SHELL_VERSION`、`CULVIA_DESKTOP_RUNTIME_PROFILE` 和 `CULVIA_DESKTOP_BUILD_TARGET`。backend 会把这些值与当前运行的 Python package 版本合并，用于“关于”区域和手动检查更新。Full 包和默认托管 Lite runtime 的桌面壳与服务版本应一致；显式指定的 Lite package 只有满足同一 runtime contract 时才允许使用不同服务版本，界面会分别展示两个版本。
+
+桌面构建脚本会在编译时记录 Cargo 的实际 `TARGET`，直接执行 `cargo build` 和通过桌面 CLI 构建均使用同一来源。每次 Full 或 Lite 启动都会用编译目标覆盖继承的 `CULVIA_DESKTOP_BUILD_TARGET`。更新包按桌面壳的平台和架构匹配，不根据 Python 进程架构推断，因为 Lite runtime 或 Rosetta 下两者可能不同。内置 backend 目录也使用同一构建目标选择。
 
 Lite 模式不会把依赖安装到全局 Python。默认 virtualenv 位于用户数据目录：
 

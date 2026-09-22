@@ -2,8 +2,8 @@
 // the import order below is the only place load order is declared.
 
 // Locale resources and i18n runtime.
-import "./locales/zh-CN.js?v=20260908-responsive-readability";
-import "./locales/en.js?v=20260908-responsive-readability";
+import "./locales/zh-CN.js?v=20260922-update-packages";
+import "./locales/en.js?v=20260922-update-packages";
 import "./i18n_messages.js";
 import "./i18n.js";
 
@@ -28,7 +28,7 @@ import "./export_list.js?v=20260904-score-provenance";
 import "./batch_actions.js?v=20260904-batch-confirm";
 import "./clipboard.js";
 import "./api_client.js";
-import "./update_panel.js?v=20260812-responsive-nav";
+import "./update_panel.js?v=20260922-update-packages";
 import "./distribution_model.js";
 import "./app_config.js";
 import "./icons.js";

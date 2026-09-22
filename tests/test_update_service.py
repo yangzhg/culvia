@@ -51,10 +51,199 @@ def release_payload(version: str = "0.2.0") -> dict[str, object]:
         "prerelease": False,
         "published_at": "2026-08-12T10:00:00Z",
         "html_url": f"https://github.com/yangzhg/culvia/releases/tag/{tag}",
+        "assets": [],
+    }
+
+
+def release_asset(name: str, version: str = "0.2.0") -> dict[str, object]:
+    return {
+        "name": name,
+        "state": "uploaded",
+        "size": 1024,
+        "browser_download_url": f"https://github.com/yangzhg/culvia/releases/download/v{version}/{name}",
     }
 
 
 class UpdateServiceTests(unittest.TestCase):
+    def test_desktop_target_is_reported_separately_from_the_python_process(self) -> None:
+        desktop = application_info(
+            environ={
+                DESKTOP_APP_ENV: "1",
+                DESKTOP_SHELL_VERSION_ENV: "0.1.0",
+                DESKTOP_RUNTIME_PROFILE_ENV: "lite",
+                "CULVIA_DESKTOP_BUILD_TARGET": "aarch64-apple-darwin",
+            },
+            service_version="0.1.0",
+            platform_name="darwin",
+            architecture="x86_64",
+        )
+        self.assertEqual(desktop["architecture"], "x86_64")
+        self.assertEqual(desktop.get("desktopTarget"), "aarch64-apple-darwin")
+        self.assertEqual(desktop.get("desktopPlatform"), "darwin")
+        self.assertEqual(desktop.get("desktopArchitecture"), "arm64")
+        web = application_info(environ={"CULVIA_DESKTOP_BUILD_TARGET": "aarch64-apple-darwin"})
+        self.assertEqual(web.get("desktopTarget"), "")
+
+    def test_release_packages_match_the_exact_desktop_target_and_runtime(self) -> None:
+        for target, platform_slug, suffix in (
+            ("aarch64-apple-darwin", "darwin", "aarch64"),
+            ("x86_64-apple-darwin", "darwin", "x64"),
+            ("x86_64-pc-windows-msvc", "windows", "zip"),
+            ("aarch64-pc-windows-msvc", "windows", "zip"),
+            ("x86_64-unknown-linux-gnu", "linux", "tar.gz"),
+            ("aarch64-unknown-linux-gnu", "linux", "tar.gz"),
+        ):
+            for profile in ("full", "lite"):
+                with self.subTest(target=target, profile=profile):
+                    marker = "-lite" if profile == "lite" else ""
+                    package_name = (
+                        f"Culvia_0.2.0_{suffix}{marker}.dmg"
+                        if platform_slug == "darwin"
+                        else f"culvia-0.2.0-{platform_slug}{marker}-{target}.{suffix}"
+                    )
+                    release = release_payload()
+                    release["assets"] = [release_asset(package_name), release_asset("culvia-0.2.0-py3-none-any.whl")]
+                    result = UpdateChecker().check(
+                        app_info={
+                            "version": "0.1.0",
+                            "distribution": "desktop",
+                            "runtimeProfile": profile,
+                            "desktopTarget": target,
+                        },
+                        get=lambda *_args, **_kwargs: FakeResponse(payload=release),
+                    )
+                    self.assertTrue(result["updateAvailable"])
+                    self.assertEqual(result.get("package", {}).get("status"), "available")
+                    self.assertEqual(result["package"]["name"], package_name)
+
+    def test_new_version_without_a_matching_package_is_not_a_download_offer(self) -> None:
+        release = release_payload()
+        release["assets"] = [
+            release_asset("Culvia_0.2.0_x64.dmg"),
+            release_asset("culvia-0.2.0-linux-lite-x86_64-unknown-linux-gnu.tar.gz"),
+            release_asset("culvia-0.2.0-py3-none-any.whl"),
+        ]
+        for target, profile in (("aarch64-apple-darwin", "full"), ("x86_64-unknown-linux-gnu", "full")):
+            with self.subTest(target=target):
+                result = UpdateChecker().check(
+                    app_info={
+                        "version": "0.1.0",
+                        "distribution": "desktop",
+                        "runtimeProfile": profile,
+                        "desktopTarget": target,
+                    },
+                    get=lambda *_args, **_kwargs: FakeResponse(payload=release),
+                )
+                self.assertEqual(result["status"], "updateAvailable")
+                self.assertEqual(result.get("package", {}).get("status"), "unavailable")
+                self.assertEqual(result["package"]["reason"], "packageMissing")
+
+    def test_lite_requires_the_same_release_runtime_wheel(self) -> None:
+        release = release_payload()
+        release["assets"] = [
+            release_asset("Culvia_0.2.0_aarch64-lite.dmg"),
+            release_asset("culvia-0.1.0-py3-none-any.whl"),
+        ]
+        result = UpdateChecker().check(
+            app_info={
+                "version": "0.1.0",
+                "distribution": "desktop",
+                "runtimeProfile": "lite",
+                "desktopTarget": "aarch64-apple-darwin",
+            },
+            get=lambda *_args, **_kwargs: FakeResponse(payload=release),
+        )
+        self.assertEqual(result.get("package", {}).get("status"), "unavailable")
+        self.assertEqual(result["package"]["reason"], "runtimeWheelMissing")
+
+    def test_unknown_desktop_identity_does_not_infer_a_package_from_python(self) -> None:
+        release = release_payload()
+        release["assets"] = [release_asset("Culvia_0.2.0_x64.dmg")]
+        base = {
+            "version": "0.1.0",
+            "distribution": "desktop",
+            "runtimeProfile": "full",
+            "platform": "darwin",
+            "architecture": "x86_64",
+        }
+        for extra, reason in (
+            ({}, "targetUnknown"),
+            ({"desktopTarget": "x86_64-unknown-linux-musl"}, "targetUnknown"),
+            ({"desktopTarget": "x86_64-apple-darwin", "runtimeProfile": "auto"}, "profileUnknown"),
+        ):
+            with self.subTest(extra=extra):
+                result = UpdateChecker().check(
+                    app_info={**base, **extra},
+                    get=lambda *_args, **_kwargs: FakeResponse(payload=release),
+                )
+                self.assertEqual(result["package"]["status"], "unknown")
+                self.assertEqual(result["package"]["reason"], reason)
+
+    def test_package_matching_is_recomputed_for_each_installation_even_from_cached_release(self) -> None:
+        calls = []
+        release = release_payload()
+        wheel = "culvia-0.2.0-py3-none-any.whl"
+        release["assets"] = [release_asset(wheel), release_asset("Culvia_0.2.0_aarch64-lite.dmg")]
+
+        def get(*_args: object, **_kwargs: object) -> FakeResponse:
+            calls.append(1)
+            return FakeResponse(payload=release)
+
+        checker = UpdateChecker()
+        base = {"version": "0.1.0", "distribution": "desktop", "desktopTarget": "aarch64-apple-darwin"}
+        lite = checker.check(app_info={**base, "runtimeProfile": "lite"}, get=get)
+        full = checker.check(app_info={**base, "runtimeProfile": "full"}, get=get)
+        python = checker.check(app_info={"version": "0.1.0", "distribution": "python"}, get=get)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(full["cached"])
+        self.assertTrue(python["cached"])
+        self.assertEqual(lite["package"]["status"], "available")
+        self.assertEqual(full["package"]["status"], "unavailable")
+        self.assertEqual(python["package"]["status"], "available")
+        self.assertEqual(python["package"]["name"], wheel)
+
+    def test_incomplete_or_untrusted_assets_do_not_count_as_available_packages(self) -> None:
+        wheel = "culvia-0.2.0-py3-none-any.whl"
+        for change in (
+            {"size": 0},
+            {"size": True},
+            {"state": "starter"},
+            {"browser_download_url": f"https://example.com/{wheel}"},
+            {"browser_download_url": f"https://github.com/another/repo/releases/download/v0.2.0/{wheel}"},
+            {"browser_download_url": f"https://github.com/yangzhg/culvia/releases/download/v0.1.0/{wheel}"},
+            {"browser_download_url": f"https://user:secret@github.com/yangzhg/culvia/releases/download/v0.2.0/{wheel}"},
+            {"browser_download_url": "https://[invalid"},
+        ):
+            with self.subTest(change=change):
+                release = release_payload()
+                release["assets"] = [{**release_asset(wheel), **change}]
+                result = UpdateChecker().check(
+                    app_info={"version": "0.1.0", "distribution": "python"},
+                    get=lambda *_args, **_kwargs: FakeResponse(payload=release),
+                )
+                self.assertEqual(result["package"]["status"], "unavailable")
+                self.assertNotIn("secret", str(result))
+
+    def test_missing_asset_metadata_is_unknown_but_an_empty_asset_list_is_unavailable(self) -> None:
+        release = release_payload()
+        del release["assets"]
+        missing = UpdateChecker().check(
+            app_info={"version": "0.1.0", "distribution": "python"},
+            get=lambda *_args, **_kwargs: FakeResponse(payload=release),
+        )
+        self.assertEqual(missing["package"]["status"], "unknown")
+        self.assertEqual(missing["package"]["reason"], "releaseAssetsUnknown")
+        release["assets"] = []
+        empty = UpdateChecker().check(
+            app_info={"version": "0.1.0", "distribution": "python"},
+            get=lambda *_args, **_kwargs: FakeResponse(payload=release),
+        )
+        self.assertEqual(empty["package"]["status"], "unavailable")
+        release["assets"] = {"name": "not-an-asset-list"}
+        with self.assertRaises(UpdateCheckError) as raised:
+            parse_latest_release(release)
+        self.assertEqual(raised.exception.code, "updateCheckInvalidResponse")
+
     def test_versions_are_normalized_and_compared_without_build_metadata(self) -> None:
         self.assertEqual(normalized_version("v1.2.3+desktop.4"), "1.2.3")
         self.assertEqual(normalized_version("1.2.3-rc.1"), "1.2.3-rc.1")
@@ -117,8 +306,9 @@ class UpdateServiceTests(unittest.TestCase):
         prerelease["prerelease"] = True
         evil = release_payload()
         evil["html_url"] = "https://example.com/yangzhg/culvia/releases/tag/v0.2.0"
+        malformed = {**release_payload(), "html_url": "https://[invalid"}
 
-        for payload in (prerelease, evil):
+        for payload in (prerelease, evil, malformed):
             with self.subTest(payload=payload), self.assertRaises(UpdateCheckError) as raised:
                 parse_latest_release(payload)
             self.assertEqual(raised.exception.code, "updateCheckInvalidResponse")

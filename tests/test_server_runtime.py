@@ -10,6 +10,26 @@ from culvia import server, settings
 
 
 class ServerRuntimeTests(unittest.TestCase):
+    def test_runtime_setup_preserves_desktop_build_identity(self) -> None:
+        desktop_identity = {
+            "CULVIA_DESKTOP_APP": "1",
+            "CULVIA_DESKTOP_SHELL_VERSION": "1.0.0",
+            "CULVIA_DESKTOP_RUNTIME_PROFILE": "lite",
+            "CULVIA_DESKTOP_BUILD_TARGET": "aarch64-apple-darwin",
+        }
+        with patch.dict(
+            os.environ,
+            {
+                **desktop_identity,
+                "CULVIA_DATA_DIR": "/runtime/data",
+                "CULVIA_CACHE_DIR": "/runtime/cache",
+            },
+            clear=True,
+        ):
+            server.apply_runtime_env()
+
+            self.assertEqual({key: os.environ[key] for key in desktop_identity}, desktop_identity)
+
     def test_parse_args_accepts_auto_port_for_packaged_backend(self) -> None:
         with patch("culvia.server.find_available_port", return_value=49160):
             config = server.parse_args(["--port", "auto"])

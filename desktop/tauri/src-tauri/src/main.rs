@@ -30,6 +30,7 @@ const DESKTOP_BACKEND_PORT: &str = "random";
 const DESKTOP_APP_ENV: &str = "CULVIA_DESKTOP_APP";
 const DESKTOP_SHELL_VERSION_ENV: &str = "CULVIA_DESKTOP_SHELL_VERSION";
 const DESKTOP_RUNTIME_PROFILE_ENV: &str = "CULVIA_DESKTOP_RUNTIME_PROFILE";
+const DESKTOP_BUILD_TARGET_ENV: &str = "CULVIA_DESKTOP_BUILD_TARGET";
 const RUNTIME_MODE_ENV: &str = "CULVIA_DESKTOP_RUNTIME_MODE";
 const DEFAULT_RUNTIME_MODE: Option<&str> = option_env!("CULVIA_DESKTOP_DEFAULT_RUNTIME_MODE");
 const RUNTIME_HOME_ENV: &str = "CULVIA_RUNTIME_HOME";
@@ -418,7 +419,7 @@ fn schedule_frontend_ready_probe(
 }
 
 fn current_target_triple() -> &'static str {
-    option_env!("TAURI_ENV_TARGET_TRIPLE").unwrap_or("unknown-target")
+    env!("CULVIA_DESKTOP_BUILD_TARGET")
 }
 
 fn backend_binary_name(target: &str) -> String {
@@ -1052,7 +1053,8 @@ fn mark_desktop_backend_command(command: &mut Command, runtime_profile: &str) {
     command
         .env(DESKTOP_APP_ENV, "1")
         .env(DESKTOP_SHELL_VERSION_ENV, env!("CARGO_PKG_VERSION"))
-        .env(DESKTOP_RUNTIME_PROFILE_ENV, runtime_profile);
+        .env(DESKTOP_RUNTIME_PROFILE_ENV, runtime_profile)
+        .env(DESKTOP_BUILD_TARGET_ENV, current_target_triple());
 }
 
 fn start_development_backend(
@@ -1568,39 +1570,60 @@ mod tests {
     }
 
     #[test]
-    fn desktop_backend_marks_app_version_and_runtime_environment() {
-        let mut command = Command::new("culvia-server");
+    fn desktop_backend_receives_shell_identity_for_each_runtime_profile() {
+        for profile in ["full", "lite"] {
+            #[cfg(windows)]
+            let mut command = {
+                let mut command = Command::new("cmd");
+                command.args([
+                    "/D",
+                    "/C",
+                    "echo %CULVIA_DESKTOP_APP%&echo %CULVIA_DESKTOP_SHELL_VERSION%&echo %CULVIA_DESKTOP_RUNTIME_PROFILE%&echo %CULVIA_DESKTOP_BUILD_TARGET%",
+                ]);
+                command
+            };
+            #[cfg(not(windows))]
+            let mut command = {
+                let mut command = Command::new("sh");
+                command.args([
+                    "-c",
+                    r#"printf '%s\n' "$CULVIA_DESKTOP_APP" "$CULVIA_DESKTOP_SHELL_VERSION" "$CULVIA_DESKTOP_RUNTIME_PROFILE" "$CULVIA_DESKTOP_BUILD_TARGET""#,
+                ]);
+                command
+            };
+            command
+                .env(DESKTOP_APP_ENV, "0")
+                .env(DESKTOP_SHELL_VERSION_ENV, "inherited-version")
+                .env(DESKTOP_RUNTIME_PROFILE_ENV, "inherited-profile")
+                .env(DESKTOP_BUILD_TARGET_ENV, "inherited-target");
+            mark_desktop_backend_command(&mut command, profile);
 
-        mark_desktop_backend_command(&mut command, "lite");
+            let output = command.output().expect("launch an environment probe");
+            assert!(output.status.success());
+            let output = String::from_utf8(output.stdout).expect("UTF-8 shell identity");
+            assert_eq!(
+                output.lines().collect::<Vec<_>>(),
+                [
+                    "1",
+                    env!("CARGO_PKG_VERSION"),
+                    profile,
+                    current_target_triple()
+                ]
+            );
+        }
+    }
 
-        let environment = command
-            .get_envs()
-            .map(|(key, value)| {
-                (
-                    key.to_string_lossy().to_string(),
-                    value
-                        .and_then(|item| item.to_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                )
-            })
-            .collect::<std::collections::HashMap<_, _>>();
-        assert_eq!(
-            environment.get(DESKTOP_APP_ENV).map(String::as_str),
-            Some("1")
-        );
-        assert_eq!(
-            environment
-                .get(DESKTOP_SHELL_VERSION_ENV)
-                .map(String::as_str),
-            Some(env!("CARGO_PKG_VERSION"))
-        );
-        assert_eq!(
-            environment
-                .get(DESKTOP_RUNTIME_PROFILE_ENV)
-                .map(String::as_str),
-            Some("lite")
-        );
+    #[test]
+    fn desktop_build_target_matches_the_compiled_shell() {
+        let target = current_target_triple();
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+        assert!(target.starts_with(&format!("{}-", env::consts::ARCH)));
+        #[cfg(target_os = "macos")]
+        assert!(target.ends_with("-apple-darwin"));
+        #[cfg(target_os = "windows")]
+        assert!(target.contains("-windows-"));
+        #[cfg(target_os = "linux")]
+        assert!(target.contains("-linux-"));
     }
 
     #[test]
