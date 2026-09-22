@@ -2,10 +2,10 @@
 // the import order below is the only place load order is declared.
 
 // Locale resources and i18n runtime.
-import "./locales/zh-CN.js?v=20260922-review-readability";
-import "./locales/en.js?v=20260922-review-readability";
+import "./locales/zh-CN.js?v=20260922-delivery-counts";
+import "./locales/en.js?v=20260922-delivery-counts";
 import "./i18n_messages.js";
-import "./i18n.js";
+import "./i18n.js?v=20260922-delivery-counts";
 
 // Pure state and interaction helpers.
 import "./filter_state.js";
@@ -22,7 +22,7 @@ import "./command_view.js?v=20260922-task-and-delivery";
 import "./export_preflight.js";
 import "./export_preflight_state.js";
 import "./export_result_data.js?v=20260922-export-receipts";
-import "./export_result.js?v=20260922-export-receipts";
+import "./export_result.js?v=20260922-delivery-counts";
 import "./export_actions.js?v=20260922-export-receipts";
 import "./export_list.js?v=20260904-score-provenance";
 import "./batch_actions.js?v=20260904-batch-confirm";
@@ -34,9 +34,9 @@ import "./app_config.js";
 import "./icons.js";
 import "./ui_helpers.js";
 import "./gallery_view.js?v=20260904-score-provenance";
-import "./distribution_view.js?v=20260922-review-readability";
+import "./distribution_view.js?v=20260922-delivery-counts";
 import "./distribution_panel.js";
-import "./export_panel.js?v=20260922-export-receipts";
+import "./export_panel.js?v=20260922-delivery-counts";
 import "./llm_config_panel.js";
 import "./gallery_panel.js?v=20260922-mark-identity";
 import "./viewer_panel.js?v=20260922-mark-identity";

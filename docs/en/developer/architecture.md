@@ -71,6 +71,10 @@ flowchart LR
 
 `web/index.html` owns page structure and static asset order. `web/*.js` modules are split by feature, `web/styles/` owns CSS slices, and `web/locales/` owns translated strings. `web/app_config.js` owns shared frontend field lists and static label maps; `web/distribution_model.js` owns distribution data transforms; `web/distribution_view.js` owns distribution markup; `web/viewer_inspector.js` owns viewer score, signal, and insight markup; `web/gallery_view.js` owns gallery card and tooltip markup; `web/icons.js` owns SVG path data; `web/ui_helpers.js` owns small stateless rendering helpers. New user-facing UI text must go into the locale files; `web/i18n_messages.js` is only the aggregation entrypoint. Modules should not embed bilingual fallback copy. Icon-only controls need `data-ui-tooltip` or an equivalent accessible label. Truncated text must expose the full value through copy behavior, `title`, or a tooltip.
 
+`/api/state` distinguishes four counts: `summary.total` is the full active source, including unscored photos; `summary.scored` counts valid recommendation scores; `summary.matched` counts filtered matches; and `summary.showing` applies the display limit. Delivery progress uses the full source count and manual decisions.
+
+Count-sensitive translations may add flat keys such as `common.photoCount.one`. `web/i18n.js` selects an optional plural variant with `Intl.PluralRules` and `params.count`, then falls back to the base message. Keep locale key sets aligned and pass the count described by the sentence; a manifest's file noun follows its total, even when the visible preview contains only one entry.
+
 `web/gallery_panel.js` owns gallery selection, card updates, and rating tooltip placement. `web/app.js` owns view transitions and closes the gallery tooltip when leaving the gallery; rendering closes it when its anchor is removed. Resize and scroll listeners are active only while the tooltip is open.
 
 Frontend tests should prioritize:

@@ -142,7 +142,7 @@ window.CulviaExportPanel = (() => {
     }
 
     function renderDeliveryOverview(all = {}, filtered = {}) {
-      const allTotal = Number(getAppState()?.summary?.scored || 0);
+      const allTotal = Number(getAppState()?.summary?.total || 0);
       const filteredTotal = Number(getAppState()?.summary?.matched || (getAppState()?.photos || []).length || 0);
       const selected = Number(all.selected || 0);
       const rejected = Number(all.rejected || 0);
@@ -160,8 +160,8 @@ window.CulviaExportPanel = (() => {
       const guidance = !allTotal
         ? t("export.guidanceEmpty")
         : selected
-          ? t("export.guidanceReady", { pending, selected })
-          : t("export.guidancePending", { pending });
+          ? t("export.guidanceReady", { count: pending, pending, selected })
+          : t("export.guidancePending", { count: pending, pending });
       setText("#deliveryGuidance", guidance);
       setMeterWidth("#deliveryMeterPick", selected, allTotal);
       setMeterWidth("#deliveryMeterPending", pending, allTotal);

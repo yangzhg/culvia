@@ -142,7 +142,7 @@ class FrontendBatchActionsTests(unittest.TestCase):
             if (colorConfirm.title !== "Set the color label to Red?" || colorConfirm.buttonLabel !== "Set Red") {
               throw new Error("color confirmation should name the requested label");
             }
-            if (!colorConfirm.detail.includes("all 620 matching photos") || !colorConfirm.detail.includes("80 are currently shown")) {
+            if (!colorConfirm.detail.includes("all 620 matching photos") || !colorConfirm.detail.includes("currently shown: 80")) {
               throw new Error("color confirmation hid the offscreen impact");
             }
             const acceptConfirm = actions.confirmActionView({ kind: "accept", basis: "llm" }, largeTarget);

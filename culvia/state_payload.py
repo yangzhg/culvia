@@ -110,6 +110,7 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
                 pd.to_numeric(filtered[overall_llm_column], errors="coerce").notna().sum()
             )
     summary = dict(deps.summarize_scores(source_df, filtered, errors, filters))
+    summary["total"] = int(len(source_file_ids))
     summary["matched"] = int(len(filtered))
     summary["showing"] = int(len(displayed))
     app_payload = {

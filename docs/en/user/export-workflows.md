@@ -4,6 +4,8 @@ Simplified Chinese: [../../zh-CN/user/export-workflows.md](../../zh-CN/user/expo
 
 Culvia does not try to replace Lightroom Classic, Capture One, or a full DAM. Its export goal is to turn local model-assisted triage, human review, and LLM notes into structured results that can continue through a professional delivery workflow.
 
+You can mark picks and export them before running model or LLM scoring. The delivery overview counts every photo in the current source, including unscored photos. Its pending count includes unreviewed photos and photos marked for review; picks and rejects count as decided. The filtered pending count applies the current filters, while the overall delivery counts stay independent of filters and the display limit.
+
 ## Filter Scope And Display Limit
 
 The filter control **Show up to** (`filters.limit`) only limits how many matching photos the interface displays. It does not reduce the underlying filtered result.

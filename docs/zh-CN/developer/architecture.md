@@ -71,6 +71,10 @@ flowchart LR
 
 `web/index.html` 负责页面结构和静态资源顺序，`web/*.js` 按功能拆分，`web/styles/` 管理 CSS 切片，`web/locales/` 管理翻译文案。`web/app_config.js` 管理前端共享字段列表和静态标签映射，`web/distribution_model.js` 管理分布图数据转换，`web/distribution_view.js` 管理分布图 markup，`web/viewer_inspector.js` 管理选片台评分、信号和洞察 markup，`web/gallery_view.js` 管理照片墙卡片和 tooltip markup，`web/icons.js` 管理 SVG path 数据，`web/ui_helpers.js` 管理无状态渲染 helper。新增 UI 文案必须进入 locale 文件；`web/i18n_messages.js` 只作为聚合入口。不要在模块里嵌入中英文 fallback。图标按钮应提供 `data-ui-tooltip` 或等价可访问说明；被省略文本必须可复制或有完整 title/tooltip。
 
+`/api/state` 区分四个数量：`summary.total` 是当前来源全部照片数，包括未评分照片；`summary.scored` 是有有效推荐分的照片数；`summary.matched` 是筛选匹配数；`summary.showing` 是应用展示上限后的数量。交付进度以完整来源数量和人工决定为依据。
+
+需要单复数变化的文案可以添加 `common.photoCount.one` 这样的平面 key。`web/i18n.js` 根据 `Intl.PluralRules` 和 `params.count` 选择可选变体，缺少变体时使用基础文案。各语言的 key 集保持一致，并传入句子实际描述的数量；例如清单中的文件单复数取决于总数，即使页面只预览一条记录。
+
 `web/gallery_panel.js` 管理照片墙选择、卡片更新和评分提示框定位。`web/app.js` 管理视图切换，离开照片墙时关闭评分提示框；卡片渲染移除提示框锚点时也会关闭。窗口缩放和滚动监听只在提示框打开期间启用。
 
 前端测试优先覆盖：

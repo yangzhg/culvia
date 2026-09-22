@@ -7,8 +7,10 @@ from typing import Any
 import pandas as pd
 
 from culvia.app_state import AppStateStore
+from culvia.curation import PhotoMark, curation_summary
 from culvia.insight_store import AnalysisInsightMatch
-from culvia.score_view import CurrentScoreViewDependencies, load_current_score_view
+from culvia.payloads import summarize_scores
+from culvia.score_view import CurrentScoreView, CurrentScoreViewDependencies, load_current_score_view
 from culvia.state_payload import StatePayloadDependencies, build_state_payload
 
 
@@ -226,7 +228,7 @@ class StatePayloadBuilderTests(unittest.TestCase):
         self.assertTrue(payload["sourcePreview"]["ready"])
         self.assertEqual(
             payload["summary"],
-            {"sourceRows": 2, "showing": 1, "errors": 1, "limit": 80, "matched": 1},
+            {"sourceRows": 2, "total": 2, "showing": 1, "errors": 1, "limit": 80, "matched": 1},
         )
         self.assertEqual(
             payload["photos"],
@@ -250,6 +252,109 @@ class StatePayloadBuilderTests(unittest.TestCase):
         self.assertEqual(store.data["source"]["folders"], ["/photos"])
         payload["sourcePreview"]["folders"].append("/mutated")
         self.assertEqual(store.data["sourcePreview"]["folders"], ["/photos"])
+
+    def count_payload(self, total: int, scored: int, *, matched: int | None = None, limit: int = 80) -> dict[str, Any]:
+        source_df = pd.DataFrame(
+            [
+                {
+                    "file_id": f"photo-{index}",
+                    "path": f"/photos/photo-{index}.jpg",
+                    "recommendation_0_10": 8.0 if index < scored else None,
+                    "error": "",
+                }
+                for index in range(total)
+            ],
+            columns=["file_id", "path", "recommendation_0_10", "error"],
+        )
+        marks = {"photo-0": PhotoMark("photo-0", status="pick")} if total else {}
+        store = AppStateStore(
+            {
+                "scores_df": source_df,
+                "source": {"mode": "uploads", "cachePath": "/tmp/culvia-counts.sqlite"},
+                "sourcePreview": {"total": 999},
+                "filters": {"limit": limit},
+                "network": {},
+                "models": {},
+                "job": {"running": False},
+            }
+        )
+        deps = StatePayloadDependencies(
+            app_name="Test Studio",
+            app_subtitle="",
+            heif_available=True,
+            sort_fields=(),
+            sort_field_labels={},
+            model_agreement_options=(),
+            manual_status_options=(),
+            color_label_options=(),
+            weight_presets={},
+            score_labels={},
+            technical_labels={},
+            model_quality_labels={},
+            aesthetic_reference_labels={},
+            llm_review_labels={},
+            current_score_view=lambda df, _cache_path, **_options: CurrentScoreView(df.copy(), {}, frozenset()),
+            frame_file_ids=lambda df: df["file_id"].tolist(),
+            load_photo_marks=lambda _cache_path, _file_ids: marks,
+            dataframe_for_display=lambda df, _filters, _marks: (
+                df.copy(),
+                df.head(total if matched is None else matched).copy(),
+                df.iloc[0:0].copy(),
+            ),
+            selected_preview_for_display=lambda df, _marks, *, limit: df[df["file_id"].isin(marks)].head(limit),
+            load_analysis_insights=lambda *_args, **_kwargs: [],
+            llm_review_score_columns=(),
+            serialize_photo=lambda row, _insights, _marks: {"fileId": row["file_id"]},
+            curation_summary=curation_summary,
+            application_info=lambda: {},
+            local_capabilities=lambda: {},
+            device_text=lambda: {},
+            network_payload=lambda _network: {},
+            llm_config_payload=lambda: {},
+            normalize_selected_models=lambda _selected: [],
+            model_payload=lambda _network, _selected: {},
+            maintenance_model_payload=lambda _network, _selected: {},
+            summarize_scores=lambda source, filtered, errors, filters: summarize_scores(
+                source,
+                filtered,
+                errors,
+                filters,
+                enrich_scores_for_display=lambda df, _filters: df.copy(),
+            ),
+        )
+        return build_state_payload(store, deps)
+
+    def test_source_total_includes_unscored_photos(self) -> None:
+        payload = self.count_payload(2, 0)
+
+        self.assertEqual(payload["summary"]["total"], 2)
+        self.assertEqual(payload["summary"]["scored"], 0)
+        self.assertEqual(payload["curation"]["all"]["selected"], 1)
+        self.assertEqual(payload["source"]["mode"], "uploads")
+
+    def test_source_total_does_not_change_with_score_coverage(self) -> None:
+        for scored in (0, 1, 3):
+            with self.subTest(scored=scored):
+                payload = self.count_payload(3, scored)
+                self.assertEqual(payload["summary"]["total"], 3)
+                self.assertEqual(payload["summary"]["scored"], scored)
+
+    def test_source_total_is_independent_of_filter_display_limit_and_old_scan(self) -> None:
+        payload = self.count_payload(200, 1, matched=100, limit=2)
+
+        self.assertEqual(payload["summary"]["total"], 200)
+        self.assertEqual(payload["summary"]["matched"], 100)
+        self.assertEqual(payload["summary"]["showing"], 2)
+        self.assertEqual(len(payload["photos"]), 2)
+        self.assertEqual(payload["sourcePreview"]["total"], 999)
+
+    def test_empty_source_has_zero_total_and_zero_scored_photos(self) -> None:
+        payload = self.count_payload(0, 0)
+
+        self.assertEqual(payload["summary"]["total"], 0)
+        self.assertEqual(payload["summary"]["scored"], 0)
+        self.assertEqual(payload["summary"]["matched"], 0)
+        self.assertEqual(payload["photos"], [])
 
 
 if __name__ == "__main__":

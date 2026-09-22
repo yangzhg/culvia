@@ -737,7 +737,7 @@ window.CulviaDistributionView = (() => {
     const copyByLens = {
       overview: {
         title: t("distribution.decision.overview.title"),
-        body: t("distribution.decision.overview.body", { risk: riskCount, top: topCount }),
+        body: t("distribution.decision.overview.body", { risk: riskCount, top: topCount, count: topCount }),
         actions: [
           ["gallery", "layoutGrid", t("distribution.goGallery")],
           ["export", "check", t("distribution.viewPicks")],
@@ -745,7 +745,7 @@ window.CulviaDistributionView = (() => {
       },
       technical: {
         title: t("distribution.decision.technical.title"),
-        body: t("distribution.decision.technical.body", { risk: riskCount }),
+        body: t("distribution.decision.technical.body", { risk: riskCount, count: riskCount }),
         actions: [
           ["gallery", "layoutGrid", t("distribution.goGallery")],
           ["overview", "barChart", t("distribution.viewRecommendation")],
@@ -753,7 +753,7 @@ window.CulviaDistributionView = (() => {
       },
       llm: {
         title: llmCoverage < allEntries.length ? t("distribution.decision.llm.titleCoverage") : t("distribution.decision.llm.titleReady"),
-        body: t("distribution.decision.llm.body", { covered: llmCoverage, total: allEntries.length }),
+        body: t("distribution.decision.llm.body", { covered: llmCoverage, total: allEntries.length, count: allEntries.length }),
         actions: [
           ["gallery", "layoutGrid", t("distribution.goGallery")],
           ["disagreement", "gitCompare", t("distribution.viewDisagreement")],
@@ -761,7 +761,7 @@ window.CulviaDistributionView = (() => {
       },
       aesthetic: {
         title: t("distribution.decision.aesthetic.title"),
-        body: t("distribution.decision.aesthetic.body", { top: topCount }),
+        body: t("distribution.decision.aesthetic.body", { top: topCount, count: topCount }),
         actions: [
           ["gallery", "layoutGrid", t("distribution.goGallery")],
           ["technical", "gauge", t("distribution.viewTechnical")],
@@ -769,7 +769,7 @@ window.CulviaDistributionView = (() => {
       },
       disagreement: {
         title: t("distribution.decision.disagreement.title"),
-        body: t("distribution.decision.disagreement.body", { top: topCount }),
+        body: t("distribution.decision.disagreement.body", { top: topCount, count: topCount }),
         actions: [
           ["gallery", "layoutGrid", t("distribution.goGallery")],
           ["llm", "brain", t("distribution.viewLlm")],

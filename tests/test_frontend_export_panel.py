@@ -35,7 +35,7 @@ function createHarness() {
     locale: "en",
     app: {
       job: { running: false },
-      summary: { scored: 1, matched: 1 },
+      summary: { total: 1, scored: 1, matched: 1 },
       curation: { all: { selected: 1 }, filtered: { selected: 1 }, exportSelectionKey: "selection-1" },
       selectedPhotos: [{ fileId: "photo-1", path: "/photos/photo.jpg" }],
       photos: [],
@@ -148,6 +148,77 @@ class FrontendExportPanelTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_delivery_totals_include_unscored_and_partially_scored_photos(self) -> None:
+        self.run_panel_script(
+            """
+            for (const sample of [
+              { total: 1, scored: 0, picked: 0 },
+              { total: 2, scored: 0, picked: 1 },
+              { total: 3, scored: 1, picked: 1 },
+              { total: 2, scored: 2, picked: 1 },
+            ]) {
+              const h = createHarness();
+              h.app.summary = { total: sample.total, scored: sample.scored, matched: sample.total };
+              h.app.photos = Array.from({ length: sample.total }, (_, index) => ({ fileId: `photo-${index}` }));
+              h.app.selectedPhotos = h.app.photos.slice(0, sample.picked);
+              h.app.curation = {
+                all: { selected: sample.picked, rejected: 0 },
+                filtered: { selected: sample.picked, rejected: 0 },
+              };
+              h.panel.renderExportList();
+              const pending = sample.total - sample.picked;
+              assert.equal(h.node("#deliveryPendingCount").textContent, String(pending));
+              assert.equal(h.node("#deliveryVisiblePendingCount").textContent, String(pending));
+              assert.equal(h.node("#deliveryPickCount").textContent, String(sample.picked));
+              assert.equal(h.node("#deliveryMeterPending").style.width, `${pending / sample.total * 100}%`);
+              const guidance = sample.picked ? "export.guidanceReady" : "export.guidancePending";
+              assert.equal(h.node("#deliveryGuidance").textContent, h.t(guidance, { count: pending, pending, selected: sample.picked }));
+            }
+            """
+        )
+
+    def test_delivery_total_does_not_follow_filter_display_limit_or_old_scan(self) -> None:
+        self.run_panel_script(
+            """
+            const h = createHarness();
+            h.app.summary = { total: 200, scored: 2, matched: 20, showing: 1 };
+            h.app.sourcePreview = { total: 999 };
+            h.app.photos = [{ fileId: "visible-photo" }];
+            h.app.curation = {
+              all: { selected: 3, rejected: 5 },
+              filtered: { selected: 1, rejected: 2 },
+            };
+            h.panel.renderExportList();
+            assert.equal(h.node("#deliveryPendingCount").textContent, "192");
+            assert.equal(h.node("#deliveryVisiblePendingCount").textContent, "17");
+            assert.equal(h.node("#deliveryMeterPick").style.width, "1.5%");
+            h.app.summary.matched = 0;
+            h.app.summary.showing = 0;
+            h.app.photos = [];
+            h.app.curation.filtered = { selected: 0, rejected: 0 };
+            h.panel.renderExportList();
+            assert.equal(h.node("#deliveryPendingCount").textContent, "192");
+            assert.equal(h.node("#deliveryVisiblePendingCount").textContent, "0");
+            """
+        )
+
+    def test_empty_delivery_source_has_zero_counts_and_empty_guidance(self) -> None:
+        self.run_panel_script(
+            """
+            const h = createHarness();
+            h.app.summary = { total: 0, scored: 0, matched: 0, showing: 0 };
+            h.app.photos = [];
+            h.app.selectedPhotos = [];
+            h.app.curation = { all: {}, filtered: {} };
+            h.panel.renderExportList();
+            assert.equal(h.node("#deliveryPendingCount").textContent, "0");
+            assert.equal(h.node("#deliveryPickCount").textContent, "0");
+            assert.equal(h.node("#deliveryRejectCount").textContent, "0");
+            assert.equal(h.node("#deliveryMeterPending").style.width, "0%");
+            assert.equal(h.node("#deliveryGuidance").textContent, h.t("export.guidanceEmpty"));
+            """
+        )
 
     def test_copy_is_single_flight_and_controls_stay_disabled_across_renders(self) -> None:
         self.run_panel_script(

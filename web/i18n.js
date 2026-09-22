@@ -2,6 +2,7 @@
   const STORAGE_KEY = "culvia.language";
   const DEFAULT_LANGUAGE = "zh-CN";
   const messages = window.CulviaI18nMessages || {};
+  const pluralRules = new Map();
   const supportedLanguages = Object.keys(messages);
   const storedLanguage = localStorage.getItem(STORAGE_KEY);
   const resolvedLanguage = storedLanguage || navigator.language || DEFAULT_LANGUAGE;
@@ -22,10 +23,23 @@
     });
   }
 
+  function messageTemplate(dictionary, key, params, language) {
+    const value = params?.count;
+    const count = typeof value === "number" || (typeof value === "string" && value.trim()) ? Number(value) : NaN;
+    if (Number.isFinite(count)) {
+      if (!pluralRules.has(language)) pluralRules.set(language, new Intl.PluralRules(language));
+      const category = pluralRules.get(language).select(count);
+      const variant = dictionary[`${key}.${category}`] ?? dictionary[`${key}.other`];
+      if (variant != null) return variant;
+    }
+    return dictionary[key];
+  }
+
   function t(key, params = {}, language = currentLanguage) {
-    const dictionary = messages[normalizeLanguage(language)] || {};
+    const normalized = normalizeLanguage(language);
+    const dictionary = messages[normalized] || {};
     const fallback = messages[DEFAULT_LANGUAGE] || {};
-    return format(dictionary[key] ?? fallback[key] ?? key, params);
+    return format(messageTemplate(dictionary, key, params, normalized) ?? messageTemplate(fallback, key, params, DEFAULT_LANGUAGE) ?? key, params);
   }
 
   function optionalT(key, fallback) {

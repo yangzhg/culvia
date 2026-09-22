@@ -67,7 +67,7 @@ window.CulviaExportResult = (() => {
             ? `
               <details class="export-result-details">
                 <summary>${helpers.iconMarkup("chevronDown")}${helpers.escapeHtml(t("export.resultDetails", {}, "查看导出明细"))}</summary>
-                <p class="export-result-explanation">${helpers.escapeHtml(t("export.resultLegacyPreview", { shown: Math.min(copiedFiles.length, 20) + Math.min(skippedDetails.length, 20), total: copied + skipped }))}</p>
+                <p class="export-result-explanation">${helpers.escapeHtml(t("export.resultLegacyPreview", { shown: Math.min(copiedFiles.length, 20) + Math.min(skippedDetails.length, 20), total: copied + skipped, count: copied + skipped }))}</p>
                 <div class="export-result-grid">
                   ${copiedFiles.length ? renderFileGroup(t("export.resultCopied", {}, "已复制"), copiedFiles, helpers) : ""}
                   ${skippedDetails.length ? renderSkippedGroup(t("export.resultNotCopied", {}, "未复制"), skippedDetails, helpers) : ""}
@@ -130,7 +130,7 @@ window.CulviaExportResult = (() => {
     if (!result.previewCount) return "";
     return `<details class="export-result-details">
       <summary>${helpers.iconMarkup("chevronDown")}${helpers.escapeHtml(t("export.resultDetails", {}, "查看导出明细"))}</summary>
-      <p class="export-result-explanation">${helpers.escapeHtml(t("export.resultPreview", { shown: result.previewCount, total: result.totalEntryCount }))}</p>
+      <p class="export-result-explanation">${helpers.escapeHtml(t("export.resultPreview", { shown: result.previewCount, total: result.totalEntryCount, count: result.totalEntryCount }))}</p>
       <div class="export-result-grid">${result.previewEntries.map((entry) => renderReceiptEntry(entry, helpers)).join("")}</div>
     </details>`;
   }
