@@ -175,6 +175,7 @@ def run_scoring_job(
                 expected_job_id=job_id,
             )
             result_published = True
+            dependencies.save_source_config(_source_payload(mode, folders, cache_path, uploaded_paths), cache_path)
 
         scored_df, device = dependencies.score_image_paths(
             paths,
@@ -196,7 +197,6 @@ def run_scoring_job(
         )
         if not result_published:
             publish_result(scored_df)
-        dependencies.save_source_config(_source_payload(mode, folders, cache_path, uploaded_paths), cache_path)
         job_service.update(
             running=False,
             phase="done",

@@ -473,6 +473,7 @@ class ScoringCheckpointTests(unittest.TestCase):
             paths = [make_image(root / f"photo-{index}.jpg") for index in range(1, 4)]
             cache_path = root / "scores.sqlite"
             scored_names: list[str] = []
+            published: list[pd.DataFrame] = []
 
             def analyze(path: Path) -> dict[str, float]:
                 scored_names.append(path.name)
@@ -489,10 +490,17 @@ class ScoringCheckpointTests(unittest.TestCase):
                         cache_path=cache_path,
                         selected_models=[scoring.MODEL_BASIC_TECHNICAL],
                         progress_callback=cancel_before_third,
+                        publish_result=published.append,
                     )
 
                 checkpointed = scoring.load_cache_records(cache_path)
                 self.assertEqual(set(checkpointed["filename"]), {"photo-1.jpg", "photo-2.jpg"})
+                self.assertEqual(len(published), 1)
+                visible = published[0].set_index("filename")
+                self.assertEqual(list(visible.index), [path.name for path in paths])
+                self.assertEqual(float(visible.loc["photo-1.jpg", "technical_overall_0_10"]), 7.0)
+                self.assertEqual(float(visible.loc["photo-2.jpg", "technical_overall_0_10"]), 7.0)
+                self.assertTrue(pd.isna(visible.loc["photo-3.jpg", "technical_overall_0_10"]))
 
                 scored_names.clear()
                 result, _device = scoring.score_image_paths(
@@ -509,6 +517,7 @@ class ScoringCheckpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             image_path = make_image(Path(tmp) / "photo.jpg")
             cache_path = Path(tmp) / "scores.sqlite"
+            published: list[pd.DataFrame] = []
 
             def cancel_after_aesthetic(_done: int, _total: int, _path: Path, state: str) -> None:
                 if state == "aesthetic_done":
@@ -522,9 +531,12 @@ class ScoringCheckpointTests(unittest.TestCase):
                         model_loader=lambda _device: SimpleNamespace(device="cpu"),
                         selected_models=[scoring.MODEL_CORE_AESTHETIC, scoring.MODEL_BASIC_TECHNICAL],
                         progress_callback=cancel_after_aesthetic,
+                        publish_result=published.append,
                     )
 
             checkpointed = scoring.load_cache_records(cache_path).iloc[0]
+            self.assertEqual(len(published), 1)
+            pd.testing.assert_series_equal(published[0].iloc[0].fillna(""), checkpointed.fillna(""))
             self.assertFalse(pd.isna(checkpointed["overall_0_10"]))
             self.assertTrue(pd.isna(checkpointed["technical_overall_0_10"]))
             self.assertEqual(
@@ -546,6 +558,93 @@ class ScoringCheckpointTests(unittest.TestCase):
         technical.assert_called_once_with(image_path)
         self.assertFalse(pd.isna(result.loc[0, "overall_0_10"]))
         self.assertFalse(pd.isna(result.loc[0, "technical_overall_0_10"]))
+
+    def test_failed_checkpoint_publishes_only_previously_committed_stages(self) -> None:
+        for rejected_column in ("overall_0_10", "technical_overall_0_10"):
+            with self.subTest(rejected_column=rejected_column), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                image_path = make_image(root / "photo.jpg")
+                cache_path = root / "scores.sqlite"
+                scoring.save_cache_records(pd.DataFrame(), cache_path)
+                with sqlite3.connect(cache_path) as connection:
+                    connection.execute(
+                        f"""CREATE TRIGGER reject_stage BEFORE INSERT ON culvia_scores
+                        WHEN NEW.{rejected_column} IS NOT NULL
+                        BEGIN SELECT RAISE(ABORT, 'checkpoint write failed'); END"""
+                    )
+                published: list[pd.DataFrame] = []
+
+                def publish_result(frame: pd.DataFrame) -> None:
+                    # The runner persists source selection as part of publication.
+                    scoring.save_source_config_to_sqlite(
+                        {"mode": "folders", "folders": [str(root)], "cachePath": str(cache_path)},
+                        cache_path,
+                    )
+                    published.append(frame)
+
+                with (
+                    patch.object(scoring, "score_image", return_value=self.aesthetic_scores()),
+                    patch.object(scoring, "analyze_technical_quality", return_value=self.technical_scores()),
+                    self.assertRaisesRegex(sqlite3.IntegrityError, "checkpoint write failed"),
+                ):
+                    scoring.score_image_paths(
+                        [image_path],
+                        cache_path=cache_path,
+                        model_loader=lambda _device: SimpleNamespace(device="cpu"),
+                        selected_models=[scoring.MODEL_CORE_AESTHETIC, scoring.MODEL_BASIC_TECHNICAL],
+                        publish_result=publish_result,
+                    )
+
+                persisted = scoring.load_cache_records(cache_path)
+                if rejected_column == "overall_0_10":
+                    self.assertEqual(published, [])
+                    self.assertTrue(persisted.empty)
+                else:
+                    self.assertEqual(len(published), 1)
+                    row = published[0].iloc[0]
+                    self.assertEqual(float(row["overall_0_10"]), 8.0)
+                    self.assertTrue(pd.isna(row["technical_overall_0_10"]))
+                    pd.testing.assert_series_equal(row.fillna(""), persisted.iloc[0].fillna(""))
+
+    def test_force_recompute_recovery_retains_unvisited_persisted_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = [make_image(root / f"photo-{index}.jpg") for index in range(3)]
+            cache_path = root / "scores.sqlite"
+            records = [
+                scoring._apply_technical_scores(
+                    scoring._make_empty_record(path, scoring.build_file_id(path)),
+                    self.technical_scores(float(index + 3)),
+                )
+                for index, path in enumerate(paths)
+            ]
+            scoring.save_cache_records(pd.DataFrame(records), cache_path)
+            published: list[pd.DataFrame] = []
+
+            def cancel_after_first_stage(_done: int, _total: int, _path: Path, state: str) -> None:
+                if state == "technical_done":
+                    raise JobCancelled
+
+            with (
+                patch.object(scoring, "analyze_technical_quality", return_value=self.technical_scores(8.0)) as analyze,
+                self.assertRaises(JobCancelled),
+            ):
+                scoring.score_image_paths(
+                    paths[:2],
+                    cache_path=cache_path,
+                    use_cache=False,
+                    selected_models=[scoring.MODEL_BASIC_TECHNICAL],
+                    progress_callback=cancel_after_first_stage,
+                    publish_result=published.append,
+                )
+
+            analyze.assert_called_once_with(paths[0])
+            self.assertEqual(len(published), 1)
+            visible = published[0].set_index("filename")
+            self.assertEqual(list(visible.index), [path.name for path in paths[:2]])
+            self.assertEqual(list(visible["technical_overall_0_10"]), [8.0, 4.0])
+            persisted = scoring.load_cache_records(cache_path).set_index("filename")
+            self.assertEqual(list(persisted["technical_overall_0_10"]), [8.0, 4.0, 5.0])
 
     def test_text_llm_refreshes_after_upstream_score_changes_in_the_same_run(self) -> None:
         original_layers = scoring.llm_config_layers()

@@ -55,7 +55,8 @@ flowchart LR
 - `culvia.app_state`：保存当前结果、来源、筛选、网络、模型和任务状态。
 - `culvia.job_service`：管理评分任务、暂停/继续和并发保护。
 - `culvia.scoring_runner`：编排来源解析、模型准备、评分进度和结果刷新。
-- `culvia.scoring`：本地模型、大模型评分、SQLite 读写和批处理评分统一入口。每张照片完成的模型阶段会先写入 checkpoint 再上报进度，因此取消或 worker 异常后可以复用已持久化的结果。
+- `culvia.scoring`：本地模型、大模型评分、SQLite 读写和批处理评分统一入口。每张照片完成的模型阶段会先写入 checkpoint 再上报进度。取消或异常时，在任务结束前将已持久化的阶段发布回当前来源；尚未处理的照片保留缓存或未评分行。重试复用已保存的结果，写入失败的阶段不会显示为已完成。
+- `culvia.llm_review_runner`：检查评审身份和构造本地评分上下文前，先从 SQLite 更新当前来源的评分行。每次仅写入当前完成评审的照片，保留其他已保存的阶段及来源外的行；分数与匹配的评审详情均保存成功后，才发布该评审结果。
 - `culvia.recommendation`：推荐分数、筛选判断和权重预设。
 - `culvia.score_view`：统一按本地模型版本和 LLM 身份、生成批次解析当前有效分数，供状态响应、选片操作和 CSV 导出复用；洞察详情与分数行使用同一次捕获的 LLM 身份。
 - `culvia.gallery_display` / `culvia.payloads`：把 DataFrame、人工标记、LLM insight 和文件信息转换为 UI payload。

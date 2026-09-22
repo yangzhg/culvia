@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
-from contextlib import nullcontext
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ContextManager, Protocol
@@ -95,7 +95,9 @@ def score_image_paths(
     device = dependencies.get_device()
 
     existing_cache = (
-        dependencies.load_cache_records(cache_path) if cache_path and use_cache else pd.DataFrame(columns=CSV_COLUMNS)
+        dependencies.load_cache_records(cache_path)
+        if cache_path and (use_cache or publish_result is not None)
+        else pd.DataFrame(columns=CSV_COLUMNS)
     )
     cache_by_id = {
         str(row["file_id"]): row.to_dict()
@@ -137,15 +139,20 @@ def score_image_paths(
 
     rows: list[dict[str, object]] = []
     total = len(entries)
-    checkpoint_context = dependencies.open_checkpoint_writer(cache_path) if cache_path else nullcontext(None)
-    with checkpoint_context as checkpoint_writer:
+    with _checkpoint_results(
+        entries,
+        cache_by_id=cache_by_id,
+        cache_path=cache_path,
+        dependencies=dependencies,
+        publish_result=publish_result,
+    ) as checkpoint_record:
         for index, entry in enumerate(entries, start=1):
             status = "cached" if entry.cached_record is not None and not entry.should_score else "scored"
             record_checkpointed = False
             if entry.pre_error:
                 record = dependencies.make_empty_record(entry.path, entry.file_id, entry.pre_error)
                 status = "error"
-                _checkpoint_record(record, checkpoint_writer)
+                checkpoint_record(record)
                 record_checkpointed = True
             else:
                 record = (
@@ -173,7 +180,7 @@ def score_image_paths(
                     except Exception as exc:
                         failure = exc
                     else:
-                        _checkpoint_record(record, checkpoint_writer)
+                        checkpoint_record(record)
                         record_checkpointed = True
                         if progress_callback is not None:
                             progress_callback(index - 1, total, entry.path, "aesthetic_done")
@@ -194,7 +201,7 @@ def score_image_paths(
                             if entry.cached_record is not None and not entry.needs.get(MODEL_CORE_AESTHETIC)
                             else status
                         )
-                        _checkpoint_record(record, checkpoint_writer)
+                        checkpoint_record(record)
                         record_checkpointed = True
                         if progress_callback is not None:
                             progress_callback(index - 1, total, entry.path, "technical_done")
@@ -217,7 +224,7 @@ def score_image_paths(
                     except Exception as exc:
                         failure = exc
                     else:
-                        _checkpoint_record(record, checkpoint_writer)
+                        checkpoint_record(record)
                         record_checkpointed = True
                         if progress_callback is not None:
                             progress_callback(index - 1, total, entry.path, "clip_done")
@@ -242,13 +249,13 @@ def score_image_paths(
                     else:
                         status = "reviewed"
                         try:
-                            _checkpoint_record(record, checkpoint_writer)
+                            checkpoint_record(record)
                             record_checkpointed = True
                             if cache_path and llm_output.insights:
                                 dependencies.save_analysis_insights(llm_output.insights, cache_path)
                         except Exception:
                             _clear_llm_review_scores(record)
-                            _checkpoint_record(record, checkpoint_writer)
+                            checkpoint_record(record)
                             raise
                         if progress_callback is not None:
                             progress_callback(index - 1, total, entry.path, "llm_done")
@@ -256,10 +263,10 @@ def score_image_paths(
                 if failure is not None:
                     record["error"] = repr(failure)
                     status = "error"
-                    _checkpoint_record(record, checkpoint_writer)
+                    checkpoint_record(record)
                     record_checkpointed = True
                 elif not record_checkpointed and (entry.cache_dirty or entry.cached_record is None):
-                    _checkpoint_record(record, checkpoint_writer)
+                    checkpoint_record(record)
                     record_checkpointed = True
 
             rows.append(record)
@@ -274,12 +281,42 @@ def score_image_paths(
     return result_df, device
 
 
-def _checkpoint_record(
-    record: Mapping[str, object],
-    checkpoint_writer: ScoreCheckpointWriter | None,
-) -> None:
-    if checkpoint_writer is not None:
-        checkpoint_writer.upsert(pd.DataFrame([dict(record)]))
+@contextmanager
+def _checkpoint_results(
+    entries: list[ScoreEntry],
+    *,
+    cache_by_id: Mapping[str, dict[str, object]],
+    cache_path: str | Path | None,
+    dependencies: ScoreImagePathDependencies,
+    publish_result: ResultPublisher | None,
+) -> Iterator[Callable[[Mapping[str, object]], None]]:
+    checkpointed: dict[str, dict[str, object]] = {}
+
+    checkpoint_context = dependencies.open_checkpoint_writer(cache_path) if cache_path else nullcontext(None)
+    try:
+        with checkpoint_context as checkpoint_writer:
+
+            def checkpoint_record(record: Mapping[str, object]) -> None:
+                snapshot = dict(record)
+                if checkpoint_writer is not None:
+                    checkpoint_writer.upsert(pd.DataFrame([snapshot]))
+                if publish_result is not None:
+                    checkpointed[str(snapshot["file_id"])] = snapshot
+
+            yield checkpoint_record
+    except Exception:
+        if publish_result is not None and checkpointed:
+            # The writer is closed before publication can save source metadata.
+            # Include unvisited photos, but never a stage whose write failed.
+            rows = [
+                checkpointed.get(entry.file_id)
+                or entry.cached_record
+                or cache_by_id.get(entry.file_id)
+                or dependencies.make_empty_record(entry.path, entry.file_id, entry.pre_error or "")
+                for entry in entries
+            ]
+            publish_result(dependencies.normalize_score_dataframe(pd.DataFrame(rows)))
+        raise
 
 
 def _clear_llm_review_scores(record: dict[str, object]) -> None:

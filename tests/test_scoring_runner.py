@@ -3,13 +3,18 @@ from __future__ import annotations
 import tempfile
 import unittest
 from dataclasses import replace
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Sequence
+from unittest.mock import patch
 
 import pandas as pd
 
 from culvia.app_state import AppStateStore, create_initial_state
+from culvia.export_service import export_csv_bytes
 from culvia.job_service import ScoringJobService
+from culvia import scoring
+from culvia.score_view import CurrentScoreViewDependencies, load_current_score_view
 from culvia.scoring_runner import ScoringRunnerDependencies, run_scoring_job
 
 
@@ -85,6 +90,77 @@ def _unused_score_image_paths(*_args: object, **_kwargs: object) -> tuple[pd.Dat
 
 
 class ScoringRunnerTests(unittest.TestCase):
+    def test_cancelled_scoring_exposes_the_checkpoint_before_releasing_the_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = [root / "one.jpg", root / "two.jpg"]
+            for path in paths:
+                path.write_bytes(path.name.encode("utf-8"))
+            cache_path = str(root / "scores.sqlite")
+            store = make_store(cache_path)
+            service = ScoringJobService(store)
+            job_id = service.reserve()
+            calls: dict[str, Any] = {}
+
+            def score_image(_path: Path, _model: object) -> dict[str, float]:
+                service.request_cancel()
+                return {field: 4.0 for field in scoring.SCORE_FIELDS}
+
+            with patch.object(scoring, "score_image", side_effect=score_image):
+                run_scoring_job(
+                    str(job_id),
+                    {
+                        "mode": "folders",
+                        "folders": [str(root)],
+                        "cachePath": cache_path,
+                        "selectedModels": [scoring.MODEL_CORE_AESTHETIC, scoring.MODEL_BASIC_TECHNICAL],
+                    },
+                    store,
+                    service,
+                    make_dependencies(
+                        scan_image_paths=lambda _folders: (paths, []),
+                        score_image_paths=scoring.score_image_paths,
+                        calls=calls,
+                    ),
+                )
+
+            snapshot = store.snapshot()
+            self.assertEqual(snapshot["job"]["phase"], "cancelled")
+            self.assertFalse(snapshot["job"]["running"])
+            self.assertEqual(snapshot["source"]["folders"], [str(root)])
+            self.assertEqual(snapshot["source"]["cachePath"], cache_path)
+            visible = snapshot["scores_df"].set_index("filename")
+            self.assertEqual(list(visible.index), [path.name for path in paths])
+            self.assertEqual(float(visible.loc["one.jpg", "overall_0_10"]), 8.0)
+            self.assertTrue(pd.isna(visible.loc["one.jpg", "technical_overall_0_10"]))
+            self.assertTrue(pd.isna(visible.loc["two.jpg", "overall_0_10"]))
+            persisted = scoring.load_cache_records(cache_path)
+            self.assertEqual(list(persisted["filename"]), ["one.jpg"])
+            self.assertEqual(calls["source_configs"][0][0]["folders"], [str(root)])
+            self.assertEqual(store.current_media_revision(), 1)
+            self.assertEqual(set(store.media_catalog_snapshot().by_file_id), set(visible["file_id"]))
+            self.assertEqual(service.active_thread_job_id(), "")
+            view = load_current_score_view(
+                snapshot["scores_df"],
+                cache_path,
+                CurrentScoreViewDependencies(
+                    normalize_dataframe=scoring.normalize_score_dataframe,
+                    load_matching_results=scoring.load_latest_matching_analysis_insight_results,
+                    llm_review_provider=scoring.llm_review_provider,
+                    llm_review_model_name=scoring.llm_review_model_name,
+                    llm_review_prompt_version=scoring.llm_review_prompt_version,
+                    llm_review_result_prompt_version=scoring.llm_review_result_prompt_version,
+                    llm_review_input_mode=scoring.llm_review_input_mode,
+                ),
+            )
+            exported = pd.read_csv(
+                BytesIO(export_csv_bytes(view.dataframe, {}, normalize_dataframe=scoring.normalize_score_dataframe))
+            ).set_index("filename")
+            self.assertEqual(float(exported.loc["one.jpg", "overall_0_10"]), 8.0)
+            self.assertEqual(exported.loc["one.jpg", "core_aesthetic_result_state"], "current")
+            self.assertTrue(pd.isna(exported.loc["two.jpg", "overall_0_10"]))
+            self.assertEqual(exported.loc["two.jpg", "core_aesthetic_result_state"], "missing")
+
     def test_config_refresh_failure_ends_job_without_starting_scoring(self) -> None:
         cache_path = "/tmp/broken-config.sqlite"
         store = make_store(cache_path)

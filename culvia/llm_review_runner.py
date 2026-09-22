@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from culvia.app_state import AppStateStore
+from culvia.cache_records import ScoreCacheCheckpointWriter
 from culvia.insight_store import AnalysisInsight, AnalysisInsightMatch
 from culvia.job_service import JobCancelled, ScoringJobService
 from culvia.job_text import exception_text, text_ref
@@ -44,7 +46,7 @@ class LlmReviewRunnerDependencies:
     score_llm_review_image: ScoreLlmReviewImage
     apply_llm_review_scores: Callable[..., dict[str, object]]
     load_cache_records: Callable[[str | Path], pd.DataFrame]
-    save_cache_records: Callable[[pd.DataFrame, str | Path, pd.DataFrame | None], None]
+    open_checkpoint_writer: Callable[[str | Path], AbstractContextManager[ScoreCacheCheckpointWriter]]
     load_latest_matching_analysis_insight_results: Callable[..., Mapping[str, AnalysisInsightMatch]]
     save_analysis_insights: Callable[[Sequence[AnalysisInsight], str | Path], None]
     thumbnail_url: Callable[[str, int], str]
@@ -103,7 +105,11 @@ def run_llm_review_job(
                 expected_job_id=job_id,
             )
 
-        existing_cache = dependencies.load_cache_records(cache_path)
+        source_df = _restore_cached_source_scores(
+            source_df,
+            dependencies.load_cache_records(cache_path),
+            dependencies.normalize_score_dataframe,
+        )
         llm_candidate_df = source_df[
             pd.to_numeric(
                 source_df.get(
@@ -144,6 +150,11 @@ def run_llm_review_job(
             score_columns=tuple(score_column(field) for field in LLM_REVIEW_FIELDS),
         )
         source_df = dependencies.normalize_score_dataframe(resolution.dataframe)
+        state_store.publish_score_values(
+            source_df,
+            expected_media_revision=media_revision,
+            expected_job_id=job_id,
+        )
         pending_rows = [
             row.to_dict()
             for _, row in source_df.iterrows()
@@ -173,11 +184,6 @@ def run_llm_review_job(
         )
 
         if not total:
-            state_store.publish_score_values(
-                source_df,
-                expected_media_revision=media_revision,
-                expected_job_id=job_id,
-            )
             job_service.update(
                 running=False,
                 phase="done",
@@ -190,46 +196,46 @@ def run_llm_review_job(
             return
 
         scored_df = source_df.copy()
-        for index, record in enumerate(pending_rows, start=1):
-            job_service.raise_if_cancelled()
-            path = Path(str(record.get("path") or ""))
-            file_id = str(record.get("file_id") or "")
-            job_service.update(
-                phase="llm_review",
-                titleText=text_ref("jobText.llmRunning"),
-                detailText=text_ref("jobText.photoProgressDetail", index=index, total=total, file=path.name),
-                progress=(index - 1) / max(total, 1),
-                done=index - 1,
-                total=total,
-                currentFile=path.name,
-                currentPath=str(path),
-                currentThumb=dependencies.thumbnail_url(str(path), 180),
-                activeEvaluation="stage.llmReview",
-                completedEvaluations=[],
-            )
-            output = dependencies.score_llm_review_image(path, file_id, current_local_score_context(record))
-            generation = _llm_output_generation(output)
-            updated_record = dependencies.apply_llm_review_scores(
-                dict(record),
-                output.scores,
-                generation=generation,
-            )
-            updated_df = _replace_record(scored_df, updated_record, dependencies.normalize_score_dataframe)
-            dependencies.save_cache_records(updated_df, cache_path, existing_cache)
-            scored_df = updated_df
-            state_store.publish_score_values(
-                scored_df,
-                expected_media_revision=media_revision,
-                expected_job_id=job_id,
-            )
-            if output.insights:
-                dependencies.save_analysis_insights(output.insights, cache_path)
-            job_service.update(
-                detailText=text_ref("jobText.llmCompletedDetail", index=index, total=total, file=path.name),
-                progress=index / max(total, 1),
-                done=index,
-                completedEvaluations=["stage.llmReview"],
-            )
+        with dependencies.open_checkpoint_writer(cache_path) as checkpoint_writer:
+            for index, record in enumerate(pending_rows, start=1):
+                job_service.raise_if_cancelled()
+                path = Path(str(record.get("path") or ""))
+                file_id = str(record.get("file_id") or "")
+                job_service.update(
+                    phase="llm_review",
+                    titleText=text_ref("jobText.llmRunning"),
+                    detailText=text_ref("jobText.photoProgressDetail", index=index, total=total, file=path.name),
+                    progress=(index - 1) / max(total, 1),
+                    done=index - 1,
+                    total=total,
+                    currentFile=path.name,
+                    currentPath=str(path),
+                    currentThumb=dependencies.thumbnail_url(str(path), 180),
+                    activeEvaluation="stage.llmReview",
+                    completedEvaluations=[],
+                )
+                output = dependencies.score_llm_review_image(path, file_id, current_local_score_context(record))
+                generation = _llm_output_generation(output)
+                updated_record = dependencies.apply_llm_review_scores(
+                    dict(record),
+                    output.scores,
+                    generation=generation,
+                )
+                checkpoint_writer.upsert(pd.DataFrame([updated_record]))
+                if output.insights:
+                    dependencies.save_analysis_insights(output.insights, cache_path)
+                scored_df = _replace_record(scored_df, updated_record, dependencies.normalize_score_dataframe)
+                state_store.publish_score_values(
+                    scored_df,
+                    expected_media_revision=media_revision,
+                    expected_job_id=job_id,
+                )
+                job_service.update(
+                    detailText=text_ref("jobText.llmCompletedDetail", index=index, total=total, file=path.name),
+                    progress=index / max(total, 1),
+                    done=index,
+                    completedEvaluations=["stage.llmReview"],
+                )
 
         job_service.update(
             running=False,
@@ -307,6 +313,31 @@ def _records_for_paths(paths: Sequence[Path], dependencies: LlmReviewRunnerDepen
                 )
             )
     return dependencies.normalize_score_dataframe(pd.DataFrame(rows, columns=CSV_COLUMNS))
+
+
+def _restore_cached_source_scores(
+    source_df: pd.DataFrame,
+    cached_df: pd.DataFrame,
+    normalize_score_dataframe: Callable[[pd.DataFrame], pd.DataFrame],
+) -> pd.DataFrame:
+    if source_df.empty or cached_df.empty:
+        return source_df
+    cached_by_id = {
+        str(record["file_id"]): record for record in normalize_score_dataframe(cached_df).to_dict(orient="records")
+    }
+    rows = []
+    for source_record in source_df.to_dict(orient="records"):
+        cached = cached_by_id.get(str(source_record["file_id"]))
+        if cached is None:
+            rows.append(source_record)
+        else:
+            rows.append(
+                {
+                    **cached,
+                    **{column: source_record[column] for column in ("file_id", "path", "folder", "filename")},
+                }
+            )
+    return normalize_score_dataframe(pd.DataFrame(rows))
 
 
 def _replace_record(

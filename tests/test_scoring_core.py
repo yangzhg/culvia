@@ -360,6 +360,7 @@ class ScoringCoreTests(unittest.TestCase):
 
     def test_llm_insight_save_failure_invalidates_the_checkpointed_generation(self) -> None:
         calls: dict[str, object] = {}
+        published_frames: list[pd.DataFrame] = []
         dependencies = make_dependencies(
             cache_df=pd.DataFrame(),
             current_insight_generations={},
@@ -386,6 +387,7 @@ class ScoringCoreTests(unittest.TestCase):
                     model_loader=lambda _device: self.fail("core model should not load"),
                     clip_reference_loader=lambda _device: self.fail("clip model should not load"),
                     selected_models=[MODEL_LLM_REVIEW],
+                    publish_result=published_frames.append,
                 )
 
         checkpoints = calls["checkpointed"]
@@ -395,6 +397,9 @@ class ScoringCoreTests(unittest.TestCase):
         self.assertEqual(float(published[LLM_REVIEW_GENERATION_COLUMN]), 2.0)
         self.assertTrue(pd.isna(invalidated[LLM_REVIEW_GENERATION_COLUMN]))
         self.assertTrue(pd.isna(invalidated["llm_review_overall_0_10"]))
+        self.assertEqual(len(published_frames), 1)
+        self.assertTrue(pd.isna(published_frames[0].loc[0, LLM_REVIEW_GENERATION_COLUMN]))
+        self.assertTrue(pd.isna(published_frames[0].loc[0, "llm_review_overall_0_10"]))
 
 
 if __name__ == "__main__":
