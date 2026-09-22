@@ -38,11 +38,11 @@ import "./distribution_view.js?v=20260922-review-readability";
 import "./distribution_panel.js";
 import "./export_panel.js?v=20260922-export-receipts";
 import "./llm_config_panel.js";
-import "./gallery_panel.js?v=20260908-view-lifecycle";
-import "./viewer_panel.js?v=20260904-score-provenance";
+import "./gallery_panel.js?v=20260922-mark-identity";
+import "./viewer_panel.js?v=20260922-mark-identity";
 import "./source_panel.js?v=20260908-responsive-readability";
 import "./filter_panel.js?v=20260908-responsive-readability";
 import "./viewer_inspector.js?v=20260922-review-readability";
 
 // Orchestrator: wires state, rendering, and events together.
-import "./app.js?v=20260922-task-and-delivery";
+import "./app.js?v=20260922-mark-identity";

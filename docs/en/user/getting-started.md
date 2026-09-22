@@ -55,6 +55,8 @@ Manual decisions are the final culling layer. Model and LLM scores help sort and
 - `Reject`: excluded from the final set.
 - Star ratings and color labels can be used for later Lightroom/Capture One style workflows.
 
+During rapid culling, ratings and marks stay attached to the photo you acted on. You can keep browsing while a decision is saved; finishing the save keeps your current place in the review.
+
 On desktop-sized windows, manual decisions sit beside the photo. In compact layouts, they follow the photo, ahead of the filmstrip and detailed scores. Distribution views wrap into rows so every view remains available without horizontal scrolling.
 
 Detailed scores distinguish **Not calculated** and **Not reviewed** from a real zero score. Show missing metrics when you need to check coverage; only measured scores display stars. The **File** tab keeps the complete filename and folder path available through their hints. Distribution summary cards reflow and wrap their labels to keep the score, count, and context readable in narrow windows.

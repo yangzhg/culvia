@@ -63,6 +63,7 @@ let curationHistoryLoading = false;
 let curationHistoryError = "";
 let shortcutHelpOpen = false;
 let markUpdateQueue = Promise.resolve();
+const pendingPhotoMarks = new Map();
 
 const cullingFlow = window.CulviaCullingFlow;
 const clipboard = window.CulviaClipboard;
@@ -1078,7 +1079,6 @@ const galleryPanel = window.CulviaGalleryPanel.create({
   isSourcePreviewActive,
   matchingSourcePreview,
   updatePhotoMark: (fileId, changes, options) => updatePhotoMark(fileId, changes, options),
-  statusToggleChanges: (changes, currentStatus) => statusToggleChanges(changes, currentStatus),
   openBatchStatusConfirm: (status) => openBatchStatusConfirm(status),
   switchView: (view) => switchView(view),
   renderViewer: () => renderViewer(),
@@ -1888,18 +1888,20 @@ async function openManualStatusView(status, view = "gallery") {
   switchView(view);
 }
 
-async function performPhotoMarkUpdate(fileId, changes, options = {}) {
+async function performPhotoMarkUpdate(target, changes, options, selection) {
   if (appState?.job?.running) return;
-  const photo = (appState?.photos || []).find((item) => item.fileId === fileId);
-  if (!photo?.fileId) return;
-  const previousFileId = photo.fileId;
-  const previousIndex = viewerPanel.selectedIndex();
+  const photo = (appState?.photos || []).find((item) => item.fileId === target.fileId);
+  const currentMark = photo?.manual || target.manual;
   try {
-    appState = await postJson("/api/mark", {
-      fileId: photo.fileId,
-      ...changes,
+    const nextState = await postJson("/api/mark", {
+      fileId: target.fileId,
+      ...statusToggleChanges(changes, currentMark.status || ""),
     });
-    preserveSelectedPhoto(previousFileId, { advance: options.advance, previousIndex });
+    // Keep only pending targets' saved marks, including rows removed by a filter.
+    target.manual = nextState.action?.afterMarks?.find((mark) => mark.fileId === target.fileId)
+      || nextState.photos?.find((item) => item.fileId === target.fileId)?.manual
+      || target.manual;
+    applyCurationState(nextState, selection, options);
     refreshCurationHistoryIfOpen();
     render();
   } catch (error) {
@@ -1916,7 +1918,23 @@ async function performPhotoMarkUpdate(fileId, changes, options = {}) {
 }
 
 function updatePhotoMark(fileId, changes, options = {}) {
-  markUpdateQueue = markUpdateQueue.catch(() => undefined).then(() => performPhotoMarkUpdate(fileId, changes, options));
+  if (appState?.job?.running) return markUpdateQueue;
+  const photo = (appState?.photos || []).find((item) => item.fileId === fileId);
+  if (!photo?.fileId) return markUpdateQueue;
+  const target = pendingPhotoMarks.get(fileId) || { fileId, manual: photo.manual || {}, pending: 0 };
+  target.pending += 1;
+  pendingPhotoMarks.set(fileId, target);
+  const selection = viewerPanel.selectionSnapshot();
+  const requestedChanges = { ...changes };
+  const requestedOptions = { ...options };
+  markUpdateQueue = markUpdateQueue.catch(() => undefined).then(async () => {
+    try {
+      await performPhotoMarkUpdate(target, requestedChanges, requestedOptions, selection);
+    } finally {
+      target.pending -= 1;
+      if (!target.pending) pendingPhotoMarks.delete(fileId);
+    }
+  });
   return markUpdateQueue;
 }
 
@@ -1929,13 +1947,19 @@ function statusToggleChanges(changes = {}, currentStatus = "") {
 }
 
 function updateManualMark(changes, options = {}) {
-  if (appState?.job?.running) return markUpdateQueue;
-  markUpdateQueue = markUpdateQueue.catch(() => undefined).then(() => {
-    const photo = selectedPhoto();
-    if (!photo?.fileId) return undefined;
-    return performPhotoMarkUpdate(photo.fileId, statusToggleChanges(changes, photo.manual?.status || ""), options);
+  const photo = selectedPhoto();
+  return photo?.fileId ? updatePhotoMark(photo.fileId, changes, options) : markUpdateQueue;
+}
+
+function applyCurationState(nextState, selection, { advance = false } = {}) {
+  const currentSelection = viewerPanel.selectionSnapshot();
+  const selectionUnchanged = currentSelection.fileId === selection.fileId
+    && currentSelection.revision === selection.revision;
+  appState = nextState;
+  preserveSelectedPhoto(currentSelection.fileId, {
+    previousIndex: currentSelection.index,
+    advance: Boolean(advance && selectionUnchanged),
   });
-  return markUpdateQueue;
 }
 
 async function acceptPhotoResult(basis, scope = "current", target = {}, options = {}) {
@@ -1943,6 +1967,7 @@ async function acceptPhotoResult(basis, scope = "current", target = {}, options 
   const photo = selectedPhoto();
   if (scope === "current" && !photo?.fileId) return;
   const previousFileId = photo?.fileId || "";
+  const selection = viewerPanel.selectionSnapshot();
   const requestScope = target.scope || scope;
   const requestedTarget = { ...target, scope: requestScope };
   try {
@@ -1964,8 +1989,7 @@ async function acceptPhotoResult(basis, scope = "current", target = {}, options 
         applyAcceptedResult,
       );
     if (!nextState) return;
-    appState = nextState;
-    preserveSelectedPhoto(previousFileId);
+    applyCurationState(nextState, selection);
     const action = nextState.action || {};
     const noticeView = CulviaBatchActions.acceptNotice({ action, basis, scope: requestScope });
     showCommandNotice({

@@ -32,6 +32,7 @@ window.CulviaViewerPanel = (() => {
   }) {
     const MARK_ADVANCE_STORAGE_KEY = "culvia.markAdvance.v1";
     let selectedIndex = 0;
+    let selectionRevision = 0;
     let showMissingScoreDetails = false;
     let inspectorDetailTab = "overview";
     let markAdvanceEnabled = localStorage.getItem(MARK_ADVANCE_STORAGE_KEY) === "true";
@@ -47,12 +48,18 @@ window.CulviaViewerPanel = (() => {
       return selectedIndex;
     }
 
+    function selectionSnapshot() {
+      const photo = selectedPhoto();
+      return { fileId: photo?.fileId || "", index: selectedIndex, revision: selectionRevision };
+    }
+
     function setSelectedIndex(index) {
       selectedIndex = Number(index) || 0;
+      selectionRevision += 1;
     }
 
     function resetSelectedIndex() {
-      selectedIndex = 0;
+      setSelectedIndex(0);
     }
 
     function ensureSelectedIndex() {
@@ -257,7 +264,7 @@ window.CulviaViewerPanel = (() => {
       `;
       filmstrip.querySelectorAll(".thumb").forEach((button) => {
         button.addEventListener("click", () => {
-          selectedIndex = Number(button.dataset.index);
+          setSelectedIndex(Number(button.dataset.index));
           render();
         });
       });
@@ -437,7 +444,7 @@ window.CulviaViewerPanel = (() => {
       if (!photos.length) return;
       const nextIndex = cullingFlow.nextIndexByDelta(photos, selectedIndex, delta);
       if (nextIndex === selectedIndex) return;
-      selectedIndex = nextIndex;
+      setSelectedIndex(nextIndex);
       render();
     }
 
@@ -498,6 +505,7 @@ window.CulviaViewerPanel = (() => {
       render,
       resetSelectedIndex,
       selectedIndex: selectedIndexValue,
+      selectionSnapshot,
       selectedPhoto,
       setSelectedIndex,
     };

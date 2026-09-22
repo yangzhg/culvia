@@ -49,7 +49,6 @@ window.CulviaGalleryPanel = (() => {
     isSourcePreviewActive,
     matchingSourcePreview,
     updatePhotoMark,
-    statusToggleChanges,
     openBatchStatusConfirm,
     switchView,
     renderViewer,
@@ -627,13 +626,9 @@ window.CulviaGalleryPanel = (() => {
         if (getAppState()?.job?.running) return;
         event.stopPropagation();
         const fileId = statusButton.dataset.fileId || "";
-        const photo = (getAppState()?.photos || []).find((item) => item?.fileId === fileId);
         updatePhotoMark(
           fileId,
-          statusToggleChanges(
-            { status: statusButton.dataset.galleryStatus || "", source: "manual", acceptedScore: null },
-            photo?.manual?.status || "",
-          ),
+          { status: statusButton.dataset.galleryStatus || "", source: "manual", acceptedScore: null },
         );
         return;
       }
