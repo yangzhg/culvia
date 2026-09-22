@@ -202,6 +202,7 @@ class LitePackageRuntimeTests(unittest.TestCase):
             checks = []
             with (
                 patch.object(smoke.tempfile, "mkdtemp", return_value=str(destination)),
+                patch.object(smoke.platform, "system", return_value="Darwin"),
                 patch.object(Path, "is_mount", return_value=True),
                 patch.object(smoke.check_portable_package_runtime, "remove_tree_with_retries") as remove,
             ):
@@ -210,6 +211,25 @@ class LitePackageRuntimeTests(unittest.TestCase):
                 remove.assert_not_called()
             self.assertFalse(checks[-1]["ok"])
             self.assertIn("retained", checks[-1]["detail"])
+
+    def test_portable_workspace_cleanup_does_not_probe_dmg_mounts(self) -> None:
+        for system in ("Windows", "Linux"):
+            with self.subTest(system=system), tempfile.TemporaryDirectory() as tmp:
+                destination = Path(tmp)
+                checks = []
+                with (
+                    patch.object(smoke.tempfile, "mkdtemp", return_value=str(destination)),
+                    patch.object(smoke.platform, "system", return_value=system),
+                    patch.object(Path, "is_mount", side_effect=NotImplementedError("unsupported")) as is_mount,
+                    patch.object(
+                        smoke.check_portable_package_runtime, "remove_tree_with_retries", return_value=""
+                    ) as remove,
+                ):
+                    with smoke.package_workspace(checks) as workspace:
+                        self.assertEqual(workspace, destination)
+                    is_mount.assert_not_called()
+                    remove.assert_called_once_with(destination)
+                self.assertTrue(checks[-1]["ok"], checks)
 
     def test_macos_preflight_uses_candidate_version_not_checkout_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

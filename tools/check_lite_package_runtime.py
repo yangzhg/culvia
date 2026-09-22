@@ -86,7 +86,7 @@ def package_workspace(checks: list[dict[str, Any]]) -> Iterator[Path]:
     try:
         yield destination
     finally:
-        if (destination / "mount").is_mount():
+        if platform.system() == "Darwin" and (destination / "mount").is_mount():
             checks.append(
                 {
                     "name": "temporary package workspace cleanup",
