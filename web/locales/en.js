@@ -659,6 +659,8 @@
   "export.waitDestinationHint": "{count} picked photos are waiting for an export destination.",
   "export.checkingHint": "Checking export destination.",
   "export.checking": "Checking",
+  "export.exporting": "Exporting…",
+  "export.exportingHint": "Copying picked photos to the export folder.",
   "export.destinationUnavailable": "Export destination is unavailable.",
   "export.again": "Export {count} again",
   "export.exportCount": "Export {count}",

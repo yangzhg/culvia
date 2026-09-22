@@ -32,6 +32,7 @@ window.CulviaExportPanel = (() => {
     let exportDestination = "";
     let exportStatusText = "";
     let exportResult = null;
+    let exporting = false;
     let exportPreflight = null;
     let exportPreflightLoading = false;
     let exportPreflightError = "";
@@ -92,7 +93,10 @@ window.CulviaExportPanel = (() => {
     }
 
     function currentExportPreflightKey() {
-      return CulviaExportPreflight.currentKey(exportDestination, getAppState()?.selectedPhotos || []);
+      const app = getAppState();
+      const selectionKey = app?.curation?.exportSelectionKey;
+      if (typeof selectionKey === "string") return `${exportDestination}::selection:${selectionKey}`;
+      return CulviaExportPreflight.currentKey(exportDestination, app?.selectedPhotos || []);
     }
 
     function applyExportPreflightState(next) {
@@ -116,6 +120,7 @@ window.CulviaExportPanel = (() => {
     function bindBatchColorChoices(container) {
       container.querySelectorAll("[data-batch-color]").forEach((button) => {
         button.addEventListener("click", () => {
+          if (exporting || getAppState()?.job?.running) return;
           const colorLabel = button.dataset.batchColor || "";
           applyBatchColor(
             colorLabel,
@@ -132,7 +137,7 @@ window.CulviaExportPanel = (() => {
       if (!container) return;
       const localizedColorLabels = manualColorLabels.map((item) => colorLabelMeta(item.value));
       container.innerHTML = CulviaBatchActions.colorChoiceViews(localizedColorLabels, {
-        disabled: !batchActions.hasPhotos,
+        disabled: exporting || Boolean(getAppState()?.job?.running) || !batchActions.hasPhotos,
       })
         .map(
           (item) => `
@@ -181,10 +186,11 @@ window.CulviaExportPanel = (() => {
     }
 
     function updateExportActionControls(all, batchActions) {
-      const busy = Boolean(getAppState()?.job?.running);
+      const busy = exporting || Boolean(getAppState()?.job?.running);
       const exportAction = CulviaExportActions.primaryActionView({
         blocked: isExportDestinationBlocked(),
         destination: exportDestination,
+        exporting,
         preflight: exportPreflight,
         preflightError: exportPreflightError,
         preflightLoading: exportPreflightLoading,
@@ -211,7 +217,9 @@ window.CulviaExportPanel = (() => {
       const filtered = getAppState()?.curation?.filtered || getAppState()?.curation?.visible || {};
       const preflightKey = currentExportPreflightKey();
       if (
-        CulviaExportPreflightState.shouldRefresh({
+        !exporting
+        && !getAppState()?.job?.running
+        && CulviaExportPreflightState.shouldRefresh({
           activeView: getActiveView(),
           currentKey: preflightKey,
           destination: exportDestination,
@@ -219,7 +227,6 @@ window.CulviaExportPanel = (() => {
           storedKey: exportPreflightKey,
         })
       ) {
-        applyExportPreflightState({ key: preflightKey });
         void refreshExportPreflight({ key: preflightKey });
       }
       renderDeliveryOverview(all, filtered);
@@ -248,10 +255,10 @@ window.CulviaExportPanel = (() => {
     }
 
     async function pickExportFolder() {
-      if (getAppState()?.job?.running) return;
+      if (exporting || getAppState()?.job?.running) return;
       try {
         const result = await postJson("/api/pick-export-folder", {});
-        if (result.folder) {
+        if (result.folder && !exporting && !getAppState()?.job?.running) {
           exportDestination = result.folder;
           exportStatusText = "";
           exportResult = null;
@@ -264,7 +271,7 @@ window.CulviaExportPanel = (() => {
     }
 
     async function refreshExportPreflight(options = {}) {
-      if (getAppState()?.job?.running) return;
+      if (exporting || getAppState()?.job?.running) return;
       if (!exportDestination) {
         applyExportPreflightState(CulviaExportPreflightState.emptyState());
         renderExportList();
@@ -288,23 +295,25 @@ window.CulviaExportPanel = (() => {
     }
 
     async function exportSelectedPhotos() {
-      if (getAppState()?.job?.running) return;
-      if (!exportDestination) return;
+      if (exporting || getAppState()?.job?.running) return;
+      if (!exportDestination || isExportDestinationBlocked()) return;
+      exporting = true;
+      exportStatusText = "";
+      exportResult = null;
       try {
-        $("#exportSelectedBtn").disabled = true;
-        exportResult = null;
         renderExportList();
         const result = await postJson("/api/export/selected-files", { destination: exportDestination });
         exportResult = result;
         exportStatusText = CulviaExportActions.exportStatusText(result);
         showCommandNotice(CulviaExportActions.successNotice(result, { pathName }));
-        renderExportList();
-        await refreshExportPreflight();
       } catch (error) {
         exportResult = null;
         const failure = CulviaExportActions.failureState(errorMessage(error));
         exportStatusText = failure.statusText;
         showCommandNotice(failure.notice, failure.duration);
+      } finally {
+        exporting = false;
+        applyExportPreflightState(CulviaExportPreflightState.emptyState());
         renderExportList();
       }
     }

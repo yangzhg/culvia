@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import errno
+import os
 import shutil
+import stat
 import tempfile
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import pandas as pd
 
@@ -229,13 +232,13 @@ def selected_export_dataframe_action(source_df: pd.DataFrame, cache_path: str) -
 def unique_destination_path(destination: Path, filename: str, *, reserved_names: Collection[str] | None = None) -> Path:
     reserved = set(reserved_names or [])
     target = destination / filename
-    if not target.exists() and target.name not in reserved:
+    if not target.exists() and not target.is_symlink() and target.name not in reserved:
         return target
     stem = target.stem
     suffix = target.suffix
     for index in range(2, 10000):
         candidate = destination / f"{stem}-{index}{suffix}"
-        if not candidate.exists() and candidate.name not in reserved:
+        if not candidate.exists() and not candidate.is_symlink() and candidate.name not in reserved:
             return candidate
     raise RuntimeError(f"无法生成唯一文件名: {filename}")
 
@@ -318,8 +321,7 @@ def copy_selected_photo_files(selected_df: pd.DataFrame, destination: Path) -> E
             )
             continue
         try:
-            target = unique_destination_path(destination, source_path.name)
-            shutil.copy2(source_path, target)
+            target = _copy_photo_file(source_path, destination)
             copied.append(target)
         except Exception as exc:
             skipped.append(source_path)
@@ -337,6 +339,118 @@ def copy_selected_photo_files(selected_df: pd.DataFrame, destination: Path) -> E
         skipped_paths=skipped,
         skipped_details=skipped_details,
     )
+
+
+def _copy_photo_file(source_path: Path, destination: Path) -> Path:
+    with source_path.open("rb") as source:
+        while True:
+            target = unique_destination_path(destination, source_path.name)
+            try:
+                output = target.open("xb")
+            except FileExistsError:
+                continue
+            break
+
+        identity = None
+        try:
+            with output:
+                identity = os.fstat(output.fileno())
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+                output.flush()
+                _copy_file_metadata(source, output, target)
+            if not _owns_output(target, identity):
+                raise OSError("Export target changed while the photo was being copied")
+        except Exception:
+            if identity is not None and _owns_output(target, identity):
+                target.unlink()
+            raise
+        return target
+
+
+def _owns_output(path: Path, identity: os.stat_result) -> bool:
+    try:
+        current = path.lstat()
+    except FileNotFoundError:
+        return False
+    return stat.S_ISREG(current.st_mode) and os.path.samestat(current, identity)
+
+
+def _copy_file_metadata(source: BinaryIO, output: BinaryIO, target: Path) -> None:
+    source_fd = source.fileno()
+    output_fd = output.fileno()
+    source_stat = os.fstat(source_fd)
+    if os.name == "nt":
+        _copy_windows_file_metadata(output_fd, source_stat)
+        return
+    times = (source_stat.st_atime_ns, source_stat.st_mtime_ns)
+    if os.utime in os.supports_fd:
+        os.utime(output_fd, ns=times)
+    else:
+        os.utime(target, ns=times, follow_symlinks=False)
+
+    if hasattr(os, "listxattr"):
+        unsupported = {
+            getattr(errno, name) for name in ("EPERM", "EACCES", "ENOTSUP", "ENODATA", "EINVAL") if hasattr(errno, name)
+        }
+        try:
+            names = os.listxattr(source_fd)
+        except OSError as exc:
+            if exc.errno not in unsupported:
+                raise
+        else:
+            for name in names:
+                try:
+                    os.setxattr(output_fd, name, os.getxattr(source_fd, name))
+                except OSError as exc:
+                    if exc.errno not in unsupported:
+                        raise
+
+    mode = stat.S_IMODE(source_stat.st_mode)
+    if hasattr(os, "fchmod"):
+        os.fchmod(output_fd, mode)
+    else:
+        try:
+            os.chmod(target, mode, follow_symlinks=False)
+        except NotImplementedError:
+            pass
+    if hasattr(os, "fchflags") and hasattr(source_stat, "st_flags"):
+        try:
+            os.fchflags(output_fd, source_stat.st_flags)
+        except OSError as exc:
+            if exc.errno not in {getattr(errno, name) for name in ("EOPNOTSUPP", "ENOTSUP") if hasattr(errno, name)}:
+                raise
+
+
+def _copy_windows_file_metadata(output_fd: int, source_stat: os.stat_result) -> None:
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class FileBasicInfo(ctypes.Structure):
+        _fields_ = [
+            ("CreationTime", ctypes.c_longlong),
+            ("LastAccessTime", ctypes.c_longlong),
+            ("LastWriteTime", ctypes.c_longlong),
+            ("ChangeTime", ctypes.c_longlong),
+            ("FileAttributes", wintypes.DWORD),
+        ]
+
+    attributes = os.fstat(output_fd).st_file_attributes & ~stat.FILE_ATTRIBUTE_READONLY
+    if not source_stat.st_mode & stat.S_IWRITE:
+        attributes |= stat.FILE_ATTRIBUTE_READONLY
+    epoch_ticks = 116_444_736_000_000_000
+    info = FileBasicInfo(
+        0,
+        epoch_ticks + source_stat.st_atime_ns // 100,
+        epoch_ticks + source_stat.st_mtime_ns // 100,
+        0,
+        attributes or stat.FILE_ATTRIBUTE_NORMAL,
+    )
+    set_file_info = ctypes.WinDLL("kernel32", use_last_error=True).SetFileInformationByHandle
+    set_file_info.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+    set_file_info.restype = wintypes.BOOL
+    if not set_file_info(msvcrt.get_osfhandle(output_fd), 0, ctypes.byref(info), ctypes.sizeof(info)):
+        raise ctypes.WinError(ctypes.get_last_error())
 
 
 def export_selected_files_action(source_df: pd.DataFrame, cache_path: str, destination_text: str) -> ExportCopyResult:

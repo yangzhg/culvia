@@ -47,6 +47,8 @@ These columns are currently CSV details and a foundation for later import/script
 
 After the export destination or selected photos change, the page calls `/api/export/preflight` to check destination permissions, missing source files, and automatic rename risks. The payload schema version comes from `culvia.export_service.EXPORT_PAYLOAD_VERSION`:
 
+The page tracks the complete picked set through `/api/state`'s `curation.exportSelectionKey`, including picks beyond the 80-photo preview. Changing the display limit, sort order, or filters does not change which picked photos are copied. Preflight is a snapshot; copying checks the current picks and filesystem again.
+
 | Field | Meaning |
 |---|---|
 | `schemaVersion` | Export preflight payload version, currently `1` |
@@ -80,6 +82,15 @@ Current reason types:
 |---|---|---|
 | `missing` | `Source missing` | Source file does not exist or is not a regular file |
 | `copy_failed` | `Copy failed` | Source file exists, but the system copy operation failed |
+
+### Copy Safety And Progress
+
+- Files are created exclusively. Existing files and symbolic links cause automatic renaming, including names taken by another process after preflight.
+- If a copy fails, Culvia attempts to remove its incomplete output after checking that the destination still refers to the file it created. Files replaced by another process are left alone.
+- During copying, the export button shows progress and prevents duplicate clicks. Destination changes and conflicting writes remain blocked, while the backend can still answer state and browsing requests.
+- Keep the export page open to receive the result. Refreshing does not cancel an active copy while the backend remains alive, but the destination and result are not restored after refresh. Starting a later export creates another set of copies with unique names.
+
+This is not an all-or-nothing delivery transaction: successful files remain when other files fail. Forced termination or power loss can leave incomplete files; inspect the destination before retrying.
 
 ## Frontend Normalization
 

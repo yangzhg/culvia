@@ -40,6 +40,14 @@ window.CulviaExportActions = (() => {
     const destinationIssue = String(preflight?.destinationIssue || "");
     const baseLabel = selected ? t("export.exportCount", { count: selected }, `导出 ${selected} 张`) : t("export.selected", {}, "导出入选");
 
+    if (options.exporting) {
+      return {
+        disabled: true,
+        hint: t("export.exportingHint"),
+        icon: "loader",
+        label: t("export.exporting"),
+      };
+    }
     if (!selected) {
       return {
         disabled: true,

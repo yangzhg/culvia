@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -51,6 +52,15 @@ class StatePayloadDependencies:
 
 def _json_clone(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False))
+
+
+def _export_selection_key(source_df: pd.DataFrame, marks: Mapping[str, Any]) -> str:
+    selected_ids = {str(file_id) for file_id, mark in marks.items() if mark.status == "pick"}
+    paths = source_df.reindex(columns=["file_id", "path"]).fillna("").astype(str)
+    selected = sorted(
+        (file_id, path) for file_id, path in paths.itertuples(index=False, name=None) if file_id in selected_ids
+    )
+    return hashlib.sha256(json.dumps(selected, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 
 def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependencies) -> dict[str, Any]:
@@ -156,6 +166,7 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
             "visible": displayed_curation,
             "filteredLlmReviewedCount": filtered_llm_reviewed_count,
             "selectedPreviewCount": int(len(selected_photos)),
+            "exportSelectionKey": _export_selection_key(source_df, mark_by_file_id),
         },
         "photos": photos,
         "selectedPhotos": selected_photos,

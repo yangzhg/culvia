@@ -659,6 +659,8 @@
   "export.waitDestinationHint": "已入选 {count} 张，等待选择导出位置。",
   "export.checkingHint": "正在检查导出位置。",
   "export.checking": "检查中",
+  "export.exporting": "正在导出…",
+  "export.exportingHint": "正在将入选照片复制到导出目录。",
   "export.destinationUnavailable": "导出位置不可用。",
   "export.again": "再次导出 {count} 张",
   "export.exportCount": "导出 {count} 张",

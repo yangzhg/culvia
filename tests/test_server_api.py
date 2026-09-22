@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import json
 import os
 import tempfile
 import threading
@@ -2809,6 +2810,164 @@ class ServerApiTests(unittest.TestCase):
                     culvia_app.STATE["filters"].clear()
                     culvia_app.STATE["filters"].update(original_filters)
                     culvia_app.STATE["scores_df"] = original_scores
+
+
+class ExportConcurrencyApiTests(unittest.TestCase):
+    def make_app(self, root: Path, *, count: int = 1):
+        cache_path = str(root / "scores.sqlite")
+        rows = []
+        for index in range(count):
+            source = root / f"photo-{index:03}.jpg"
+            source.write_bytes(f"photo {index}".encode())
+            file_id = f"photo-{index:03}"
+            rows.append(
+                {"file_id": file_id, "path": str(source), "error": "", **current_core_score_fields(8.5 - index / 1000)}
+            )
+            photo_curation.save_photo_mark(cache_path, file_id, status="pick", rating=4)
+        store = AppStateStore(
+            create_initial_state(
+                scores_df=pd.DataFrame(rows),
+                default_photo_dirs=[str(root)],
+                default_cache_path=cache_path,
+                filter_defaults=culvia_app.FILTER_DEFAULTS,
+                default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
+            )
+        )
+        web_app = culvia_app.create_app(store)
+        self.addCleanup(web_app.state.thumbnail_coordinator.close)
+        return web_app, store
+
+    @staticmethod
+    def request_for(web_app, destination: Path):
+        class ExportRequest:
+            app = web_app
+
+            async def json(self):
+                return {"destination": str(destination)}
+
+        return ExportRequest()
+
+    def test_state_and_conflict_responses_remain_available_during_export_io(self) -> None:
+        for route_name, action_name in (
+            ("api_export_preflight", "export_preflight_action"),
+            ("api_export_selected", "export_selected_files_action"),
+        ):
+            with self.subTest(route=route_name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                destination = root / "delivery"
+                destination.mkdir()
+                web_app, store = self.make_app(root)
+                request = self.request_for(web_app, destination)
+                started = threading.Event()
+                observed_state = threading.Event()
+                responsive = []
+                real_action = getattr(culvia_app, action_name)
+
+                def wait_for_state(*args):
+                    started.set()
+                    responsive.append(observed_state.wait(timeout=1))
+                    return real_action(*args)
+
+                async def exercise():
+                    with patch(f"culvia_app.{action_name}", side_effect=wait_for_state):
+                        task = asyncio.create_task(getattr(culvia_app, route_name)(request))
+                        try:
+                            self.assertTrue(await asyncio.to_thread(started.wait, 2))
+                            state_response = await culvia_app.api_state(make_direct_request(web_app, "/api/state"))
+                            conflict = await culvia_app.api_export_selected(request)
+                        finally:
+                            observed_state.set()
+                        result = await task
+                    return state_response, conflict, result
+
+                state_response, conflict, result = asyncio.run(exercise())
+                self.assertEqual(responsive, [True])
+                self.assertTrue(json.loads(state_response.body)["job"]["running"])
+                self.assertEqual(conflict.status_code, 409)
+                self.assertEqual(json.loads(conflict.body)["errorCode"], "jobRunningOperation")
+                self.assertEqual(result.status_code, 200)
+                self.assertFalse(store.data["job"]["running"])
+
+    def test_request_cancellation_does_not_release_a_running_export_worker(self) -> None:
+        for route_name, action_name in (
+            ("api_export_preflight", "export_preflight_action"),
+            ("api_export_selected", "export_selected_files_action"),
+        ):
+            with self.subTest(route=route_name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                destination = root / "delivery"
+                destination.mkdir()
+                web_app, store = self.make_app(root)
+                request = self.request_for(web_app, destination)
+                started = threading.Event()
+                release = threading.Event()
+                worker_finished = threading.Event()
+                real_action = getattr(culvia_app, action_name)
+
+                def blocked_action(*args):
+                    started.set()
+                    release.wait(timeout=1)
+                    result = real_action(*args)
+                    worker_finished.set()
+                    return result
+
+                async def exercise():
+                    with patch(f"culvia_app.{action_name}", side_effect=blocked_action):
+                        task = asyncio.create_task(getattr(culvia_app, route_name)(request))
+                        try:
+                            self.assertTrue(await asyncio.to_thread(started.wait, 2))
+                            task.cancel()
+                            await asyncio.sleep(0)
+                            task.cancel()
+                            await asyncio.sleep(0)
+                            self.assertFalse(task.done())
+                            self.assertTrue(store.data["job"]["running"])
+                            self.assertFalse(worker_finished.is_set())
+                            conflict = await culvia_app.api_export_preflight(request)
+                            self.assertEqual(conflict.status_code, 409)
+                        finally:
+                            release.set()
+                            if not task.done():
+                                with self.assertRaises(asyncio.CancelledError):
+                                    await task
+
+                asyncio.run(exercise())
+                self.assertTrue(worker_finished.is_set())
+                self.assertFalse(store.data["job"]["running"])
+                if route_name == "api_export_selected":
+                    self.assertEqual((destination / "photo-000.jpg").read_bytes(), b"photo 0")
+
+    def test_export_selection_key_covers_picks_beyond_the_preview_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            web_app, store = self.make_app(Path(tmp), count=83)
+            client = TestClient(web_app)
+            initial = client.get("/api/state").json()
+            self.assertEqual(len(initial["selectedPhotos"]), 80)
+            key = initial["curation"].get("exportSelectionKey")
+            self.assertTrue(key)
+            visible_ids = {photo["fileId"] for photo in initial["selectedPhotos"]}
+            hidden_ids = sorted(set(store.data["scores_df"]["file_id"]) - visible_ids)
+            cache_path = store.data["source"]["cachePath"]
+            photo_curation.save_photo_mark(cache_path, hidden_ids[0], status="hold")
+            changed = client.get("/api/state").json()
+            self.assertEqual(initial["selectedPhotos"], changed["selectedPhotos"])
+            self.assertEqual(changed["curation"]["all"]["selected"], 82)
+            self.assertNotEqual(key, changed["curation"]["exportSelectionKey"])
+            photo_curation.save_photo_mark(cache_path, hidden_ids[0], status="pick", rating=4)
+            photo_curation.save_photo_mark(cache_path, hidden_ids[1], status="hold")
+            swapped = client.get("/api/state").json()
+            self.assertEqual(changed["selectedPhotos"], swapped["selectedPhotos"])
+            self.assertEqual(swapped["curation"]["all"]["selected"], 82)
+            self.assertNotEqual(changed["curation"]["exportSelectionKey"], swapped["curation"]["exportSelectionKey"])
+            store.data["filters"].update({"limit": 1, "sortBy": "filename"})
+            store.data["scores_df"] = store.data["scores_df"].iloc[::-1].copy()
+            reordered = client.get("/api/state").json()
+            self.assertEqual(swapped["curation"]["exportSelectionKey"], reordered["curation"]["exportSelectionKey"])
+            store.data["scores_df"].loc[store.data["scores_df"]["file_id"].eq(hidden_ids[2]), "path"] = (
+                "/photos/moved.jpg"
+            )
+            moved = client.get("/api/state").json()
+            self.assertNotEqual(reordered["curation"]["exportSelectionKey"], moved["curation"]["exportSelectionKey"])
 
 
 class ThumbnailConcurrencyApiTests(unittest.TestCase):

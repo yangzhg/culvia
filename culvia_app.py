@@ -1159,13 +1159,13 @@ def reserve_maintenance_job_with_cache(
     return job_service, job_id, cache_path
 
 
-class DeferredMaintenanceCancellation:
-    """Delay request cancellation until an in-flight destructive worker has finished."""
+class DeferredWorkerCancellation:
+    """Keep a request's job lease until its filesystem worker has finished."""
 
     def __init__(self) -> None:
         self.cancelled = False
 
-    async def __aenter__(self) -> DeferredMaintenanceCancellation:
+    async def __aenter__(self) -> DeferredWorkerCancellation:
         return self
 
     async def __aexit__(self, _exc_type: object, _exc: object, _traceback: object) -> bool:
@@ -1208,7 +1208,7 @@ async def api_clear_history(request: Request) -> JSONResponse:
                 params={"reason": error or ""},
             )
         media_revision = state_store.current_media_revision()
-        async with DeferredMaintenanceCancellation() as cancellation:
+        async with DeferredWorkerCancellation() as cancellation:
             result = await cancellation.run_in_threadpool(clear_history_cache, cache_path)
             state_store.publish_media_state(
                 scores_df=pd.DataFrame(columns=CSV_COLUMNS),
@@ -1273,7 +1273,7 @@ async def api_clear_local_data(request: Request) -> JSONResponse:
                 MODEL_RUNTIME.clear()
 
                 thumbnail_deleted = bool(thumbnail_sweep.deleted_files or thumbnail_sweep.deleted_temp_files)
-                async with DeferredMaintenanceCancellation() as cancellation:
+                async with DeferredWorkerCancellation() as cancellation:
                     result = await cancellation.run_in_threadpool(
                         clear_local_data,
                         cache_path=cache_path,
@@ -1335,7 +1335,7 @@ async def api_clear_model(request: Request) -> JSONResponse:
 
     result = None
     try:
-        async with DeferredMaintenanceCancellation() as cancellation:
+        async with DeferredWorkerCancellation() as cancellation:
             try:
                 result = await cancellation.run_in_threadpool(
                     clear_model_caches,
@@ -1811,7 +1811,10 @@ async def api_export_preflight(request: Request) -> JSONResponse:
                 state = state_store.data
                 source_df = normalize_score_dataframe(state["scores_df"]).copy()
                 cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
-            result = export_preflight_action(source_df, cache_path, destination_text)
+            async with DeferredWorkerCancellation() as cancellation:
+                result = await cancellation.run_in_threadpool(
+                    export_preflight_action, source_df, cache_path, destination_text
+                )
     except MutationJobUnavailable:
         return job_running_operation_response()
     except ExportServiceError as error:
@@ -1829,7 +1832,10 @@ async def api_export_selected(request: Request) -> JSONResponse:
                 state = state_store.data
                 source_df = normalize_score_dataframe(state["scores_df"]).copy()
                 cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
-            result = export_selected_files_action(source_df, cache_path, destination_text)
+            async with DeferredWorkerCancellation() as cancellation:
+                result = await cancellation.run_in_threadpool(
+                    export_selected_files_action, source_df, cache_path, destination_text
+                )
     except MutationJobUnavailable:
         return job_running_operation_response()
     except ExportServiceError as error:
