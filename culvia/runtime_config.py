@@ -20,12 +20,17 @@ class RuntimeConfig:
     thumbnail_max_size: int = DEFAULT_THUMBNAIL_MAX_SIZE
     thumbnail_cache_max_bytes: int = DEFAULT_THUMBNAIL_CACHE_MAX_BYTES
     thumbnail_cache_max_files: int = DEFAULT_THUMBNAIL_CACHE_MAX_FILES
+    export_receipts_path: Path | None = None
 
     def __post_init__(self) -> None:
         if self.thumbnail_cache_max_bytes < 0:
             raise ValueError("Thumbnail cache byte limit cannot be negative")
         if self.thumbnail_cache_max_files < 0:
             raise ValueError("Thumbnail cache file limit cannot be negative")
+
+    @property
+    def resolved_export_receipts_path(self) -> Path:
+        return self.export_receipts_path or Path(self.default_cache_path).parent / "culvia_export_receipts.sqlite"
 
     @classmethod
     def from_settings(cls) -> "RuntimeConfig":
@@ -37,6 +42,7 @@ class RuntimeConfig:
             default_photo_dirs=tuple(settings.default_photo_dirs()),
             thumbnail_cache_max_bytes=settings.thumbnail_cache_max_bytes(),
             thumbnail_cache_max_files=settings.thumbnail_cache_max_files(),
+            export_receipts_path=settings.export_receipts_path(),
         )
 
     def with_paths(
@@ -50,6 +56,7 @@ class RuntimeConfig:
         thumbnail_max_size: int | None = None,
         thumbnail_cache_max_bytes: int | None = None,
         thumbnail_cache_max_files: int | None = None,
+        export_receipts_path: str | Path | None = None,
     ) -> "RuntimeConfig":
         return RuntimeConfig(
             web_dir=Path(web_dir) if web_dir is not None else self.web_dir,
@@ -66,4 +73,7 @@ class RuntimeConfig:
             thumbnail_cache_max_files=thumbnail_cache_max_files
             if thumbnail_cache_max_files is not None
             else self.thumbnail_cache_max_files,
+            export_receipts_path=Path(export_receipts_path)
+            if export_receipts_path is not None
+            else self.export_receipts_path,
         )

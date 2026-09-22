@@ -2,6 +2,8 @@ window.CulviaExportActions = (() => {
   const resultActions = Object.freeze({
     copyDestination: "copyDestination",
     revealDestination: "revealDestination",
+    downloadReceipt: "downloadReceipt",
+    refreshReceipt: "refreshReceipt",
     none: "",
   });
 
@@ -20,6 +22,12 @@ window.CulviaExportActions = (() => {
   }
 
   function exportStatusText(result) {
+    if (result?.operationId && result.status !== "completed") {
+      if (result.status === "running") return t("export.resultProgress", { processed: Number(result.processed || 0), total: Number(result.total || 0) });
+      if (result.status === "interrupted") return t("export.resultInterrupted");
+      if (result.status === "failed") return t("export.resultFailed");
+      return t("export.resultUnknown");
+    }
     const copied = copiedCount(result);
     const skipped = skippedCount(result);
     return skipped
@@ -139,7 +147,7 @@ window.CulviaExportActions = (() => {
       notice: {
         tone: "danger",
         state: t("export.noticeFailureState", {}, "导出失败"),
-        title: t("export.noticeFailureTitle", {}, "没有导出入选照片"),
+        title: t("export.noticeFailureTitle"),
         detail,
       },
       duration: 4200,
@@ -188,9 +196,19 @@ window.CulviaExportActions = (() => {
 
   function resultActionFromEvent(event) {
     const target = event?.target;
+    if (target?.closest?.("[data-export-download-receipt]")) return resultActions.downloadReceipt;
+    if (target?.closest?.("[data-export-refresh-receipt]")) return resultActions.refreshReceipt;
     if (target?.closest?.("[data-export-copy-destination]")) return resultActions.copyDestination;
     if (target?.closest?.("[data-export-reveal-destination]")) return resultActions.revealDestination;
     return resultActions.none;
+  }
+
+  function receiptDownload(operationId) {
+    const id = String(operationId || "");
+    return id ? {
+      url: `/api/export/receipts/${encodeURIComponent(id)}/manifest.csv`,
+      filename: "culvia-export-manifest.csv",
+    } : null;
   }
 
   return {
@@ -200,6 +218,7 @@ window.CulviaExportActions = (() => {
     exportStatusText,
     failureState,
     primaryActionView,
+    receiptDownload,
     revealDestinationPayload,
     revealFailureNotice,
     resultActionFromEvent,

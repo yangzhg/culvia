@@ -62,6 +62,7 @@ flowchart LR
 - `culvia.gallery_display` / `culvia.payloads`：把 DataFrame、人工标记、LLM insight 和文件信息转换为 UI payload。
 - `culvia.curation_*`：人工入选/待复核/淘汰、星级、颜色标签、历史和撤销。
 - `culvia.export_service`：导出 CSV、入选照片复制和导出预检。
+- `culvia.export_receipts`：在独立的应用数据 SQLite 库中记录完整交付清单。复制前提交入选名单，每张照片的结果提交后才对外确认；导出、启动恢复和回执清理共用操作系统级锁。恢复不会修改照片或重新复制。API 工作线程在请求取消后仍持有写操作租约，状态轮询只返回有限预览，完整记录可通过 JSON/CSV 获取。
 - `culvia.media_catalog` / `culvia.media_service` / `culvia.media_responses`：媒体路径授权、缩略图、预览图和上传缓存。`AppStateStore` 在来源或评分表切换时原子发布不可变、带 revision 的 `file_id` 与路径目录，因此单次媒体请求无需扫描整张评分表；后台结果必须匹配启动时的 revision 和任务。所有写路由共用后端任务租约，维护期间的状态轮询不会读取正在删除的 SQLite 或模型路径。`culvia.thumbnail_service` 把冷缓存生成移出 ASGI 事件循环，合并相同缓存键的请求并限制并发解码；缓存文件通过同目录唯一临时文件和原子替换发布。
 - `culvia.llm_config*` / `culvia.secret_store`：OpenAI-compatible 配置、提示词预设、SQLite 非密钥配置和系统 keychain。
 - `culvia.desktop_files` / `culvia.capabilities`：桌面原生文件能力和能力降级。

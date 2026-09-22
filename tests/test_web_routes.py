@@ -76,6 +76,8 @@ class WebRouteTests(unittest.TestCase):
                 ("/api/export/selected", "api_export_selected_csv", ()),
                 ("/api/export/preflight", "api_export_preflight", ("POST",)),
                 ("/api/export/selected-files", "api_export_selected", ("POST",)),
+                ("/api/export/receipts/{operation_id}", "api_export_receipt", ()),
+                ("/api/export/receipts/{operation_id}/manifest.csv", "api_export_manifest", ()),
                 ("/api/pick-folder", "api_pick_folder", ("POST",)),
                 ("/api/pick-folders", "api_pick_folders", ("POST",)),
                 ("/api/pick-export-folder", "api_pick_export_folder", ("POST",)),
@@ -132,10 +134,14 @@ class WebRouteTests(unittest.TestCase):
         coordinator = app.state.thumbnail_coordinator
 
         async def run_lifespan() -> None:
-            with patch.object(coordinator, "start", wraps=coordinator.start) as start:
+            with (
+                patch.object(coordinator, "start", wraps=coordinator.start) as start,
+                patch.object(app.state.export_receipts, "recover_interrupted", return_value=0) as recover,
+            ):
                 async with app_lifespan(app):
                     self.assertFalse(coordinator._closed)
                 start.assert_called_once_with(app.state.runtime_config.thumbnail_cache_dir)
+                recover.assert_called_once_with()
 
         asyncio.run(run_lifespan())
 

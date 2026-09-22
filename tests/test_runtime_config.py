@@ -37,6 +37,7 @@ class RuntimeConfigTests(unittest.TestCase):
             upload_dir = root / "uploads"
             thumb_dir = root / "thumbs"
             cache_path = root / "scores.sqlite"
+            receipts_path = root / "delivery.sqlite"
             photo_dir_a = root / "photos-a"
             photo_dir_b = root / "photos-b"
             web_dir.mkdir()
@@ -50,6 +51,7 @@ class RuntimeConfigTests(unittest.TestCase):
                     "CULVIA_THUMBNAIL_CACHE_MAX_BYTES": "123456789",
                     "CULVIA_THUMBNAIL_CACHE_MAX_FILES": "4321",
                     "CULVIA_CACHE_PATH": str(cache_path),
+                    "CULVIA_EXPORT_RECEIPTS_PATH": str(receipts_path),
                     "CULVIA_PHOTO_DIRS": os.pathsep.join([str(photo_dir_a), str(photo_dir_b)]),
                 },
                 clear=False,
@@ -60,10 +62,22 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(config.upload_cache_dir, upload_dir)
         self.assertEqual(config.thumbnail_cache_dir, thumb_dir)
         self.assertEqual(config.default_cache_path, str(cache_path))
+        self.assertEqual(config.export_receipts_path, receipts_path)
+        self.assertEqual(config.resolved_export_receipts_path, receipts_path)
         self.assertEqual(config.default_photo_dirs, (str(photo_dir_a), str(photo_dir_b)))
         self.assertEqual(config.thumbnail_max_size, DEFAULT_THUMBNAIL_MAX_SIZE)
         self.assertEqual(config.thumbnail_cache_max_bytes, 123456789)
         self.assertEqual(config.thumbnail_cache_max_files, 4321)
+
+    def test_receipt_path_is_independent_of_source_cache_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict(os.environ, {"CULVIA_DATA_DIR": str(root)}, clear=True):
+                config = RuntimeConfig.from_settings()
+            changed = config.with_paths(default_cache_path=root / "another" / "scores.sqlite")
+            self.assertEqual(changed.resolved_export_receipts_path, root / "culvia_export_receipts.sqlite")
+            explicit = changed.with_paths(export_receipts_path=root / "custom.sqlite")
+            self.assertEqual(explicit.resolved_export_receipts_path, root / "custom.sqlite")
 
     def test_thumbnail_cache_limits_support_defaults_zero_and_invalid_environment(self) -> None:
         with patch.dict(os.environ, {}, clear=True):

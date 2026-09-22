@@ -597,6 +597,18 @@
   color: var(--muted);
 }
 
+.export-result-explanation {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.export-result-explanation p {
+  margin: 4px 0 0;
+}
+
 .export-result-details summary {
   width: fit-content;
   cursor: pointer;

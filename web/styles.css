@@ -5,5 +5,5 @@
 @import url('/static/styles/30-viewer.css');
 @import url('/static/styles/40-gallery.css');
 @import url('/static/styles/50-distribution.css');
-@import url('/static/styles/60-export.css');
+@import url('/static/styles/60-export.css?v=20260922-export-receipts');
 @import url('/static/styles/90-responsive.css');

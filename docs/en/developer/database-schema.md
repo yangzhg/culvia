@@ -139,3 +139,26 @@ Columns:
 | `created_at` | `REAL NOT NULL` |
 
 Payloads are versioned with `schemaVersion`.
+
+## Delivery receipts
+
+Owner: `culvia.export_receipts.ExportReceiptStore`
+
+Delivery receipts use a separate application-data database, `culvia_export_receipts.sqlite`, configurable through
+`CULVIA_EXPORT_RECEIPTS_PATH`. They do not move when the active source score database changes. Keep this path separate
+from scoring databases and cache/model directories: conflicting exports or cleanup requests are rejected.
+
+- `export_receipts`: monotonically increasing `sequence`, unique `operation_id`, per-operation `revision`, status,
+  destination, `source_json`, timestamps, total count, and structured operation error.
+- `export_receipt_files`: one row per selected photo, keyed by `(operation_id, ordinal)`, with `file_id`, source and
+  actual target paths, status, reason, message, and timestamps. Deleting an operation cascades to its file rows.
+
+The complete selection is committed before copying. Per-file transitions are committed independently. An OS lock
+shared by canonical database identity covers execution, interrupted-operation recovery, and explicit reset; the lock
+file is retained. Readers use a single SQLite snapshot. On recovery, unfinished copies become `unconfirmed` and
+untouched entries become `not_attempted`; recovery does not retry or modify delivered photos.
+
+`/api/state` includes the latest receipt with up to 20 preview entries. The receipt JSON and CSV endpoints expose the
+complete file list by operation ID. Receipts persist until **Reset local data**; clearing scores or model files does
+not clear them. Reset deletes receipt rows with SQLite `secure_delete` enabled, but is not a guarantee of erasure from
+filesystem snapshots or backups. Photo copying itself is not a power-loss-atomic transaction.

@@ -6,6 +6,7 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -568,6 +569,83 @@ class ExportServiceTests(unittest.TestCase):
             self.assertEqual(missing.skipped_paths, [files["second"]])
             self.assertEqual(missing.skipped_details[0].reason, "missing")
             self.assertEqual((destination / "second.jpg").read_bytes(), b"second")
+
+    def test_export_observer_receives_actual_ordered_source_to_target_results(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "photo.jpg"
+            source.write_bytes(b"photo")
+            missing = root / "missing.jpg"
+            selected = pd.DataFrame(
+                [{"file_id": "first", "path": str(source)}, {"file_id": "missing", "path": str(missing)}]
+            )
+            destination = root / "export"
+            destination.mkdir()
+            (destination / source.name).write_bytes(b"existing delivery")
+            events = []
+
+            def target_created(index, target):
+                self.assertEqual(target.read_bytes(), b"")
+                events.append(("target", index, target))
+
+            observer = SimpleNamespace(
+                file_started=lambda index, file_id, path: events.append(("start", index, file_id, path)),
+                target_created=target_created,
+                file_finished=lambda outcome: events.append(("result", outcome)),
+            )
+            result = copy_selected_photo_files(selected, destination, observer=observer)
+
+            self.assertEqual([event[0] for event in events], ["start", "target", "result", "start", "result"])
+            copied = events[2][1]
+            self.assertEqual((copied.index, copied.file_id, copied.source), (0, "first", source))
+            self.assertEqual((copied.target, copied.status), (destination / "photo-2.jpg", "copied"))
+            self.assertEqual(events[4][1].status, "missing")
+            self.assertEqual(result.copied_paths, [copied.target])
+
+    def test_export_observer_failure_stops_copying_and_cleans_owned_empty_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            sources = [root / "first.jpg", root / "second.jpg"]
+            for source in sources:
+                source.write_bytes(b"photo")
+            destination = root / "export"
+            destination.mkdir()
+            selected = pd.DataFrame([{"file_id": path.name, "path": str(path)} for path in sources])
+
+            def cannot_record_target(_index, _target):
+                raise OSError("receipt unavailable")
+
+            observer = SimpleNamespace(
+                file_started=lambda *_args: None,
+                target_created=cannot_record_target,
+                file_finished=lambda _outcome: self.fail("A failed receipt must stop the export"),
+            )
+            with self.assertRaisesRegex(RuntimeError, "progress"):
+                copy_selected_photo_files(selected, destination, observer=observer)
+            self.assertEqual(list(destination.iterdir()), [])
+
+    def test_cleanup_failure_does_not_swallow_a_progress_failure_and_continue(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "photo.jpg"
+            source.write_bytes(b"photo")
+            destination = root / "export"
+            destination.mkdir()
+            selected = pd.DataFrame([{"file_id": "photo", "path": str(source)}])
+
+            def cannot_record_target(_index, _target):
+                raise OSError("receipt unavailable")
+
+            outcomes = []
+            observer = SimpleNamespace(
+                file_started=lambda *_args: None,
+                target_created=cannot_record_target,
+                file_finished=outcomes.append,
+            )
+            with patch.object(Path, "unlink", side_effect=PermissionError("cleanup blocked")):
+                with self.assertRaisesRegex(RuntimeError, "progress"):
+                    copy_selected_photo_files(selected, destination, observer=observer)
+            self.assertEqual(outcomes, [])
 
 
 if __name__ == "__main__":

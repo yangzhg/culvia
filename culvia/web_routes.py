@@ -55,6 +55,8 @@ class WebRouteHandlers:
     api_export_selected_csv: RouteEndpoint
     api_export_preflight: RouteEndpoint
     api_export_selected: RouteEndpoint
+    api_export_receipt: RouteEndpoint
+    api_export_manifest: RouteEndpoint
     api_pick_folder: RouteEndpoint
     api_pick_folders: RouteEndpoint
     api_pick_export_folder: RouteEndpoint
@@ -98,6 +100,8 @@ APP_ROUTE_SPECS: tuple[RouteSpec, ...] = (
     RouteSpec("/api/export/selected", "api_export_selected_csv"),
     RouteSpec("/api/export/preflight", "api_export_preflight", ("POST",)),
     RouteSpec("/api/export/selected-files", "api_export_selected", ("POST",)),
+    RouteSpec("/api/export/receipts/{operation_id}", "api_export_receipt"),
+    RouteSpec("/api/export/receipts/{operation_id}/manifest.csv", "api_export_manifest"),
     RouteSpec("/api/pick-folder", "api_pick_folder", ("POST",)),
     RouteSpec("/api/pick-folders", "api_pick_folders", ("POST",)),
     RouteSpec("/api/pick-export-folder", "api_pick_export_folder", ("POST",)),

@@ -32,6 +32,7 @@ const {
 let appState = null;
 let networkMode = "direct";
 let pollTimer = null;
+let stateLoadPromise = null;
 let commandNotice = null;
 let commandNoticeTimer = null;
 let llmReviewConfirmedForSession = false;
@@ -1214,6 +1215,8 @@ const exportPanel = window.CulviaExportPanel.create({
   renderBatchScopePill: (rootSelector, labelSelector, target) => renderBatchScopePill(rootSelector, labelSelector, target),
   getAppState: () => appState,
   getActiveView: () => activeView,
+  onActivityChange: () => syncPollTimer(),
+  refreshState: () => loadState({ afterPending: true }),
 });
 
 const updatePanel = window.CulviaUpdatePanel.create({
@@ -1265,6 +1268,7 @@ function renderControls() {
 
 function render() {
   if (!appState) return;
+  exportPanel.syncReceiptFromState();
   // Translate static placeholders before view renderers write live counts and
   // workflow status. Reversing this order lets data-i18n overwrite real state.
   applyI18n();
@@ -1520,24 +1524,42 @@ function refreshCurationHistoryIfOpen() {
   }
 }
 
-async function loadState() {
-  const sourceSnapshot = sourcePanel.dirty() ? sourceInputSnapshot() : null;
-  appState = await getJson("/api/state");
-  await filterPanel.restoreSavedFiltersIfNeeded();
-  if (sourceSnapshot) applySourceInputSnapshot(sourceSnapshot);
-  filterPanel.persistCurrentFilters();
-  viewerPanel.ensureSelectedIndex();
-  render();
-  sourcePanel.resumePendingPreviewIfReady();
-  syncPollTimer();
+async function loadState(options = {}) {
+  if (stateLoadPromise) {
+    await stateLoadPromise;
+    if (!options.afterPending) return;
+  }
+  if (stateLoadPromise) return stateLoadPromise;
+  const expectedReceiptToken = exportPanel.receiptToken();
+  const pending = (async () => {
+    const sourceSnapshot = sourcePanel.dirty() ? sourceInputSnapshot() : null;
+    appState = await getJson("/api/state");
+    await filterPanel.restoreSavedFiltersIfNeeded();
+    if (sourceSnapshot) applySourceInputSnapshot(sourceSnapshot);
+    filterPanel.persistCurrentFilters();
+    viewerPanel.ensureSelectedIndex();
+    exportPanel.syncReceiptFromState({ expectedReceiptToken, stateLoaded: true });
+    render();
+    sourcePanel.resumePendingPreviewIfReady();
+    syncPollTimer();
+  })();
+  stateLoadPromise = pending;
+  try {
+    await pending;
+  } finally {
+    if (stateLoadPromise === pending) stateLoadPromise = null;
+  }
 }
 
 function syncPollTimer() {
-  if (appState?.job?.running && !pollTimer) {
-    pollTimer = window.setInterval(loadState, 800);
+  const running = Boolean(appState?.job?.running || exportPanel.isExporting());
+  if (running && !pollTimer) {
+    pollTimer = window.setInterval(() => {
+      void loadState().catch((error) => exportPanel.stateReadFailed(error));
+    }, 800);
     return;
   }
-  if (!appState?.job?.running && pollTimer) {
+  if (!running && pollTimer) {
     window.clearInterval(pollTimer);
     pollTimer = null;
   }
@@ -1768,6 +1790,7 @@ async function clearLocalData() {
   if (!ok) return;
   try {
     appState = await postJson("/api/data/clear", { cachePath });
+    if (appState.exportReceipt === null) exportPanel.clearReceipt();
     curationHistory = [];
     curationHistoryError = "";
     galleryPanel.selectedGalleryIds().clear();

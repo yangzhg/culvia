@@ -88,9 +88,21 @@ Current reason types:
 - Files are created exclusively. Existing files and symbolic links cause automatic renaming, including names taken by another process after preflight.
 - If a copy fails, Culvia attempts to remove its incomplete output after checking that the destination still refers to the file it created. Files replaced by another process are left alone.
 - During copying, the export button shows progress and prevents duplicate clicks. Destination changes and conflicting writes remain blocked, while the backend can still answer state and browsing requests.
-- Keep the export page open to receive the result. Refreshing does not cancel an active copy while the backend remains alive, but the destination and result are not restored after refresh. Starting a later export creates another set of copies with unique names.
+- Refreshing does not cancel an active copy while the backend remains alive. The export page restores the latest delivery receipt and its destination, including progress and confirmed per-file results. A destination chosen manually in the current page is not replaced by an older receipt.
 
 This is not an all-or-nothing delivery transaction: successful files remain when other files fail. Forced termination or power loss can leave incomplete files; inspect the destination before retrying.
+
+### Delivery Receipts And Complete Manifests
+
+Each export saves a unique `operationId` and the complete picked-file list before copying. Per-file results record the original path, actual target after automatic renaming, and copy or failure status. The page shows up to 20 entries and offers a complete CSV manifest for that operation; this is a delivery record, not the picked-results scoring CSV.
+
+- `/api/state.exportReceipt` restores the latest receipt. Its `sequence` and `revision` order updates without relying on network response arrival order.
+- `GET /api/export/receipts/{operationId}` returns all `entries`.
+- `GET /api/export/receipts/{operationId}/manifest.csv` downloads every file result, including entries beyond the page preview.
+
+An operation is `running`, `completed`, `failed`, or `interrupted`. Completed means every file has a confirmed result, not that every file copied successfully. After an interrupted backend run, files whose results were not committed are `unconfirmed`; files not reached are `not_attempted`. Culvia neither infers success from a file's presence nor automatically retries these files. Inspect them before starting another export, which creates a separate set of uniquely named copies.
+
+Receipts stay in `culvia_export_receipts.sqlite` in the application data directory; `CULVIA_EXPORT_RECEIPTS_PATH` can override that location. They survive source changes and score/model-cache clearing. **Reset local data** clears receipts but does not delete original photos or delivered files. Receipts are retained until reset; download a manifest to keep an independent record.
 
 ## Frontend Normalization
 

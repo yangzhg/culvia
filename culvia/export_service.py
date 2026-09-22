@@ -8,7 +8,7 @@ import tempfile
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Protocol
 
 import pandas as pd
 
@@ -62,6 +62,41 @@ class ExportSkippedFile:
             "message": self.message,
             "messageText": self.message_text,
         }
+
+
+@dataclass(frozen=True)
+class ExportFileOutcome:
+    index: int
+    file_id: str
+    source: Path
+    target: Path | None
+    status: str
+    reason: str = ""
+    message: str = ""
+    message_text: dict[str, object] | None = None
+
+
+class ExportCopyObserver(Protocol):
+    def export_started(self, selected_df: pd.DataFrame, destination: Path) -> None: ...
+
+    def file_started(self, index: int, file_id: str, source: Path) -> None: ...
+
+    def target_created(self, index: int, target: Path) -> None: ...
+
+    def file_finished(self, outcome: ExportFileOutcome) -> None: ...
+
+
+class ExportProgressError(RuntimeError):
+    """An export observer failed; no further photos may be copied."""
+
+
+def _notify_export(observer: ExportCopyObserver | None, method: str, *args: object) -> None:
+    if observer is None:
+        return
+    try:
+        getattr(observer, method)(*args)
+    except Exception as exc:
+        raise ExportProgressError("Export progress could not be recorded") from exc
 
 
 @dataclass(frozen=True)
@@ -303,36 +338,60 @@ def export_preflight_action(source_df: pd.DataFrame, cache_path: str, destinatio
     return preflight_selected_export(context.selected_df, destination)
 
 
-def copy_selected_photo_files(selected_df: pd.DataFrame, destination: Path) -> ExportCopyResult:
+def copy_selected_photo_files(
+    selected_df: pd.DataFrame,
+    destination: Path,
+    *,
+    observer: ExportCopyObserver | None = None,
+) -> ExportCopyResult:
     copied: list[Path] = []
     skipped: list[Path] = []
     skipped_details: list[ExportSkippedFile] = []
-    for _, row in selected_df.iterrows():
+    for index, (_, row) in enumerate(selected_df.iterrows()):
         source_path = Path(str(row.get("path") or "")).expanduser()
+        file_id = str(row.get("file_id") or "")
+        _notify_export(observer, "file_started", index, file_id, source_path)
+        target: Path | None = None
+        detail: ExportSkippedFile | None = None
         if not source_path.exists() or not source_path.is_file():
-            skipped.append(source_path)
-            skipped_details.append(
-                ExportSkippedFile(
-                    source_path,
-                    "missing",
-                    "源文件不存在或不是文件",
-                    message_text=text_ref("export.skippedMissingDetail"),
-                )
+            detail = ExportSkippedFile(
+                source_path,
+                "missing",
+                "源文件不存在或不是文件",
+                message_text=text_ref("export.skippedMissingDetail"),
             )
-            continue
-        try:
-            target = _copy_photo_file(source_path, destination)
-            copied.append(target)
-        except Exception as exc:
-            skipped.append(source_path)
-            skipped_details.append(
-                ExportSkippedFile(
+        else:
+            try:
+                target = _copy_photo_file(
+                    source_path,
+                    destination,
+                    target_created=lambda path: _notify_export(observer, "target_created", index, path),
+                )
+            except ExportProgressError:
+                raise
+            except Exception as exc:
+                detail = ExportSkippedFile(
                     source_path,
                     "copy_failed",
                     f"复制失败：{exc}",
                     message_text=text_ref("export.skippedCopyFailedDetail", error=str(exc)),
                 )
-            )
+        outcome = ExportFileOutcome(
+            index=index,
+            file_id=file_id,
+            source=source_path,
+            target=target,
+            status=detail.reason if detail else "copied",
+            reason=detail.reason if detail else "",
+            message=detail.message if detail else "",
+            message_text=detail.message_text if detail else None,
+        )
+        _notify_export(observer, "file_finished", outcome)
+        if detail is not None:
+            skipped.append(source_path)
+            skipped_details.append(detail)
+        elif target is not None:
+            copied.append(target)
     return ExportCopyResult(
         destination=destination,
         copied_paths=copied,
@@ -341,7 +400,12 @@ def copy_selected_photo_files(selected_df: pd.DataFrame, destination: Path) -> E
     )
 
 
-def _copy_photo_file(source_path: Path, destination: Path) -> Path:
+def _copy_photo_file(
+    source_path: Path,
+    destination: Path,
+    *,
+    target_created: Callable[[Path], None] | None = None,
+) -> Path:
     with source_path.open("rb") as source:
         while True:
             target = unique_destination_path(destination, source_path.name)
@@ -355,14 +419,19 @@ def _copy_photo_file(source_path: Path, destination: Path) -> Path:
         try:
             with output:
                 identity = os.fstat(output.fileno())
+                if target_created is not None:
+                    target_created(target)
                 shutil.copyfileobj(source, output, length=1024 * 1024)
                 output.flush()
                 _copy_file_metadata(source, output, target)
             if not _owns_output(target, identity):
                 raise OSError("Export target changed while the photo was being copied")
-        except Exception:
-            if identity is not None and _owns_output(target, identity):
-                target.unlink()
+        except Exception as exc:
+            try:
+                if identity is not None and _owns_output(target, identity):
+                    target.unlink()
+            except OSError as cleanup_error:
+                raise exc from cleanup_error
             raise
         return target
 
@@ -453,7 +522,13 @@ def _copy_windows_file_metadata(output_fd: int, source_stat: os.stat_result) -> 
         raise ctypes.WinError(ctypes.get_last_error())
 
 
-def export_selected_files_action(source_df: pd.DataFrame, cache_path: str, destination_text: str) -> ExportCopyResult:
+def export_selected_files_action(
+    source_df: pd.DataFrame,
+    cache_path: str,
+    destination_text: str,
+    *,
+    observer: ExportCopyObserver | None = None,
+) -> ExportCopyResult:
     destination_text = str(destination_text or "").strip()
     if not destination_text:
         raise ExportServiceError("exportDestinationRequired", "请选择导出目录。", status_code=400)
@@ -479,4 +554,5 @@ def export_selected_files_action(source_df: pd.DataFrame, cache_path: str, desti
     context = selected_export_context(source_df, cache_path)
     if context.selected_df.empty:
         raise ExportServiceError("exportNoPicks", "还没有入选照片。", status_code=400)
-    return copy_selected_photo_files(context.selected_df, destination)
+    _notify_export(observer, "export_started", context.selected_df, destination)
+    return copy_selected_photo_files(context.selected_df, destination, observer=observer)

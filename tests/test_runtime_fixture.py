@@ -2,14 +2,30 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 from culvia import schema, scoring
 from culvia.local_score_provenance import resolve_local_score_dataframe
+from culvia.runtime_config import RuntimeConfig
 from tools.prepare_runtime_fixture import write_fixture
 
 
 class RuntimeFixtureTests(unittest.TestCase):
+    def test_fixture_overrides_an_inherited_receipt_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = write_fixture(root / "fixture", count=2)
+            outside = root / "outside.sqlite"
+            outside.write_bytes(b"untouched")
+            with patch.dict(os.environ, {"CULVIA_EXPORT_RECEIPTS_PATH": str(outside), **fixture["env"]}):
+                config = RuntimeConfig.from_settings()
+            self.assertEqual(
+                config.resolved_export_receipts_path, Path(fixture["stateDir"]) / "culvia_export_receipts.sqlite"
+            )
+            self.assertEqual(outside.read_bytes(), b"untouched")
+
     def test_fixture_persists_current_local_model_scores(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture = write_fixture(Path(tmp) / "fixture", count=2)

@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+from culvia.export_receipts import ExportReceiptError
 from culvia.job_text import TranslatableValueError, text_ref
+from culvia.path_semantics import is_same_or_child_path, stable_path
 
 
 @dataclass(frozen=True)
@@ -42,10 +44,11 @@ class LocalDataClearResult:
     history: HistoryClearResult
     models: ModelClearResult
     paths: list[Path]
+    export_receipts_deleted: int = 0
 
     @property
     def deleted(self) -> bool:
-        return self.history.deleted or self.models.deleted or bool(self.paths)
+        return self.history.deleted or self.models.deleted or bool(self.paths) or bool(self.export_receipts_deleted)
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -54,6 +57,7 @@ class LocalDataClearResult:
             "history": self.history.to_payload(),
             "models": self.models.to_payload(),
             "paths": [str(path) for path in self.paths],
+            "exportReceiptsCleared": self.export_receipts_deleted,
         }
 
 
@@ -103,11 +107,12 @@ def clear_history_cache(cache_path: Path) -> HistoryClearResult:
     return HistoryClearResult(path=cache_path, deleted=remove_path_safely(cache_path))
 
 
-def clear_model_caches(
+def model_cache_paths(
     app_model_cache_dir: Path,
     model_repo_cache_dirs: Iterable[str],
     huggingface_cache_root: Path,
-) -> ModelClearResult:
+) -> list[Path]:
+    model_repo_cache_dirs = tuple(model_repo_cache_dirs)
     repo_cache_paths = [huggingface_cache_root / repo_dir for repo_dir in model_repo_cache_dirs]
     lock_cache_paths = [huggingface_cache_root / ".locks" / repo_dir for repo_dir in model_repo_cache_dirs]
     for repo_dir, path in zip(model_repo_cache_dirs, repo_cache_paths):
@@ -116,9 +121,30 @@ def clear_model_caches(
     for repo_dir, path in zip(model_repo_cache_dirs, lock_cache_paths):
         if path.name != repo_dir:
             raise TranslatableValueError("error.modelCachePathInvalid", fallback="模型缓存路径异常，未执行清理。")
+    return [app_model_cache_dir, *repo_cache_paths, *lock_cache_paths]
 
+
+def validate_export_receipt_cleanup(removal_paths: Iterable[Path], *, receipt_path: Path, lock_path: Path) -> None:
+    """Keep cleanup from unlinking a receipt database or its shared process lock."""
+    for removal_path in removal_paths:
+        if any(
+            stable_path(path).is_relative_to(stable_path(removal_path)) or is_same_or_child_path(path, removal_path)
+            for path in (receipt_path, lock_path)
+        ):
+            raise ExportReceiptError(
+                "exportReceiptPathConflict",
+                "Delivery receipt storage overlaps the data selected for cleanup.",
+                status_code=400,
+            )
+
+
+def clear_model_caches(
+    app_model_cache_dir: Path,
+    model_repo_cache_dirs: Iterable[str],
+    huggingface_cache_root: Path,
+) -> ModelClearResult:
     deleted_paths: list[Path] = []
-    for path in (app_model_cache_dir, *repo_cache_paths, *lock_cache_paths):
+    for path in model_cache_paths(app_model_cache_dir, model_repo_cache_dirs, huggingface_cache_root):
         if remove_path_safely(path):
             deleted_paths.append(path)
     return ModelClearResult(paths=deleted_paths)
@@ -134,7 +160,9 @@ def clear_local_data(
     model_repo_cache_dirs: Iterable[str],
     huggingface_cache_root: Path,
     clear_thumbnail_cache: Callable[[Path], bool] | None = None,
+    clear_export_receipts: Callable[[], int] | None = None,
 ) -> LocalDataClearResult:
+    receipt_count = clear_export_receipts() if clear_export_receipts is not None else 0
     history_result = clear_history_cache(cache_path)
     model_result = clear_model_caches(app_model_cache_dir, model_repo_cache_dirs, huggingface_cache_root)
     deleted_paths: list[Path] = []
@@ -148,4 +176,6 @@ def clear_local_data(
     )
     if thumbnail_deleted:
         deleted_paths.append(thumbnail_cache_dir)
-    return LocalDataClearResult(history=history_result, models=model_result, paths=deleted_paths)
+    return LocalDataClearResult(
+        history=history_result, models=model_result, paths=deleted_paths, export_receipts_deleted=receipt_count
+    )

@@ -65,6 +65,18 @@ def make_direct_request(app: object, path: str, query: dict[str, str] | None = N
 
 class ServerApiTests(unittest.TestCase):
     def setUp(self) -> None:
+        from culvia.export_receipts import ExportReceiptStore
+
+        receipt_root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        receipt_config = culvia_app.current_runtime_config().with_paths(
+            export_receipts_path=receipt_root / "receipts.sqlite"
+        )
+        self.enterContext(patch("culvia_app.current_runtime_config", return_value=receipt_config))
+        self.enterContext(
+            patch.object(
+                culvia_app.app.state, "export_receipts", ExportReceiptStore(receipt_config.export_receipts_path)
+            )
+        )
         self._client = TestClient(culvia_app.app)
 
     def test_home_health_and_static_assets_are_served(self) -> None:
@@ -2833,7 +2845,12 @@ class ExportConcurrencyApiTests(unittest.TestCase):
                 default_selected_models=[scoring.MODEL_CORE_AESTHETIC],
             )
         )
-        web_app = culvia_app.create_app(store)
+        web_app = culvia_app.create_app(
+            store,
+            runtime_config=culvia_app.current_runtime_config().with_paths(
+                export_receipts_path=root / "receipts.sqlite"
+            ),
+        )
         self.addCleanup(web_app.state.thumbnail_coordinator.close)
         return web_app, store
 
@@ -2863,10 +2880,10 @@ class ExportConcurrencyApiTests(unittest.TestCase):
                 responsive = []
                 real_action = getattr(culvia_app, action_name)
 
-                def wait_for_state(*args):
+                def wait_for_state(*args, **kwargs):
                     started.set()
                     responsive.append(observed_state.wait(timeout=1))
-                    return real_action(*args)
+                    return real_action(*args, **kwargs)
 
                 async def exercise():
                     with patch(f"culvia_app.{action_name}", side_effect=wait_for_state):
@@ -2904,10 +2921,10 @@ class ExportConcurrencyApiTests(unittest.TestCase):
                 worker_finished = threading.Event()
                 real_action = getattr(culvia_app, action_name)
 
-                def blocked_action(*args):
+                def blocked_action(*args, **kwargs):
                     started.set()
                     release.wait(timeout=1)
-                    result = real_action(*args)
+                    result = real_action(*args, **kwargs)
                     worker_finished.set()
                     return result
 
@@ -2987,6 +3004,7 @@ class ThumbnailConcurrencyApiTests(unittest.TestCase):
             thumbnail_cache_dir=root / "thumbs",
             default_cache_path=cache_path,
             default_photo_dirs=[],
+            export_receipts_path=root / "receipts.sqlite",
         )
         return culvia_app.create_app(store, runtime_config=config)
 

@@ -9,6 +9,7 @@ from starlette.applications import Starlette
 from starlette.routing import BaseRoute
 
 from culvia.app_state import AppStateStore, create_initial_state
+from culvia.export_receipts import ExportReceiptError, ExportReceiptStore
 from culvia.job_service import ScoringJobService
 from culvia.runtime_config import RuntimeConfig
 from culvia.web_routes import WebRouteHandlers, build_routes
@@ -33,6 +34,12 @@ def start_app_thumbnail_coordinator(app: Starlette) -> None:
 @asynccontextmanager
 async def app_lifespan(app: Starlette):
     start_app_thumbnail_coordinator(app)
+    receipts = getattr(app.state, "export_receipts", None)
+    if receipts is not None:
+        try:
+            await asyncio.to_thread(receipts.recover_interrupted)
+        except ExportReceiptError as error:
+            app.state.export_receipt_recovery_error = error
     try:
         yield
     finally:
@@ -79,4 +86,5 @@ def create_web_app(
     app.state.app_state_store = state_store
     app.state.job_service = job_service or ScoringJobService(state_store)
     app.state.runtime_config = config
+    app.state.export_receipts = ExportReceiptStore(config.resolved_export_receipts_path)
     return app

@@ -218,6 +218,7 @@ def write_fixture(root: Path, *, count: int = DEFAULT_COUNT, force: bool = False
         "CULVIA_DATA_DIR": str(state_dir),
         "CULVIA_CACHE_DIR": str(cache_dir),
         "CULVIA_CACHE_PATH": str(cache_path),
+        "CULVIA_EXPORT_RECEIPTS_PATH": str(state_dir / "culvia_export_receipts.sqlite"),
         "CULVIA_PHOTO_DIRS": str(photo_dir),
         "CULVIA_THUMBNAIL_CACHE_DIR": str(cache_dir / "thumbnails"),
         "CULVIA_UPLOAD_DIR": str(cache_dir / "uploads"),

@@ -69,6 +69,11 @@ def default_output_path() -> str:
     return str(Path.home() / "Downloads" / "culvia_scores.csv")
 
 
+def export_receipts_path() -> Path:
+    override = _path_from_env("CULVIA_EXPORT_RECEIPTS_PATH")
+    return override if override is not None else user_data_dir() / "culvia_export_receipts.sqlite"
+
+
 def default_photo_dirs() -> list[str]:
     override = os.environ.get("CULVIA_PHOTO_DIRS")
     if override:

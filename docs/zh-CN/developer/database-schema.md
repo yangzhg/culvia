@@ -137,3 +137,24 @@ CSV 会同时导出已存储的 `*_result_version` 字段和派生的 `*_result_
 | `created_at` | `REAL NOT NULL` |
 
 Payload 使用 `schemaVersion` 做版本标记。
+
+## 交付回执
+
+负责人：`culvia.export_receipts.ExportReceiptStore`
+
+交付回执使用应用数据目录中独立的 `culvia_export_receipts.sqlite`，可通过
+`CULVIA_EXPORT_RECEIPTS_PATH` 配置，不随当前来源的评分数据库切换。回执路径必须与评分数据库及缓存、
+模型目录分开；路径冲突时拒绝导出或清理请求。
+
+- `export_receipts`：单调递增的 `sequence`、唯一 `operation_id`、单次操作的 `revision`、状态、目标目录、
+  `source_json`、时间戳、总数与结构化操作错误。
+- `export_receipt_files`：每张入选照片一行，以 `(operation_id, ordinal)` 为主键，保存 `file_id`、来源和
+  实际目标路径、状态、原因、消息与时间戳。删除操作记录时级联删除其文件记录。
+
+开始复制前先提交完整入选集合，随后独立提交每张照片的状态变化。执行、中断恢复与显式重置共用基于
+数据库真实身份的操作系统锁，保留锁文件；读取使用同一个 SQLite 快照。恢复时，未确认完成的复制标为
+`unconfirmed`，未开始的条目标为 `not_attempted`，不会自动重试或修改已交付照片。
+
+`/api/state` 提供最近一次回执及最多 20 条预览；按操作 ID 访问的回执 JSON 与 CSV 接口提供完整文件清单。
+回执保留到用户执行“重置本机数据”；清空评分记录或删除模型文件不会清除回执。重置时启用 SQLite
+`secure_delete` 删除记录，但不保证擦除文件系统快照或备份中的副本；照片复制也不是掉电原子事务。

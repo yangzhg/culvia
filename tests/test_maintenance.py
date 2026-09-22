@@ -4,16 +4,62 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from culvia.export_receipts import ExportReceiptError
 from culvia.maintenance import (
     clear_history_cache,
     clear_local_data,
     clear_model_caches,
     remove_path_safely,
     resolve_history_cache_path,
+    validate_export_receipt_cleanup,
 )
 
 
 class MaintenanceTests(unittest.TestCase):
+    def test_cleanup_protects_receipt_aliases_and_the_shared_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            storage = root / "storage"
+            storage.mkdir()
+            receipt = storage / "receipts.sqlite"
+            receipt.touch()
+            uploads = root / "uploads"
+            uploads.mkdir()
+            alias = uploads / "receipt-alias.sqlite"
+            alias.symlink_to(receipt)
+            lock_path = storage / "receipts.sqlite.lock"
+            for removal in (storage, uploads, receipt, alias, lock_path):
+                with self.subTest(removal=removal), self.assertRaises(ExportReceiptError) as raised:
+                    validate_export_receipt_cleanup([removal], receipt_path=alias, lock_path=lock_path)
+                self.assertEqual(raised.exception.error_code, "exportReceiptPathConflict")
+            validate_export_receipt_cleanup([root / "storage-other"], receipt_path=alias, lock_path=lock_path)
+
+    def test_local_reset_clears_receipts_without_deleting_delivered_photos(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            delivery = root / "delivered.jpg"
+            delivery.write_bytes(b"delivered original")
+            calls = []
+
+            def clear_receipts() -> int:
+                calls.append("receipts")
+                return 3
+
+            result = clear_local_data(
+                cache_path=root / "scores.sqlite",
+                upload_cache_dir=root / "uploads",
+                thumbnail_cache_dir=root / "thumbs",
+                analysis_image_cache_dir=root / "analysis",
+                app_model_cache_dir=root / "models",
+                model_repo_cache_dirs=[],
+                huggingface_cache_root=root / "hf",
+                clear_export_receipts=clear_receipts,
+            )
+            self.assertEqual(calls, ["receipts"])
+            self.assertEqual(result.to_payload()["exportReceiptsCleared"], 3)
+            self.assertTrue(result.deleted)
+            self.assertEqual(delivery.read_bytes(), b"delivered original")
+
     def test_remove_path_safely_handles_files_dirs_and_missing_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

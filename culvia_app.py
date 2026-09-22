@@ -48,6 +48,7 @@ from culvia.export_service import (
     selected_export_csv_action,
     unique_destination_path as _unique_destination_path,
 )
+from culvia.export_receipts import ExportReceiptError, ExportReceiptStore
 from culvia.gallery_display import (
     apply_color_label_filter as _apply_color_label_filter,
     apply_manual_status_filter as _apply_manual_status_filter,
@@ -75,7 +76,14 @@ from culvia.llm_config_service import (
     apply_llm_config_action,
     refresh_persisted_llm_config_action,
 )
-from culvia.maintenance import clear_history_cache, clear_local_data, clear_model_caches, resolve_history_cache_path
+from culvia.maintenance import (
+    clear_history_cache,
+    clear_local_data,
+    clear_model_caches,
+    model_cache_paths,
+    resolve_history_cache_path,
+    validate_export_receipt_cleanup,
+)
 from culvia.media_catalog import catalog_allows_path
 from culvia.media_service import (
     ensure_thumbnail_file as _ensure_thumbnail_file,
@@ -427,6 +435,7 @@ def current_runtime_config() -> RuntimeConfig:
         thumbnail_max_size=int(THUMBNAIL_MAX_SIZE),
         thumbnail_cache_max_bytes=RUNTIME_CONFIG.thumbnail_cache_max_bytes,
         thumbnail_cache_max_files=RUNTIME_CONFIG.thumbnail_cache_max_files,
+        export_receipts_path=RUNTIME_CONFIG.export_receipts_path,
     )
 
 
@@ -832,6 +841,10 @@ def request_job_service(request: Request) -> ScoringJobService:
     return _request_job_service(request, APP_JOB_SERVICE)
 
 
+def request_export_receipts(request: Request) -> ExportReceiptStore:
+    return request.app.state.export_receipts
+
+
 STATE_PAYLOAD_DEPENDENCIES = StatePayloadDependencies(
     app_name="Culvia",
     app_subtitle="为作品建立秩序",
@@ -933,7 +946,17 @@ async def api_update_check(request: Request) -> JSONResponse:
 
 
 async def api_state(request: Request) -> JSONResponse:
-    return JSONResponse(state_payload(request_state_store(request)))
+    payload = state_payload(request_state_store(request))
+    try:
+        receipt = await run_in_threadpool(request_export_receipts(request).latest)
+        recovery_error = getattr(request.app.state, "export_receipt_recovery_error", None)
+        if recovery_error is not None and receipt is not None and receipt.get("status") == "running":
+            raise recovery_error
+        request.app.state.export_receipt_recovery_error = None
+        payload["exportReceipt"] = receipt
+    except ExportReceiptError as error:
+        payload["exportReceiptError"] = {"errorCode": error.error_code, "errorParams": error.params}
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
 async def api_filter(request: Request) -> JSONResponse:
@@ -1207,6 +1230,8 @@ async def api_clear_history(request: Request) -> JSONResponse:
                 status_code=400,
                 params={"reason": error or ""},
             )
+        receipts = request_export_receipts(request)
+        validate_export_receipt_cleanup([cache_path], receipt_path=receipts.path, lock_path=receipts.lock_path)
         media_revision = state_store.current_media_revision()
         async with DeferredWorkerCancellation() as cancellation:
             result = await cancellation.run_in_threadpool(clear_history_cache, cache_path)
@@ -1216,6 +1241,8 @@ async def api_clear_history(request: Request) -> JSONResponse:
                 expected_media_revision=media_revision,
                 expected_job_id=job_id,
             )
+    except ExportReceiptError as error:
+        return export_service_error_response(error)
     except (OSError, RuntimeError) as exc:
         return api_error_response(
             "historyClearFailed",
@@ -1256,6 +1283,18 @@ async def api_clear_local_data(request: Request) -> JSONResponse:
                 params={"reason": error or ""},
             )
         try:
+            receipts = request_export_receipts(request)
+            validate_export_receipt_cleanup(
+                [
+                    cache_path,
+                    runtime_config.upload_cache_dir,
+                    runtime_config.thumbnail_cache_dir,
+                    ANALYSIS_IMAGE_CACHE_DIR,
+                    *model_cache_paths(APP_MODEL_CACHE_DIR, MODEL_REPO_CACHE_DIRS, get_huggingface_cache_root()),
+                ],
+                receipt_path=receipts.path,
+                lock_path=receipts.lock_path,
+            )
             async with request_thumbnail_coordinator(request).clearing_cache(
                 runtime_config.thumbnail_cache_dir
             ) as thumbnail_sweep:
@@ -1284,6 +1323,7 @@ async def api_clear_local_data(request: Request) -> JSONResponse:
                         model_repo_cache_dirs=MODEL_REPO_CACHE_DIRS,
                         huggingface_cache_root=get_huggingface_cache_root(),
                         clear_thumbnail_cache=lambda _path: thumbnail_deleted,
+                        clear_export_receipts=request_export_receipts(request).clear,
                     )
 
                     next_state = create_initial_state(
@@ -1298,6 +1338,8 @@ async def api_clear_local_data(request: Request) -> JSONResponse:
                         expected_job_id=job_id,
                         preserve_job=True,
                     )
+        except ExportReceiptError as error:
+            return export_service_error_response(error)
         except ThumbnailQueueFullError as exc:
             return api_error_response(
                 "localDataClearFailed",
@@ -1321,6 +1363,8 @@ async def api_clear_local_data(request: Request) -> JSONResponse:
     finally:
         job_service.finish(job_id)
     response_payload = state_payload(state_store)
+    response_payload["exportReceipt"] = None
+    request.app.state.export_receipt_recovery_error = None
     response_payload["maintenance"] = result.to_payload()
     if secret_warning:
         response_payload["maintenance"]["secretWarning"] = secret_warning
@@ -1337,12 +1381,20 @@ async def api_clear_model(request: Request) -> JSONResponse:
     try:
         async with DeferredWorkerCancellation() as cancellation:
             try:
+                receipts = request_export_receipts(request)
+                validate_export_receipt_cleanup(
+                    model_cache_paths(APP_MODEL_CACHE_DIR, MODEL_REPO_CACHE_DIRS, get_huggingface_cache_root()),
+                    receipt_path=receipts.path,
+                    lock_path=receipts.lock_path,
+                )
                 result = await cancellation.run_in_threadpool(
                     clear_model_caches,
                     APP_MODEL_CACHE_DIR,
                     MODEL_REPO_CACHE_DIRS,
                     get_huggingface_cache_root(),
                 )
+            except ExportReceiptError as error:
+                return export_service_error_response(error)
             except ValueError as exc:
                 return api_error_response(
                     "modelClearInvalid", str(exc), status_code=400, params={"reason": exception_reason(exc)}
@@ -1832,15 +1884,53 @@ async def api_export_selected(request: Request) -> JSONResponse:
                 state = state_store.data
                 source_df = normalize_score_dataframe(state["scores_df"]).copy()
                 cache_path = str(state["source"].get("cachePath") or DEFAULT_CACHE_PATH)
+                source_snapshot = deepcopy(state["source"])
             async with DeferredWorkerCancellation() as cancellation:
                 result = await cancellation.run_in_threadpool(
-                    export_selected_files_action, source_df, cache_path, destination_text
+                    request_export_receipts(request).run_export,
+                    source_df,
+                    cache_path,
+                    destination_text,
+                    source_snapshot=source_snapshot,
+                    copy_action=export_selected_files_action,
                 )
+                request.app.state.export_receipt_recovery_error = None
     except MutationJobUnavailable:
         return job_running_operation_response()
     except ExportServiceError as error:
         return export_service_error_response(error)
-    return JSONResponse(result.to_payload())
+    return JSONResponse(result)
+
+
+async def api_export_receipt(request: Request) -> JSONResponse:
+    try:
+        receipt = await run_in_threadpool(
+            request_export_receipts(request).get, str(request.path_params["operation_id"])
+        )
+    except ExportReceiptError as error:
+        return export_service_error_response(error)
+    if receipt is None:
+        return api_error_response("exportReceiptNotFound", "导出回执不存在或已清除。", status_code=404)
+    return JSONResponse(receipt, headers={"Cache-Control": "no-store"})
+
+
+async def api_export_manifest(request: Request) -> Response:
+    try:
+        manifest = await run_in_threadpool(
+            request_export_receipts(request).manifest_csv, str(request.path_params["operation_id"])
+        )
+    except ExportReceiptError as error:
+        return export_service_error_response(error)
+    if manifest is None:
+        return api_error_response("exportReceiptNotFound", "导出回执不存在或已清除。", status_code=404)
+    return Response(
+        manifest,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="culvia_delivery_manifest.csv"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 async def choose_folder(prompt: str) -> JSONResponse:
@@ -2024,6 +2114,8 @@ def route_handlers() -> WebRouteHandlers:
         api_export_selected_csv=api_export_selected_csv,
         api_export_preflight=api_export_preflight,
         api_export_selected=api_export_selected,
+        api_export_receipt=api_export_receipt,
+        api_export_manifest=api_export_manifest,
         api_pick_folder=api_pick_folder,
         api_pick_folders=api_pick_folders,
         api_pick_export_folder=api_pick_export_folder,

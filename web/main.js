@@ -2,8 +2,8 @@
 // the import order below is the only place load order is declared.
 
 // Locale resources and i18n runtime.
-import "./locales/zh-CN.js?v=20260922-export-progress";
-import "./locales/en.js?v=20260922-export-progress";
+import "./locales/zh-CN.js?v=20260922-export-receipts";
+import "./locales/en.js?v=20260922-export-receipts";
 import "./i18n_messages.js";
 import "./i18n.js";
 
@@ -21,9 +21,9 @@ import "./llm_config_view.js?v=20260812-responsive-nav";
 import "./command_view.js?v=20260904-full-filter-scope";
 import "./export_preflight.js";
 import "./export_preflight_state.js";
-import "./export_result_data.js";
-import "./export_result.js";
-import "./export_actions.js?v=20260922-export-progress";
+import "./export_result_data.js?v=20260922-export-receipts";
+import "./export_result.js?v=20260922-export-receipts";
+import "./export_actions.js?v=20260922-export-receipts";
 import "./export_list.js?v=20260904-score-provenance";
 import "./batch_actions.js?v=20260904-batch-confirm";
 import "./clipboard.js";
@@ -36,7 +36,7 @@ import "./ui_helpers.js";
 import "./gallery_view.js?v=20260904-score-provenance";
 import "./distribution_view.js";
 import "./distribution_panel.js";
-import "./export_panel.js?v=20260922-export-progress";
+import "./export_panel.js?v=20260922-export-receipts";
 import "./llm_config_panel.js";
 import "./gallery_panel.js?v=20260908-view-lifecycle";
 import "./viewer_panel.js?v=20260904-score-provenance";
@@ -45,4 +45,4 @@ import "./filter_panel.js?v=20260908-responsive-readability";
 import "./viewer_inspector.js";
 
 // Orchestrator: wires state, rendering, and events together.
-import "./app.js?v=20260908-view-lifecycle";
+import "./app.js?v=20260922-export-receipts";
