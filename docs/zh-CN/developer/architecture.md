@@ -68,6 +68,8 @@ flowchart LR
 - `culvia.llm_config*` / `culvia.secret_store`：OpenAI-compatible 配置、提示词预设、SQLite 非密钥配置和系统 keychain。
 - `culvia.desktop_files` / `culvia.capabilities`：桌面原生文件能力和能力降级。
 
+`GET /api/state` 每次请求只选择一次模型设备，应用状态和模型状态共用这个结果。Windows 和 Linux 直接选择 CPU。macOS 在工作线程池中通过 Torch 检查 MPS 是否可用，期间事件循环可继续处理请求。随后构造快照时读取当前任务，因此设备探测期间启动的清理任务会在访问评分缓存或模型文件前生效。
+
 ## 前端
 
 `web/index.html` 负责页面结构和静态资源顺序，`web/*.js` 按功能拆分，`web/styles/` 管理 CSS 切片，`web/locales/` 管理翻译文案。`web/app_config.js` 管理前端共享字段列表和静态标签映射，`web/distribution_model.js` 管理分布图数据转换，`web/distribution_view.js` 管理分布图 markup，`web/viewer_inspector.js` 管理选片台评分、信号和洞察 markup，`web/gallery_view.js` 管理照片墙卡片和 tooltip markup，`web/icons.js` 管理 SVG path 数据，`web/ui_helpers.js` 管理无状态渲染 helper。新增 UI 文案必须进入 locale 文件；`web/i18n_messages.js` 只作为聚合入口。不要在模块里嵌入中英文 fallback。图标按钮应提供 `data-ui-tooltip` 或等价可访问说明；被省略文本必须可复制或有完整 title/tooltip。

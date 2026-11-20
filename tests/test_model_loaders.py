@@ -107,6 +107,21 @@ class ModelLoaderTests(unittest.TestCase):
     def test_get_device_returns_supported_device_label(self) -> None:
         self.assertIn(model_loaders.get_device(), {"cpu", "mps"})
 
+    def test_windows_and_linux_choose_cpu_without_importing_torch(self) -> None:
+        for platform in ("win32", "linux"):
+            with self.subTest(platform=platform), patch.object(sys, "platform", platform):
+                with patch.dict(sys.modules, {"torch": None}):
+                    self.assertEqual(model_loaders.get_device(), "cpu")
+
+    def test_macos_uses_the_runtime_mps_availability(self) -> None:
+        with patch.object(sys, "platform", "darwin"):
+            for available, expected in ((True, "mps"), (False, "cpu")):
+                with (
+                    self.subTest(available=available),
+                    patch.object(torch.backends.mps, "is_available", return_value=available),
+                ):
+                    self.assertEqual(model_loaders.get_device(), expected)
+
     def test_move_model_to_device_falls_back_to_cpu(self) -> None:
         model = FallbackModel()
 

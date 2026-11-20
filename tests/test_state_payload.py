@@ -196,11 +196,11 @@ class StatePayloadBuilderTests(unittest.TestCase):
                 "distribution": "python",
             },
             local_capabilities=lambda: {"desktop": True},
-            device_text=lambda: {"key": "device.genericCpu"},
+            device_text=lambda _device: {"key": "device.genericCpu"},
             network_payload=lambda network: {"mode": network["mode"]},
             llm_config_payload=lambda: {"configured": True},
             normalize_selected_models=lambda selected: ["normalized", *(selected or [])],
-            model_payload=lambda network, selected: {"network": network["mode"], "selected": list(selected)},
+            model_payload=lambda network, selected, _device: {"network": network["mode"], "selected": list(selected)},
             maintenance_model_payload=lambda network, selected: {
                 "network": network["mode"],
                 "selected": list(selected),
@@ -213,7 +213,7 @@ class StatePayloadBuilderTests(unittest.TestCase):
             },
         )
 
-        payload = build_state_payload(store, deps)
+        payload = build_state_payload(store, deps, device="cpu")
 
         self.assertEqual(calls["matchingInsightFileIds"], ["a", "b"])
         self.assertEqual(calls["insightFileIds"], ["b"])
@@ -308,11 +308,11 @@ class StatePayloadBuilderTests(unittest.TestCase):
             curation_summary=curation_summary,
             application_info=lambda: {},
             local_capabilities=lambda: {},
-            device_text=lambda: {},
+            device_text=lambda _device: {},
             network_payload=lambda _network: {},
             llm_config_payload=lambda: {},
             normalize_selected_models=lambda _selected: [],
-            model_payload=lambda _network, _selected: {},
+            model_payload=lambda _network, _selected, _device: {},
             maintenance_model_payload=lambda _network, _selected: {},
             summarize_scores=lambda source, filtered, errors, filters: summarize_scores(
                 source,
@@ -322,7 +322,7 @@ class StatePayloadBuilderTests(unittest.TestCase):
                 enrich_scores_for_display=lambda df, _filters: df.copy(),
             ),
         )
-        return build_state_payload(store, deps)
+        return build_state_payload(store, deps, device="cpu")
 
     def test_source_total_includes_unscored_photos(self) -> None:
         payload = self.count_payload(2, 0)

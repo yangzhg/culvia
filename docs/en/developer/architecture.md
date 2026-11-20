@@ -68,6 +68,8 @@ flowchart LR
 - `culvia.llm_config*` / `culvia.secret_store`: own OpenAI-compatible configuration, prompt presets, SQLite non-secret settings, and system keychain integration.
 - `culvia.desktop_files` / `culvia.capabilities`: own native file capabilities and graceful capability fallback.
 
+`GET /api/state` selects the model device once per request and uses it for both the application and model status. Windows and Linux select CPU directly. On macOS the worker pool probes Torch for MPS availability while the event loop continues serving requests. The snapshot then reads the current job so that a cleanup started during the probe takes effect before any score-cache or model-file access.
+
 ## Frontend
 
 `web/index.html` owns page structure and static asset order. `web/*.js` modules are split by feature, `web/styles/` owns CSS slices, and `web/locales/` owns translated strings. `web/app_config.js` owns shared frontend field lists and static label maps; `web/distribution_model.js` owns distribution data transforms; `web/distribution_view.js` owns distribution markup; `web/viewer_inspector.js` owns viewer score, signal, and insight markup; `web/gallery_view.js` owns gallery card and tooltip markup; `web/icons.js` owns SVG path data; `web/ui_helpers.js` owns small stateless rendering helpers. New user-facing UI text must go into the locale files; `web/i18n_messages.js` is only the aggregation entrypoint. Modules should not embed bilingual fallback copy. Icon-only controls need `data-ui-tooltip` or an equivalent accessible label. Truncated text must expose the full value through copy behavior, `title`, or a tooltip.

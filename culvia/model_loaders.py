@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from culvia.local_model_scoring import (
@@ -26,6 +27,9 @@ from culvia.model_files import (
 
 
 def get_device() -> str:
+    if sys.platform != "darwin":
+        return "cpu"
+
     import torch
 
     return "mps" if torch.backends.mps.is_available() else "cpu"

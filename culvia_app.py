@@ -22,7 +22,7 @@ from culvia.cache_schema import SQLITE_CACHE_EXTENSIONS
 from culvia.capabilities import local_capabilities
 from culvia.config_payloads import (
     available_selected_models,
-    device_text as _device_text,
+    device_text,
     device_text_key,
     llm_config_payload as _llm_config_payload,
     model_option_payloads as _model_option_payloads,
@@ -523,10 +523,6 @@ def enrich_scores_for_display(df: pd.DataFrame, filters: dict[str, Any]) -> pd.D
     return preserve_local_result_states(df, enriched)
 
 
-def device_text(device: str | None = None) -> dict[str, Any]:
-    return _device_text(device or get_device())
-
-
 def network_payload(network: dict[str, Any]) -> dict[str, Any]:
     return _network_payload(network, system_proxy_available=system_proxy_configured())
 
@@ -783,7 +779,7 @@ def model_option_payloads(selected_models: list[str]) -> list[dict[str, Any]]:
     )
 
 
-def model_payload(network: dict[str, Any], selected_models: list[str]) -> dict[str, Any]:
+def model_payload(network: dict[str, Any], selected_models: list[str], device: str) -> dict[str, Any]:
     status = get_model_cache_status()
     clip_status = get_clip_reference_cache_status()
     network_status = network_payload(network)
@@ -794,13 +790,12 @@ def model_payload(network: dict[str, Any], selected_models: list[str]) -> dict[s
         llm_model_key=MODEL_LLM_REVIEW,
     )
     options = model_option_payloads(selected)
-    selected_device = get_device()
     selected_runtime_keys = model_runtime_keys(
         selected,
         model_capabilities=MODEL_CAPABILITIES,
         excluded_runtime_keys={RUNTIME_LOCAL, RUNTIME_LLM_REVIEW},
     )
-    runtime_loaded = MODEL_RUNTIME.any_loaded(selected_runtime_keys, selected_device)
+    runtime_loaded = MODEL_RUNTIME.any_loaded(selected_runtime_keys, device)
     return _model_payload(
         model_id=MODEL_ID,
         selected_models=selected,
@@ -809,7 +804,7 @@ def model_payload(network: dict[str, Any], selected_models: list[str]) -> dict[s
         clip_status=clip_status,
         network_status=network_status,
         runtime_loaded=runtime_loaded,
-        runtime_device_text=device_text(selected_device),
+        runtime_device_text=device_text(device),
     )
 
 
@@ -882,8 +877,8 @@ STATE_PAYLOAD_DEPENDENCIES = StatePayloadDependencies(
 )
 
 
-def state_payload(state_store: AppStateStore | None = None) -> dict[str, Any]:
-    return build_state_payload(state_store or APP_STATE, STATE_PAYLOAD_DEPENDENCIES)
+def state_payload(state_store: AppStateStore | None = None, *, device: str | None = None) -> dict[str, Any]:
+    return build_state_payload(state_store or APP_STATE, STATE_PAYLOAD_DEPENDENCIES, device=device or get_device())
 
 
 async def homepage(request: Request) -> Response:
@@ -947,7 +942,8 @@ async def api_update_check(request: Request) -> JSONResponse:
 
 
 async def api_state(request: Request) -> JSONResponse:
-    payload = state_payload(request_state_store(request))
+    device = await run_in_threadpool(get_device)
+    payload = state_payload(request_state_store(request), device=device)
     try:
         receipt = await run_in_threadpool(request_export_receipts(request).latest)
         recovery_error = getattr(request.app.state, "export_receipt_recovery_error", None)

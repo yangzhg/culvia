@@ -41,11 +41,11 @@ class StatePayloadDependencies:
     curation_summary: Callable[[Mapping[str, Any], Sequence[str]], dict[str, Any]]
     application_info: Callable[[], Mapping[str, Any]]
     local_capabilities: Callable[[], Mapping[str, Any]]
-    device_text: Callable[[], Mapping[str, Any]]
+    device_text: Callable[[str], Mapping[str, Any]]
     network_payload: Callable[[Mapping[str, Any]], Mapping[str, Any]]
     llm_config_payload: Callable[[], Mapping[str, Any]]
     normalize_selected_models: Callable[[Any], Sequence[str]]
-    model_payload: Callable[[Mapping[str, Any], Sequence[str]], Mapping[str, Any]]
+    model_payload: Callable[[Mapping[str, Any], Sequence[str], str], Mapping[str, Any]]
     maintenance_model_payload: Callable[[Mapping[str, Any], Sequence[str]], Mapping[str, Any]]
     summarize_scores: Callable[[pd.DataFrame, pd.DataFrame, pd.DataFrame, Mapping[str, Any]], Mapping[str, Any]]
 
@@ -63,7 +63,7 @@ def _export_selection_key(source_df: pd.DataFrame, marks: Mapping[str, Any]) -> 
     return hashlib.sha256(json.dumps(selected, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 
-def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependencies) -> dict[str, Any]:
+def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependencies, *, device: str) -> dict[str, Any]:
     with state_store.lock:
         state = state_store.data
         source_df = state["scores_df"].copy()
@@ -116,15 +116,15 @@ def build_state_payload(state_store: AppStateStore, deps: StatePayloadDependenci
     app_payload = {
         "name": deps.app_name,
         "subtitle": deps.app_subtitle,
-        "deviceText": dict(deps.device_text()),
+        "deviceText": dict(deps.device_text(device)),
         "heifAvailable": deps.heif_available,
     }
     app_payload.update(deps.application_info())
+    selected_models = deps.normalize_selected_models(models.get("selected"))
     model_payload = dict(
-        (deps.maintenance_model_payload if maintenance_running else deps.model_payload)(
-            network,
-            deps.normalize_selected_models(models.get("selected")),
-        )
+        deps.maintenance_model_payload(network, selected_models)
+        if maintenance_running
+        else deps.model_payload(network, selected_models, device)
     )
     model_options = []
     for raw_option in model_payload.get("options") or []:
