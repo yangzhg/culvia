@@ -10,6 +10,12 @@ The default cache path is resolved by `culvia.settings.default_cache_path()` and
 
 Manual curation uses the same SQLite file when the scoring cache path is SQLite. For non-SQLite paths, curation data is written to a sibling `*.curation.sqlite` file.
 
+## Connection Lifetime
+
+Score, insight, configuration, mark, and curation-history operations close their short-lived SQLite connections after the transaction finishes, including errors and early returns. The connection's transaction context commits successful work and rolls back failed work; explicit closing then releases the database handle without waiting for garbage collection.
+
+A scoring checkpoint writer holds one connection for its context, commits each completed batch, and closes on context exit or initialization failure. A later failed batch does not roll back earlier committed checkpoints.
+
 ## `culvia_scores`
 
 Owner: `culvia.cache_records.ScoreCacheStore`

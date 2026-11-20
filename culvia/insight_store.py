@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -73,7 +74,7 @@ class AnalysisInsightStore:
             f'ON CONFLICT("file_id", "analyzer_key", "provider", "model", "model_version", "prompt_version") '
             f"DO UPDATE SET {update_clause}"
         )
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn, conn:
             self.schema_ensurer(conn)
             for insight in insights:
                 conn.execute(sql, self._to_values(insight))
@@ -83,7 +84,7 @@ class AnalysisInsightStore:
         path = Path(cache_path).expanduser()
         if not is_sqlite_cache_path(path) or not path.exists():
             return []
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn, conn:
             self.schema_ensurer(conn)
             if file_ids is None:
                 rows = conn.execute(f"SELECT * FROM {self.table_name}").fetchall()
@@ -126,7 +127,7 @@ class AnalysisInsightStore:
         if expected_prompt_versions is not None and not expected_prompt_versions:
             return {}
         matches: dict[str, AnalysisInsightMatch] = {}
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn, conn:
             self.schema_ensurer(conn)
             for batch in self._file_id_batches(ids):
                 placeholders = ", ".join(["?"] * len(batch))
@@ -217,7 +218,7 @@ class AppConfigStore:
         if not is_sqlite_cache_path(path) or not path.exists():
             return {}
         reverse_keys = {stored: field for field, stored in self.storage_keys.items()}
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn, conn:
             self.schema_ensurer(conn)
             rows = conn.execute(f'SELECT "key", "value" FROM {self.table_name}').fetchall()
         config: dict[str, str] = {}
@@ -237,7 +238,7 @@ class AppConfigStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         cleaned = self.clean_config(config)
         now = time.time()
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn, conn:
             self.schema_ensurer(conn)
             for field_name, storage_key in self.storage_keys.items():
                 value = cleaned.get(field_name)

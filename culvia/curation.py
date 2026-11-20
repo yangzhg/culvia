@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
@@ -103,7 +104,7 @@ def mark_source_label(source: str) -> str:
 def ensure_curation_schema(cache_path: str | Path) -> Path:
     path = curation_db_path(cache_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {CURATION_TABLE} (
@@ -143,7 +144,7 @@ def load_photo_marks(cache_path: str | Path, file_ids: Iterable[str] | None = No
     if file_ids is not None and not normalized_ids:
         return {}
     marks: dict[str, PhotoMark] = {}
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.row_factory = sqlite3.Row
         if not normalized_ids:
             rows = conn.execute(f"SELECT * FROM {CURATION_TABLE}").fetchall()
@@ -186,7 +187,7 @@ def save_photo_mark(
         updated_at=time.time(),
     )
     path = ensure_curation_schema(cache_path)
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         if mark.rating <= 0 and not mark.status and not mark.color_label and not mark.note:
             conn.execute(f"DELETE FROM {CURATION_TABLE} WHERE file_id = ?", (mark.file_id,))
         else:
@@ -224,7 +225,7 @@ def save_photo_marks(cache_path: str | Path, marks: Iterable[Mapping[str, object
     if not updates:
         return 0
     path = ensure_curation_schema(cache_path)
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.row_factory = sqlite3.Row
         file_ids = [str(mark.get("file_id") or "").strip() for mark in updates]
         existing_marks: dict[str, PhotoMark] = {}

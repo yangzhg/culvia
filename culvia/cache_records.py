@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Self
@@ -27,9 +28,14 @@ class ScoreCacheCheckpointWriter:
     def __enter__(self) -> Self:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(self.path)
-        self.store.ensure_schema(self.connection)
-        self.connection.commit()
-        self.sql = self.store._upsert_sql()
+        try:
+            self.store.ensure_schema(self.connection)
+            self.connection.commit()
+            self.sql = self.store._upsert_sql()
+        except BaseException:
+            self.connection.close()
+            self.connection = None
+            raise
         return self
 
     def upsert(self, records_df: pd.DataFrame) -> None:
@@ -97,7 +103,7 @@ class ScoreCacheStore:
             return self.empty_dataframe()
 
         try:
-            with sqlite3.connect(path) as conn:
+            with closing(sqlite3.connect(path)) as conn, conn:
                 self.ensure_schema(conn)
                 available = {row[1] for row in conn.execute(f"PRAGMA table_info({SCORE_TABLE})").fetchall()}
                 selected_columns = [column for column in self.csv_columns if column in available]
@@ -135,7 +141,7 @@ class ScoreCacheStore:
     def _write_sqlite_rows(self, records_df: pd.DataFrame, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         rows = self._sqlite_rows(records_df)
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn, conn:
             self.ensure_schema(conn)
             conn.executemany(self._upsert_sql(), rows)
             conn.commit()

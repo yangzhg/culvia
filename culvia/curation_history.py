@@ -4,6 +4,7 @@ import json
 import sqlite3
 import time
 import uuid
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,7 @@ class CurationActionRecord:
 def ensure_curation_history_schema(cache_path: str | Path) -> Path:
     path = curation_db_path(cache_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {CURATION_ACTIONS_TABLE} (
@@ -60,7 +61,7 @@ def append_curation_action(
         created_at=time.time(),
     )
     path = ensure_curation_history_schema(cache_path)
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute(
             f"""
             INSERT INTO {CURATION_ACTIONS_TABLE}
@@ -93,7 +94,7 @@ def load_curation_action(cache_path: str | Path, action_id: str) -> CurationActi
     if not path.exists():
         return None
     ensure_curation_history_schema(path)
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             f"""
@@ -112,7 +113,7 @@ def load_curation_actions(cache_path: str | Path, limit: int = 50) -> list[Curat
         return []
     ensure_curation_history_schema(path)
     safe_limit = max(1, min(int(limit or 50), 500))
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             f"""

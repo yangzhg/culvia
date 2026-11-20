@@ -10,6 +10,12 @@ Culvia 使用 SQLite 保存评分结果、人工选片数据、大模型 insight
 
 当评分缓存路径是 SQLite 时，人工选片数据使用同一个 SQLite 文件。非 SQLite 路径会写入相邻的 `*.curation.sqlite` 文件。
 
+## 连接生命周期
+
+评分、洞察、配置、人工标记和选片历史操作在事务结束后关闭短期 SQLite 连接，异常和提前返回路径也不例外。连接的事务上下文提交成功操作、回滚失败操作，随后显式关闭并释放数据库句柄，不依赖垃圾回收。
+
+评分 checkpoint writer 在其上下文内持有一个连接，每个完成的批次分别提交，并在退出上下文或初始化失败时关闭。后续批次失败不会回滚之前已提交的 checkpoint。
+
 ## `culvia_scores`
 
 负责人：`culvia.cache_records.ScoreCacheStore`
