@@ -587,8 +587,13 @@ def run_launch(
     stderr_tail: deque[str] = deque(maxlen=60)
     base_url = ""
     returncode: int | None = None
+    returncode_before_cleanup: int | None = None
+    phase, phase_started = "launcher_start", time.monotonic()
+    request_context: dict[str, Any] | None = None
+    failure: dict[str, Any] | None = None
     try:
         process = tree.start(launcher_command(launcher, expected_target, env), cwd=work_dir, env=env)
+        phase, phase_started = "desktop_readiness", time.monotonic()
         events = wait_for_lite_events(process, timeout=timeout, stdout_tail=stdout_tail, stderr_tail=stderr_tail)
         event_names = [event.get("event") for event in events]
         terminal_events = [event for event in events if event.get("event") in TERMINAL_EVENTS]
@@ -602,13 +607,23 @@ def run_launch(
         )
         checks.append(check("desktop emits all ready events", ready, f"events={event_names}"))
         if "backendReady" in event_names:
+            phase, phase_started = "backend_url", time.monotonic()
             base_url = loopback_url(events)
         if ready:
             request_timeout = min(15.0, max(3.0, timeout / 6))
+            phase, phase_started = "backend_identity_request", time.monotonic()
+            request_context = {
+                "method": "GET",
+                "url": workflow.resolve_url(base_url, "/api/state"),
+                "timeoutSeconds": request_timeout,
+            }
             state = workflow.request_json(base_url, "/api/state", timeout=request_timeout)
+            request_context = None
+            phase, phase_started = "backend_identity_validation", time.monotonic()
             identity = identity_checks(state, version=expected_version, target=expected_target)
             checks.extend(identity)
             if all(item["ok"] for item in identity):
+                phase, phase_started = "backend_workflow", time.monotonic()
                 workflow_checks = workflow.collect_workflow_checks(
                     base_url=base_url,
                     fixture=fixture,
@@ -616,6 +631,7 @@ def run_launch(
                     timeout=request_timeout,
                 )
                 checks.extend(check(item.name, item.ok, item.detail) for item in workflow_checks)
+            phase, phase_started = "desktop_exit", time.monotonic()
             try:
                 returncode = process.wait(timeout=max(2.0, exit_after_ms / 1000 + 5))
                 checks.append(check("desktop exits automatically", returncode == 0, f"returncode={returncode}"))
@@ -627,6 +643,7 @@ def run_launch(
             returncode = process.poll()
             checks.append(check("desktop exits automatically", False, f"readiness incomplete, returncode={returncode}"))
         if ready and base_url and returncode == 0:
+            phase, phase_started = "backend_shutdown", time.monotonic()
             shutdown_error = desktop_smoke.wait_for_backend_shutdown(base_url)
             checks.append(
                 check("desktop stops backend after exit", not shutdown_error, shutdown_error or "backend stopped")
@@ -634,8 +651,20 @@ def run_launch(
         else:
             checks.append(check("desktop stops backend after exit", False, "normal desktop exit was not observed"))
     except Exception as exc:  # noqa: BLE001 - smoke evidence must retain launch and API failures.
-        checks.append(check("desktop launch and workflow complete", False, str(exc)))
+        failure = {
+            "phase": phase,
+            "exceptionType": type(exc).__name__,
+            "seconds": round(time.monotonic() - phase_started, 3),
+        }
+        if request_context is not None:
+            failure["request"] = request_context
+        detail = f"{phase}: {type(exc).__name__}"
+        if request_context is None:
+            detail += f": {exc}"
+        checks.append(check("desktop launch and workflow complete", False, detail))
     finally:
+        if tree.process is not None:
+            returncode_before_cleanup = tree.process.poll()
         cleanup_error = tree.close()
         checks.append(check("desktop process tree closes", not cleanup_error, cleanup_error or "closed"))
         if tree.process is not None:
@@ -648,7 +677,9 @@ def run_launch(
         events=events,
         terminalEvents=terminal_events,
         returncode=returncode,
+        returncodeBeforeCleanup=returncode_before_cleanup,
         seconds=round(time.monotonic() - started, 3),
+        failure=failure,
         stdoutTail=list(stdout_tail),
         stderrTail=list(stderr_tail),
         skipInstall=reuse,

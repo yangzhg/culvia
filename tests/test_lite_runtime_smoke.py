@@ -77,6 +77,9 @@ class LiteRuntimeSmokeTests(unittest.TestCase):
         exit_timeout=False,
         shutdown_error="",
         reuse=False,
+        request_error=None,
+        workflow_error=None,
+        terminate_returncode=None,
     ):
         process = MagicMock()
         process.returncode = 0
@@ -89,6 +92,14 @@ class LiteRuntimeSmokeTests(unittest.TestCase):
         tree.start.return_value = process
         tree.close.return_value = ""
         tree.process = process
+        if terminate_returncode is not None:
+            process.poll.return_value = None
+
+            def close():
+                process.poll.return_value = terminate_returncode
+                return ""
+
+            tree.close.side_effect = close
         app = {
             "shellVersion": "0.2.0",
             "serviceVersion": "0.2.0",
@@ -112,12 +123,15 @@ class LiteRuntimeSmokeTests(unittest.TestCase):
             stack.enter_context(
                 patch.object(smoke.desktop_smoke, "wait_for_backend_shutdown", side_effect=[shutdown_error, ""])
             )
-            request = stack.enter_context(patch.object(smoke.workflow, "request_json", return_value={"app": app}))
+            request = stack.enter_context(
+                patch.object(smoke.workflow, "request_json", return_value={"app": app}, side_effect=request_error)
+            )
             workflow = stack.enter_context(
                 patch.object(
                     smoke.workflow,
                     "collect_workflow_checks",
                     return_value=[smoke.workflow.check("fixture workflow", True, "passed")],
+                    side_effect=workflow_error,
                 )
             )
             payload = smoke.run_launch(**inputs, timeout=900, exit_after_ms=20000, reuse=reuse)
@@ -357,6 +371,84 @@ class LiteRuntimeSmokeTests(unittest.TestCase):
         self.assertIn("desktop emits all ready events", payload["failed"])
         request.assert_not_called()
         workflow.assert_not_called()
+        tree.close.assert_called_once_with()
+
+    def test_identity_request_timeout_retains_phase_endpoint_budget_and_elapsed_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inputs = self.make_inputs(Path(tmp))
+            clock = [100.0]
+
+            def timeout(*_args, **_kwargs):
+                clock[0] += 15.125
+                raise TimeoutError("timed out")
+
+            with patch.object(smoke.time, "monotonic", side_effect=lambda: clock[0]):
+                payload, tree, _, request, workflow = self.fake_launch(inputs, request_error=timeout)
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(
+            payload["failure"],
+            {
+                "phase": "backend_identity_request",
+                "exceptionType": "TimeoutError",
+                "seconds": 15.125,
+                "request": {
+                    "method": "GET",
+                    "url": "http://127.0.0.1:12345/api/state",
+                    "timeoutSeconds": 15.0,
+                },
+            },
+        )
+        request.assert_called_once_with("http://127.0.0.1:12345", "/api/state", timeout=15.0)
+        workflow.assert_not_called()
+        tree.process.wait.assert_not_called()
+        tree.close.assert_called_once_with()
+
+    def test_workflow_exception_does_not_misidentify_the_completed_identity_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inputs = self.make_inputs(Path(tmp))
+            payload, tree, _, request, workflow = self.fake_launch(
+                inputs, workflow_error=OSError("workflow unavailable")
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["failure"]["phase"], "backend_workflow")
+        self.assertEqual(payload["failure"]["exceptionType"], "OSError")
+        self.assertNotIn("request", payload["failure"])
+        self.assertGreaterEqual(payload["failure"]["seconds"], 0)
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(workflow.call_count, 1)
+        tree.close.assert_called_once_with()
+
+    def test_request_diagnostics_do_not_copy_exception_text_or_payload_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inputs = self.make_inputs(Path(tmp))
+            payload, _, _, _, _ = self.fake_launch(
+                inputs,
+                request_error=ValueError("private-key /photos/private-family.jpg?token=private-token"),
+            )
+
+        diagnostic = json.dumps(payload)
+        self.assertEqual(payload["failure"]["exceptionType"], "ValueError")
+        for private in ("private-key", "private-family", "private-token"):
+            self.assertNotIn(private, diagnostic)
+
+    def test_successful_launch_has_no_failure_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inputs = self.make_inputs(Path(tmp))
+            payload, _, _, _, _ = self.fake_launch(inputs)
+        self.assertTrue(payload["ok"])
+        self.assertIsNone(payload["failure"])
+
+    def test_cleanup_exit_code_does_not_erase_the_running_process_observation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inputs = self.make_inputs(Path(tmp))
+            payload, tree, _, _, _ = self.fake_launch(
+                inputs, request_error=TimeoutError("timed out"), terminate_returncode=1
+            )
+        self.assertFalse(payload["ok"])
+        self.assertIsNone(payload["returncodeBeforeCleanup"])
+        self.assertEqual(payload["returncode"], 1)
         tree.close.assert_called_once_with()
 
     def test_terminal_events_before_or_between_ready_events_stop_the_queue_immediately(self) -> None:

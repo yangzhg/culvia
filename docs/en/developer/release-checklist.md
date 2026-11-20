@@ -227,6 +227,8 @@ The desktop build jobs in `.github/workflows/desktop-release.yml` upload only ve
 
 Lite launch checks additionally upload one `<package>.lite-runtime.json` per target, including diagnostic failure results when available. Failed or incomplete runtime evidence cannot be published. Full package runtime checks remain unchanged.
 
+Launch exceptions record the phase, exception type, and time spent in that phase. A failed initial backend identity request also records its loopback endpoint and timeout budget without copying response data or exception text. `returncodeBeforeCleanup` preserves the process observation before forced cleanup; do not interpret a cleanup exit code as an independently observed application crash.
+
 Checksum sidecars use UTF-8 with LF line endings on every build platform. Keep the downloaded package and its `.sha256` file together, then verify from that directory:
 
 ```bash
