@@ -31,6 +31,8 @@ The exported CSV keeps the original scoring details and adds manual culling fiel
 | `manual_source` | Manual, combined model, LLM, or batch acceptance source |
 | `accepted_score_0_10` | Accepted model score |
 
+Changing or clearing a color label leaves the decision and its source intact. For example, if you accept an LLM score of 8.4 and then label the photo red, the CSV still records a four-star pick, its LLM source, and the accepted score of 8.4.
+
 ## Lightroom / Capture One Mapping
 
 For downstream processing, the CSV also includes helper columns that map to professional culling tools:

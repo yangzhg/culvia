@@ -347,7 +347,7 @@ window.CulviaViewerPanel = (() => {
         .join("");
       $("#manualColorLabels").querySelectorAll("[data-color-label]").forEach((button) => {
         button.addEventListener("click", () => {
-          updateManualMark({ colorLabel: button.dataset.colorLabel || "", source: "manual", acceptedScore: null });
+          updateManualMark({ colorLabel: button.dataset.colorLabel || "" });
         });
       });
       const statusButtons = [
@@ -484,7 +484,7 @@ window.CulviaViewerPanel = (() => {
         return true;
       }
       if (shortcut.action === viewerKeyboard.actions.color) {
-        updateManualMark({ colorLabel: shortcut.colorLabel, source: "manual" });
+        updateManualMark({ colorLabel: shortcut.colorLabel });
         return true;
       }
       return false;

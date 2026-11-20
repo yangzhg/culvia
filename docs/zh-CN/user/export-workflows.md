@@ -31,6 +31,8 @@ Culvia 的导出目标不是替代 Lightroom Classic、Capture One 或其他 DAM
 | `manual_source` | 人工、综合模型、大模型或批量采纳来源 |
 | `accepted_score_0_10` | 被采纳的模型分数 |
 
+更换或清除色标不会改变选片决定及其来源。例如，采纳大模型的 8.4 分后再给照片贴上红色色标，导出的 CSV 仍会显示四星、入选，评分来源仍是大模型，采纳分数仍是 8.4。
+
 ## Lightroom / Capture One 映射
 
 为了方便继续加工，CSV 还会生成面向专业选片工具的辅助列：

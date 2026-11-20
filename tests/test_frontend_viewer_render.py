@@ -339,6 +339,32 @@ class FrontendViewerRenderTests(unittest.TestCase):
     def test_viewer_renders_filmstrip_signals_and_score_details(self) -> None:
         self.assert_viewer_script_passes()
 
+    def test_color_buttons_and_shortcuts_only_edit_the_color_label(self) -> None:
+        self.assert_viewer_script_passes(
+            """
+            const assert = require("node:assert/strict");
+            const controls = document.querySelector("#manualColorLabels");
+            const buttons = new Map();
+            controls.querySelectorAll = (selector) => {
+              if (selector !== "[data-color-label]") return [];
+              for (const [, label] of controls.innerHTML.matchAll(/data-color-label="([^"]*)"/g)) {
+                const button = new FakeElement("button");
+                button.dataset.colorLabel = label;
+                buttons.set(label, button);
+              }
+              return [...buttons.values()];
+            };
+            const edits = [];
+            context.updateManualMark = (edit) => edits.push({ ...edit });
+            vm.runInContext("activeView = 'viewer'; renderViewer();", context);
+            for (const [label, key] of [["red", "r"], ["", "c"]]) {
+              buttons.get(label).click();
+              vm.runInContext(`viewerPanel.handleShortcut({ key: "${key}", preventDefault() {} })`, context);
+              assert.deepEqual(edits.splice(0), [{ colorLabel: label }, { colorLabel: label }]);
+            }
+            """
+        )
+
     def test_filmstrip_identifies_same_score_photos_and_their_manual_decisions(self) -> None:
         self.assert_viewer_script_passes(
             """

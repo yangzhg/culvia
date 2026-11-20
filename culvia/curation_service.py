@@ -72,8 +72,9 @@ def mark_photo_action(cache_path: str, source_df: pd.DataFrame, payload: dict[st
         "rating": payload.get("rating"),
         "status": payload.get("status"),
         "note": payload.get("note"),
-        "source": payload.get("source") or "manual",
     }
+    if "source" in payload:
+        mark_kwargs["source"] = payload["source"]
     if "colorLabel" in payload:
         mark_kwargs["color_label"] = payload.get("colorLabel")
     elif "color_label" in payload:

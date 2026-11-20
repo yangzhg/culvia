@@ -94,6 +94,40 @@ class CurationServiceTests(unittest.TestCase):
         self.assertEqual(marks["image-1"].status, "hold")
         self.assertNotIn("image-2", marks)
 
+    def test_color_edits_preserve_and_undo_the_accepted_decision(self) -> None:
+        frame = self.source_frame()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = str(Path(tmp) / "scores.sqlite")
+            accepted = accept_targets_action(
+                cache, frame, {}, {"scope": "selected", "fileIds": ["image-1"], "basis": "llm"}, passthrough_display
+            )["afterMarks"][0]
+            self.assertEqual((accepted["source"], accepted["acceptedScore"]), ("llm_batch", 8.5))
+
+            red = {**accepted, "colorLabel": "red"}
+            labeled = mark_photo_action(cache, frame, {"fileId": "image-1", "colorLabel": "red"})
+            self.assertEqual(labeled["afterMarks"], [red])
+            cleared = mark_photo_action(cache, frame, {"fileId": "image-1", "color_label": ""})
+            self.assertEqual(cleared["afterMarks"], [accepted])
+            undo = undo_curation_action(cache, frame, {"historyId": cleared["historyId"]})
+            self.assertEqual(undo["afterMarks"], [red])
+
+    def test_manual_decision_edits_replace_provenance_unless_explicitly_supplied(self) -> None:
+        frame = self.source_frame()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = str(Path(tmp) / "scores.sqlite")
+            for changes in ({"rating": 0}, {"status": ""}, {"status": "hold", "colorLabel": "blue"}):
+                with self.subTest(changes=changes):
+                    accept_targets_action(
+                        cache, frame, {}, {"fileId": "image-1", "basis": "model"}, passthrough_display
+                    )
+                    mark = mark_photo_action(cache, frame, {"fileId": "image-1", **changes})["afterMarks"][0]
+                    self.assertEqual((mark["source"], mark["acceptedScore"]), ("manual", None))
+                    self.assertEqual({key: mark[key] for key in changes}, changes)
+            explicit = mark_photo_action(
+                cache, frame, {"fileId": "image-1", "rating": 4, "source": "llm", "acceptedScore": 8.5}
+            )["afterMarks"][0]
+            self.assertEqual((explicit["source"], explicit["acceptedScore"]), ("llm", 8.5))
+
     def test_accept_targets_action_uses_basis_scores_and_reports_skips(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache_path = str(Path(tmp) / "scores.sqlite")

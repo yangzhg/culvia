@@ -39,7 +39,7 @@ import "./distribution_panel.js";
 import "./export_panel.js?v=20260922-delivery-counts";
 import "./llm_config_panel.js";
 import "./gallery_panel.js?v=20260922-mark-identity";
-import "./viewer_panel.js?v=20260922-source-review";
+import "./viewer_panel.js?v=20261120-color-labels";
 import "./source_panel.js?v=20260922-source-review";
 import "./filter_panel.js?v=20260908-responsive-readability";
 import "./viewer_inspector.js?v=20260922-review-readability";

@@ -170,20 +170,26 @@ def save_photo_mark(
     status: object | None = None,
     color_label: object | None = None,
     note: object | None = None,
-    source: object = "manual",
+    source: object = _UNSET,
     accepted_score: object = _UNSET,
 ) -> PhotoMark:
     existing = load_photo_marks(cache_path, [file_id]).get(file_id)
+    edits_decision = rating is not None or status is not None
+    if source is _UNSET:
+        source = existing.source if existing and not edits_decision else "manual"
+    mark_source = normalize_mark_source(source)
+    if accepted_score is _UNSET:
+        accepted_score = (
+            existing.accepted_score if existing and not (edits_decision and mark_source == "manual") else None
+        )
     mark = PhotoMark(
         file_id=str(file_id),
         rating=existing.rating if rating is None and existing else normalize_manual_rating(rating),
         status=existing.status if status is None and existing else normalize_pick_status(status),
         color_label=existing.color_label if color_label is None and existing else normalize_color_label(color_label),
         note=existing.note if note is None and existing else str(note or "").strip(),
-        source=normalize_mark_source(source),
-        accepted_score=existing.accepted_score
-        if accepted_score is _UNSET and existing
-        else _normalize_score(accepted_score),
+        source=mark_source,
+        accepted_score=_normalize_score(accepted_score),
         updated_at=time.time(),
     )
     path = ensure_curation_schema(cache_path)
